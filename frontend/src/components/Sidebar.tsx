@@ -1,36 +1,50 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
-const Sidebar = () => {
+const items = [
+  { label: "ড্যাশবোর্ড", icon: "📊", to: "/dashboard" },
+  { label: "উপকারভোগী", icon: "👥", to: "#" },
+  { label: "কার্ড/টোকেন", icon: "🪪", to: "#" },
+  { label: "স্টক ও বিতরণ", icon: "📦", to: "#" },
+  { label: "অডিট লগ", icon: "📝", to: "#" },
+  { label: "সেটিংস", icon: "⚙️", to: "#" },
+];
+
+export default function SideNav() {
+  const { pathname } = useLocation();
+
   return (
-    <div className="w-64 bg-green-700 text-white p-5 flex flex-col">
-      <h2 className="text-xl font-bold mb-6">Smart OMS</h2>
+    <aside className="w-[265px] bg-[#0d2b3a] text-white min-h-[calc(100vh-88px)]">
+      <div className="px-4 py-3 border-b border-white/10">
+        <div className="text-[13px] opacity-90">মেনু</div>
+      </div>
 
-      <nav className="space-y-3">
-        <Link
-          to="/dashboard"
-          className="block bg-green-800 p-3 rounded hover:bg-green-600"
-        >
-          📊 Dashboard
-        </Link>
+      <nav className="p-3 space-y-1">
+        {items.map((it) => {
+          const active = it.to !== "#" && pathname === it.to;
 
-        <button className="text-left block w-full p-3 rounded hover:bg-green-600">
-          📷 Scan QR
-        </button>
+          const cls =
+            "flex items-center gap-3 px-3 py-2 rounded " +
+            (active
+              ? "bg-white/15"
+              : "hover:bg-white/10");
 
-        <button className="text-left block w-full p-3 rounded hover:bg-green-600">
-          👥 Consumers
-        </button>
+          if (it.to === "#") {
+            return (
+              <a key={it.label} href="#" className={cls}>
+                <span>{it.icon}</span>
+                <span className="text-[14px]">{it.label}</span>
+              </a>
+            );
+          }
 
-        <button className="text-left block w-full p-3 rounded hover:bg-green-600">
-          📦 Stock
-        </button>
-
-        <button className="text-left block w-full p-3 rounded hover:bg-green-600">
-          📝 Activity Log
-        </button>
+          return (
+            <Link key={it.label} to={it.to} className={cls}>
+              <span>{it.icon}</span>
+              <span className="text-[14px]">{it.label}</span>
+            </Link>
+          );
+        })}
       </nav>
-    </div>
+    </aside>
   );
-};
-
-export default Sidebar;
+}

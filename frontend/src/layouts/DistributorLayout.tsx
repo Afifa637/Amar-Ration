@@ -2,20 +2,19 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 
-const DistributorLayout = () => {
+export default function DashboardLayout() {
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar />
+    <div className="min-h-screen bg-[#eef1f5]">
+      <Topbar />
 
-      <div className="flex-1 flex flex-col">
-        <Topbar />
-
-        <main className="p-6 overflow-y-auto">
-          <Outlet />
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1 min-w-0">
+          <div className="px-4 py-3">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>
   );
-};
-
-export default DistributorLayout;
+}
