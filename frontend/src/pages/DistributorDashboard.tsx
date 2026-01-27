@@ -1,36 +1,60 @@
+import FilterBar from "../components/FilterBar";
 import StatCard from "../components/StatCard";
-import QRScanner from "../components/QRScanner";
-import ConsumerTable from "../components/ConsumerTable";
-import ActivityLog from "../components/ActivityLog";
+import ReportTable from "../components/ReportTable";
+import NotesPanel from "../components/NotesPanel";
 
-const DistributorDashboard = () => {
+export default function DistributorDashboard() {
   return (
-    <div className="space-y-6">
-      {/* Top Stats */}
-      <div className="grid grid-cols-4 gap-4">
-        <StatCard title="Total Consumers" value={120} color="bg-blue-500" />
-        <StatCard title="Active Today" value={85} color="bg-green-500" />
-        <StatCard title="Tokens Issued" value={60} color="bg-yellow-500" />
-        <StatCard title="Stock Left (kg)" value={250} color="bg-red-500" />
-      </div>
+    <div className="space-y-3">
+      {/* breadcrumb/top info row */}
+      <div className="bg-white border border-[#d7dde6] rounded px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[12px] text-[#4b5563]">
+            হোম <span className="mx-1">›</span> ড্যাশবোর্ড{" "}
+            <span className="mx-1">›</span>{" "}
+            <span className="font-semibold text-[#111827]">মনিটরিং সারাংশ</span>
+          </div>
 
-      {/* Main Content Row */}
-      <div className="grid grid-cols-3 gap-6">
-        {/* Left: QR Scanner */}
-        <div className="col-span-1">
-          <QRScanner />
-        </div>
-
-        {/* Middle: Consumer Table */}
-        <div className="col-span-2">
-          <ConsumerTable />
+          <div className="text-[12px] text-[#6b7280]">
+            সর্বশেষ আপডেট: <span className="font-semibold text-[#111827]">আজ</span>
+          </div>
         </div>
       </div>
 
-      {/* Bottom: Activity Log */}
-      <ActivityLog />
+      {/* Filter section */}
+      <section className="bg-white border border-[#d7dde6] rounded">
+        <div className="px-3 py-2 bg-[#f3f5f8] border-b border-[#d7dde6]">
+          <h2 className="text-[14px] font-semibold text-[#1f2d3d]">
+            ড্যাশবোর্ড ফিল্টার (লোকেশন/ডিলার নির্বাচন)
+          </h2>
+        </div>
+        <div className="p-3">
+          <FilterBar />
+        </div>
+      </section>
+
+      {/* KPI tiles section */}
+      <section className="bg-white border border-[#d7dde6] rounded">
+        <div className="px-3 py-2 bg-[#f3f5f8] border-b border-[#d7dde6]">
+          <h2 className="text-[14px] font-semibold text-[#1f2d3d]">সারাংশ (KPI টাইল)</h2>
+        </div>
+        <div className="p-3">
+          <StatCard />
+        </div>
+      </section>
+
+      {/* Table section */}
+      <section className="bg-white border border-[#d7dde6] rounded">
+        <div className="px-3 py-2 bg-[#f3f5f8] border-b border-[#d7dde6]">
+          <h2 className="text-[14px] font-semibold text-[#1f2d3d]">মনিটরিং সারাংশ টেবিল</h2>
+        </div>
+        <div className="p-3">
+          <ReportTable />
+        </div>
+      </section>
+
+      {/* Notes */}
+      <NotesPanel />
     </div>
   );
-};
-
-export default DistributorDashboard;
+}
