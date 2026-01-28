@@ -14,11 +14,11 @@ export default function Topbar() {
   };
 
   return (
-    <header className="bg-[#1f77b4] text-white">
-      <div className="flex items-center justify-between px-4 py-2">
+     <header className="h-[88px] bg-[#1f77b4] text-white">
+       <div className="h-[52px] flex items-center justify-between px-4">
         <div className="flex items-center gap-3">
           <div className="h-8 w-8 rounded bg-white/15 flex items-center justify-center text-sm font-bold">
-            টিসি
+            টিসিবি
           </div>
           <div className="leading-tight">
             <div className="font-semibold text-[15px]">টিসিবি স্মার্ট ফ্যামিলি কার্ড</div>
@@ -37,7 +37,7 @@ export default function Topbar() {
       </div>
 
       {/* top links bar */}
-      <div className="bg-[#16679c] px-4 py-2 text-[13px]">
+      <div className="h-[36px] bg-[#16679c] px-4 flex items-center text-[13px] gap-6">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <a className="hover:underline" href="#">হোম</a>
           <a className="hover:underline" href="#">ড্যাশবোর্ড</a>

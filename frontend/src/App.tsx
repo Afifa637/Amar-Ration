@@ -1,21 +1,34 @@
-import { Routes, Route, Navigate, BrowserRouter } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DistributorLayout from "./layouts/DistributorLayout";
+
 import DistributorDashboard from "./pages/DistributorDashboard";
-import Login from "./pages/Login";
+import BeneficiariesPage from "./pages/BeneficiariesPage";
+import CardsTokensPage from "./pages/CardsTokensPage";
+import StockDistributionPage from "./pages/StockDistributionPage";
+import AuditLogPage from "./pages/AuditLogPage";
+import ReportsPage from "./pages/ReportsPage";
+import MonitoringPage from "./pages/MonitoringPage";
+import SettingsPage from "./pages/SettingsPage";
+import HelpPage from "./pages/HelpPage";
 
 export default function App() {
   return (
     <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+      <Routes>
+        <Route element={<DistributorLayout />}>
+          <Route path="/dashboard" element={<DistributorDashboard />} />
+          <Route path="/beneficiaries" element={<BeneficiariesPage />} />
+          <Route path="/cards" element={<CardsTokensPage />} />
+          <Route path="/stock" element={<StockDistributionPage />} />
+          <Route path="/audit" element={<AuditLogPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/monitoring" element={<MonitoringPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/help" element={<HelpPage />} />
+        </Route>
 
-          <Route element={<DistributorLayout />}>
-            <Route path="/dashboard" element={<DistributorDashboard />} />
-          </Route>
-
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
     </BrowserRouter>
   );
 }
-
