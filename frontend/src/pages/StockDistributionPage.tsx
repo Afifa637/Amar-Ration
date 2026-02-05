@@ -719,7 +719,7 @@ export default function StockDistributionPage() {
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <div className="text-[12px] mb-1">OMS QR স্ক্যান</div>
+            <div className="text-[12px] mb-1">আমার রেশন QR স্ক্যান</div>
             <div className="border border-dashed rounded h-36 flex items-center justify-center text-[#6b7280]">
               📷 ক্যামেরা প্রিভিউ এখানে
             </div>
