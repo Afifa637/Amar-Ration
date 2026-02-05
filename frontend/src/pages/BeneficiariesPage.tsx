@@ -206,37 +206,153 @@ export default function BeneficiariesPage() {
       </PortalSection>
 
       {/* Modal: Add Registration */}
-      <Modal open={openAdd} title="নতুন উপকারভোগী নিবন্ধন (ডেমো ফর্ম)" onClose={() => setOpenAdd(false)}>
+      <Modal open={openAdd} title="নতুন উপকারভোগী নিবন্ধন" onClose={() => setOpenAdd(false)}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <div className="text-[12px] mb-1">উপকারভোগীর নাম</div>
-            <input className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]" placeholder="নাম লিখুন" />
+            <div className="text-[12px] mb-1 font-medium">
+              উপকারভোগীর নাম <span className="text-red-500">*</span>
+            </div>
+            <input 
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="নাম লিখুন" 
+              required
+            />
           </div>
           <div>
-            <div className="text-[12px] mb-1">উপকারভোগীর NID</div>
-            <input className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]" placeholder="NID নম্বর" />
+            <div className="text-[12px] mb-1 font-medium">
+              পিতার নাম <span className="text-red-500">*</span>
+            </div>
+            <input 
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="পিতার নাম লিখুন" 
+              required
+            />
           </div>
           <div>
-            <div className="text-[12px] mb-1">বাবার NID</div>
-            <input className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]" placeholder="বাবার NID" />
+            <div className="text-[12px] mb-1 font-medium">
+              মাতার নাম <span className="text-red-500">*</span>
+            </div>
+            <input 
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="মাতার নাম লিখুন" 
+              required
+            />
           </div>
           <div>
-            <div className="text-[12px] mb-1">মায়ের NID</div>
-            <input className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]" placeholder="মায়ের NID" />
+            <div className="text-[12px] mb-1 font-medium">
+              উপকারভোগীর NID নম্বর <span className="text-red-500">*</span>
+            </div>
+            <input 
+              type="text"
+              maxLength={17}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="১০/১৩/১৭ ডিজিটের NID নম্বর" 
+              required
+            />
           </div>
           <div>
-            <div className="text-[12px] mb-1">ওয়ার্ড</div>
-            <select className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white">
-              <option>ওয়ার্ড-০১</option>
-              <option>ওয়ার্ড-০২</option>
+            <div className="text-[12px] mb-1 font-medium">বাবার NID নম্বর</div>
+            <input 
+              type="text"
+              maxLength={17}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="বাবার NID নম্বর" 
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">মায়ের NID নম্বর</div>
+            <input 
+              type="text"
+              maxLength={17}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="মায়ের NID নম্বর" 
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              জন্ম তারিখ <span className="text-red-500">*</span>
+            </div>
+            <input 
+              type="date"
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none bg-white" 
+              required
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              মোবাইল নম্বর <span className="text-red-500">*</span>
+            </div>
+            <input 
+              type="tel"
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="০১XXXXXXXXX" 
+              required
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              মাসিক আয় (টাকা) <span className="text-red-500">*</span>
+            </div>
+            <input 
+              type="number"
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="মাসিক আয় লিখুন" 
+              required
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              পরিবারের সদস্য সংখ্যা <span className="text-red-500">*</span>
+            </div>
+            <input 
+              type="number"
+              min="1"
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none" 
+              placeholder="সদস্য সংখ্যা" 
+              required
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              ওয়ার্ড নম্বর <span className="text-red-500">*</span>
+            </div>
+            <select 
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none bg-white" 
+              required
+            >
+              <option value="">নির্বাচন করুন</option>
+              <option value="ওয়ার্ড-০১">ওয়ার্ড-০১</option>
+              <option value="ওয়ার্ড-০২">ওয়ার্ড-০২</option>
+              <option value="ওয়ার্ড-০৩">ওয়ার্ড-০৩</option>
+              <option value="ওয়ার্ড-০৪">ওয়ার্ড-০৪</option>
+              <option value="ওয়ার্ড-০৫">ওয়ার্ড-০৫</option>
             </select>
           </div>
           <div>
-            <div className="text-[12px] mb-1">স্ট্যাটাস</div>
-            <select className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white">
-              <option>Inactive (ডিফল্ট)</option>
-              <option>Active (এডমিন অনুমোদন)</option>
+            <div className="text-[12px] mb-1 font-medium">স্ট্যাটাস</div>
+            <select className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none bg-white">
+              <option value="Inactive">Inactive (ডিফল্ট)</option>
+              <option value="Active">Active (এডমিন অনুমোদন)</option>
             </select>
+          </div>
+          <div className="md:col-span-2">
+            <div className="text-[12px] mb-1 font-medium">
+              বর্তমান ঠিকানা <span className="text-red-500">*</span>
+            </div>
+            <textarea 
+              rows={2}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none resize-none" 
+              placeholder="সম্পূর্ণ ঠিকানা লিখুন (গ্রাম/মহল্লা, থানা, জেলা)" 
+              required
+            />
+          </div>
+          <div className="md:col-span-2">
+            <div className="text-[12px] mb-1 font-medium">মন্তব্য</div>
+            <textarea 
+              rows={2}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] focus:ring-2 focus:ring-[#16679c] outline-none resize-none" 
+              placeholder="অতিরিক্ত তথ্য (ঐচ্ছিক)" 
+            />
           </div>
         </div>
 
@@ -244,7 +360,12 @@ export default function BeneficiariesPage() {
           <Button variant="secondary" onClick={() => setOpenAdd(false)}>
             বাতিল
           </Button>
-          <Button onClick={() => alert("ডেমো: নিবন্ধন সাবমিট হয়েছে")}>সংরক্ষণ</Button>
+          <Button onClick={() => {
+            alert("ডেমো: নিবন্ধন সাবমিট হয়েছে");
+            setOpenAdd(false);
+          }}>
+            সংরক্ষণ করুন
+          </Button>
         </div>
       </Modal>
     </div>
