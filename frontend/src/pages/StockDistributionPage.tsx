@@ -399,7 +399,7 @@ export default function StockDistributionPage() {
               </div>
 
               <div className="overflow-x-auto bg-white">
-                <table className="w-full min-w-[1000px] text-[12px] border-collapse">
+                <table className="w-full min-w-250 text-[12px] border-collapse">
                   <thead>
                     <tr className="bg-[#f8fafc]">
                       <th className="border border-[#cfd6e0] p-2">সময়</th>
@@ -647,7 +647,7 @@ export default function StockDistributionPage() {
                 স্টক রেজিস্টার
               </div>
               <div className="overflow-x-auto bg-white">
-                <table className="min-w-[900px] w-full text-[12px] border-collapse">
+                <table className="min-w-225 w-full text-[12px] border-collapse">
                   <thead>
                     <tr className="bg-[#f8fafc]">
                       <th className="border border-[#cfd6e0] p-2">আইটেম</th>
