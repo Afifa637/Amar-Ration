@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DistributorLayout from "./layouts/DistributorLayout";
 
+import EntrancePage from "./pages/EntrancePage";
 import DistributorDashboard from "./pages/DistributorDashboard";
 import BeneficiariesPage from "./pages/BeneficiariesPage";
 import CardsTokensPage from "./pages/CardsTokensPage";
@@ -15,6 +16,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<EntrancePage />} />
+        
         <Route element={<DistributorLayout />}>
           <Route path="/dashboard" element={<DistributorDashboard />} />
           <Route path="/beneficiaries" element={<BeneficiariesPage />} />
@@ -26,8 +29,6 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
         </Route>
-
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
   );
