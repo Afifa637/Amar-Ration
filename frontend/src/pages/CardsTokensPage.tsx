@@ -153,7 +153,7 @@ export default function CardsTokensPage() {
   return (
     <div className="space-y-3">
       <PortalSection
-        title="OMS কার্ড / QR / টোকেন"
+        title="আমার রেশন কার্ড / QR / টোকেন"
         right={
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => setOpenScan(true)}>📷 QR স্ক্যান</Button>
@@ -406,7 +406,7 @@ export default function CardsTokensPage() {
             {/* Table */}
             <div className="border border-[#cfd6e0] rounded overflow-hidden">
               <div className="bg-[#e9edf3] px-3 py-2 text-[13px] font-semibold flex justify-between">
-                <span>OMS কার্ড তালিকা</span>
+                <span>আমার রেশন কার্ড তালিকা</span>
                 <span className="text-[12px] text-[#6b7280]">
                   মোট: {cardRows.length}
                 </span>
@@ -814,7 +814,7 @@ export default function CardsTokensPage() {
         onClose={() => setOpenTokenPrint({ open: false })}
       >
         <div className="border border-[#cfd6e0] rounded p-3 bg-[#fbfdff] text-[13px]">
-          <div className="font-semibold">টিসিবি স্মার্ট OMS টোকেন</div>
+          <div className="font-semibold">আমার রেশন টোকেন</div>
           <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
             <div>
               Token:{" "}

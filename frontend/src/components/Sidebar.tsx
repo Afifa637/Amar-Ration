@@ -21,7 +21,7 @@ export default function Sidebar() {
         </NavLink>
 
         <NavLink to="/cards" className={({ isActive }) => `${navItem} ${isActive ? activeItem : ""}`}>
-          <span>🪪</span><span>OMS কার্ড/টোকেন</span>
+          <span>🪪</span><span>আমার রেশন কার্ড/টোকেন</span>
         </NavLink>
 
         <NavLink to="/stock" className={({ isActive }) => `${navItem} ${isActive ? activeItem : ""}`}>
