@@ -9,7 +9,7 @@ export default function Topbar() {
   const handleLogout = () => {
     if (auth) {
       auth.logout();
-      navigate("/login");
+      navigate("/");
     }
   };
 
@@ -30,7 +30,14 @@ export default function Topbar() {
 
         <div className="flex items-center gap-3">
           <div className="hidden md:block text-[12px] opacity-90">
-            ব্যবহারকারী: <span className="font-semibold">ডিলার/অপারেটর</span>
+            ব্যবহারকারী: <span className="font-semibold">{auth?.user?.name || 'অতিথি'}</span>
+            {auth?.user?.role && (
+              <span className="ml-2 text-[11px] bg-white/15 px-2 py-0.5 rounded">
+                {auth.user.role === 'central-admin' && 'কেন্দ্রীয় প্রশাসক'}
+                {auth.user.role === 'distributor' && 'ডিস্ট্রিবিউটর'}
+                {auth.user.role === 'field-distributor' && 'ফিল্ড ডিস্ট্রিবিউটর'}
+              </span>
+            )}
           </div>
           <button
             onClick={handleLogout}

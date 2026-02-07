@@ -84,7 +84,7 @@ export default function SettingsPage() {
       </PortalSection>
 
       {/* ================= QR & IDENTITY ================= */}
-      <PortalSection title="OMS কার্ড ও QR সেটিংস">
+      <PortalSection title="আমার রেশন কার্ড ও QR সেটিংস">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="border p-3 bg-[#fbfdff]">
             <div className="font-semibold">🪪 QR Expiry Cycle</div>
