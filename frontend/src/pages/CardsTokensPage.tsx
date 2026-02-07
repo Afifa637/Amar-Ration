@@ -412,7 +412,7 @@ export default function CardsTokensPage() {
                 </span>
               </div>
               <div className="overflow-x-auto bg-white">
-                <table className="min-w-[1100px] w-full text-[12px] border-collapse">
+                <table className="min-w-275 w-full text-[12px] border-collapse">
                   <thead>
                     <tr className="bg-[#f8fafc]">
                       <th className="border border-[#cfd6e0] p-2">Consumer</th>
@@ -555,7 +555,7 @@ export default function CardsTokensPage() {
                 টোকেন তালিকা (ডেমো)
               </div>
               <div className="overflow-x-auto bg-white">
-                <table className="min-w-[900px] w-full text-[12px] border-collapse">
+                <table className="min-w-225 w-full text-[12px] border-collapse">
                   <thead>
                     <tr className="bg-[#f8fafc]">
                       <th className="border border-[#cfd6e0] p-2">Token</th>
