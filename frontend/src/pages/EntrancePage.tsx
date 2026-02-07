@@ -22,19 +22,14 @@ const EntrancePage = () => {
   ];
 
   const handleLoginSelect = (role: string) => {
-    if (role === "distributor") {
-      navigate("/dashboard");
-    } else {
-      navigate(`/login/${role}`);
-    }
+    navigate(`/login/${role}`);
   };
 
   return (
     <div
       className="min-h-screen flex flex-col pt-8 px-4 bg-cover bg-center bg-no-repeat relative"
       style={{
-        backgroundImage: "url('/assets/image/entrance_bg.png')",
-        backgroundSize: '100% 100%',
+        backgroundImage: "url('/assets/image/bg-2.jpg')",
       }}
     >
       {/* Overlay for better readability */}
@@ -66,7 +61,7 @@ const EntrancePage = () => {
               key={option.role}
               onClick={() => handleLoginSelect(option.role)}
               style={{ width: '280px', height: '280px', padding: '32px' }}
-              className="bg-[#16679c] text-white rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.4)] hover:shadow-[0_15px_50px_rgba(0,0,0,0.5)] transform hover:scale-105 hover:-translate-y-2 transition-all duration-300 flex items-center justify-center"
+              className="bg-white/10 backdrop-blur-lg text-white rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.4)] hover:shadow-[0_15px_50px_rgba(0,0,0,0.5)] border border-white/20 transform hover:scale-105 hover:-translate-y-2 transition-all duration-300 flex items-center justify-center"
             >
               <div className="flex flex-col items-center justify-between text-center" style={{ height: '100%', width: '100%' }}>
                 {/* Icon */}
@@ -85,7 +80,7 @@ const EntrancePage = () => {
 
                 {/* Login Button */}
                 <div style={{ width: '100%', marginBottom: '12px' }}>
-                  <div className="bg-white text-[#16679c] rounded-lg hover:bg-gray-100 transition-colors duration-300 text-center font-semibold shadow-md" style={{ padding: '10px 28px', fontSize: '17px' }}>
+                  <div className="bg-white/90 backdrop-blur-sm text-[#16679c] rounded-lg hover:bg-white transition-colors duration-300 text-center font-semibold shadow-md" style={{ padding: '10px 28px', fontSize: '17px' }}>
                     লগইন করুন
                   </div>
                 </div>

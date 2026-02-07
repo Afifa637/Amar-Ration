@@ -20,7 +20,7 @@ export default function ReportTable() {
     <div className="border border-[#d7dde6] rounded overflow-hidden">
       <div className="bg-[#f3f5f8] px-3 py-2 border-b border-[#d7dde6]">
         <div className="text-center text-[13px] font-semibold text-[#b91c1c]">
-          টিসিবি স্মার্ট ফ্যামিলি কার্ড মনিটরিং: সারসংক্ষেপ টেবিল
+          আমার রেশন মনিটরিং: সারসংক্ষেপ টেবিল
         </div>
         <div className="text-center text-[12px] text-[#6b7280] mt-1">
           (ডেমো ডেটা — পরে API থেকে রিয়েল ডেটা বসবে)
