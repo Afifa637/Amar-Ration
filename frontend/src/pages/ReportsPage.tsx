@@ -23,7 +23,8 @@ export default function ReportsPage() {
         }
       >
         <div className="text-[12px] text-[#6b7280]">
-          নির্বাচিত সময় ও লোকেশন অনুযায়ী OMS বিতরণ কার্যক্রমের বিস্তারিত বিশ্লেষণ।
+          নির্বাচিত সময় ও লোকেশন অনুযায়ী OMS বিতরণ কার্যক্রমের বিস্তারিত
+          বিশ্লেষণ।
         </div>
       </PortalSection>
 
@@ -61,16 +62,28 @@ export default function ReportsPage() {
       {/* ================= TABS ================= */}
       <PortalSection title="রিপোর্ট টাইপ">
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setTab("distribution")} variant={tab === "distribution" ? "primary" : "secondary"}>
+          <Button
+            onClick={() => setTab("distribution")}
+            variant={tab === "distribution" ? "primary" : "secondary"}
+          >
             📦 বিতরণ রিপোর্ট
           </Button>
-          <Button onClick={() => setTab("stock")} variant={tab === "stock" ? "primary" : "secondary"}>
+          <Button
+            onClick={() => setTab("stock")}
+            variant={tab === "stock" ? "primary" : "secondary"}
+          >
             ⚖️ স্টক ও রিকনসিলিয়েশন
           </Button>
-          <Button onClick={() => setTab("token")} variant={tab === "token" ? "primary" : "secondary"}>
+          <Button
+            onClick={() => setTab("token")}
+            variant={tab === "token" ? "primary" : "secondary"}
+          >
             🎫 টোকেন বিশ্লেষণ
           </Button>
-          <Button onClick={() => setTab("audit")} variant={tab === "audit" ? "primary" : "secondary"}>
+          <Button
+            onClick={() => setTab("audit")}
+            variant={tab === "audit" ? "primary" : "secondary"}
+          >
             🧾 অডিট ও জালিয়াতি
           </Button>
         </div>
@@ -101,7 +114,7 @@ export default function ReportsPage() {
       {/* ================= TABLE ================= */}
       <PortalSection title="রিপোর্ট টেবিল">
         <div className="border rounded overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-[12px]">
+          <table className="min-w-275 w-full text-[12px]">
             <thead className="bg-[#f8fafc]">
               <tr>
                 <th className="border p-2">তারিখ</th>
@@ -131,7 +144,9 @@ export default function ReportsPage() {
                 <td className="border p-2 text-center">T-1004</td>
                 <td className="border p-2 text-center">৫.০০</td>
                 <td className="border p-2 text-center">৫.০০</td>
-                <td className="border p-2 text-center text-[#b91c1c] font-bold">৪.৫০</td>
+                <td className="border p-2 text-center text-[#b91c1c] font-bold">
+                  ৪.৫০
+                </td>
                 <td className="border p-2 text-center">
                   <Badge tone="red">মিসম্যাচ</Badge>
                 </td>
@@ -143,7 +158,8 @@ export default function ReportsPage() {
 
       {/* ================= FOOTER NOTE ================= */}
       <div className="text-[11px] text-[#6b7280] text-center">
-        এই রিপোর্ট শুধুমাত্র প্রদর্শনের উদ্দেশ্যে। বাস্তব ব্যবহারে সমস্ত ডেটা Audit Log দ্বারা যাচাইযোগ্য।
+        এই রিপোর্ট শুধুমাত্র প্রদর্শনের উদ্দেশ্যে। বাস্তব ব্যবহারে সমস্ত ডেটা
+        Audit Log দ্বারা যাচাইযোগ্য।
       </div>
     </div>
   );
