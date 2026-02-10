@@ -1,3 +1,9 @@
+const DistributionRecord = require("../models/DistributionRecord");
+const StockLedger = require("../models/StockLedger"); // optional if you ever query; not required
+const SystemSetting = require("../models/SystemSetting");
+const { stockOut } = require("../services/stock.service");
+const { writeAudit } = require("../services/audit.service");
+
 const mongoose = require("mongoose");
 const Distributor = require("../models/Distributor");
 const OMSCard = require("../models/OMSCard");
@@ -94,4 +100,99 @@ async function scanAndIssueToken(req, res) {
   }
 }
 
-module.exports = { scanAndIssueToken };
+// POST /api/distribution/complete { tokenCode, actualKg }
+async function completeDistribution(req, res) {
+  const userId = req.user.id;
+  const dist = await getDistributorByUserId(userId);
+  if (!dist) return res.status(403).json({ message: "Distributor profile not found" });
+
+  const { tokenCode, actualKg } = req.body;
+  if (!tokenCode || actualKg === undefined) {
+    return res.status(400).json({ message: "tokenCode, actualKg required" });
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+
+    const token = await Token.findOne({ tokenCode }).session(session);
+    if (!token) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "Token not found" });
+    }
+
+    // Distributor safety: token must belong to same distributor
+    if (String(token.distributorId) !== String(dist._id)) {
+      await session.abortTransaction();
+      return res.status(403).json({ message: "Forbidden: token অন্য ডিলারের" });
+    }
+
+    if (token.status !== "Issued") {
+      await session.abortTransaction();
+      return res.status(400).json({ message: "Token usable নয়" });
+    }
+
+    // Settings: default maxDiff = 0.05kg
+    const setting = await SystemSetting.findOne({ key: "weightThresholdKg" }).session(session).lean();
+    const maxDiff = Number(setting?.value?.maxDiff ?? 0.05);
+
+    const expected = Number(token.rationQtyKg);
+    const actual = Number(actualKg);
+
+    if (Number.isNaN(actual) || actual <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: "actualKg invalid" });
+    }
+
+    const mismatch = Math.abs(actual - expected) > maxDiff;
+
+    // Record distribution (1:1 token)
+    await DistributionRecord.create(
+      [{ tokenId: token._id, expectedKg: expected, actualKg: actual, mismatch }],
+      { session }
+    );
+
+    // Mark token used
+    token.status = "Used";
+    token.usedAt = new Date();
+    await token.save({ session });
+
+    // Stock OUT ledger (immutable)
+    await stockOut(
+      { distributorId: dist._id, dateKey: todayKey(), qtyKg: actual, ref: token.tokenCode },
+      session
+    );
+
+    // Audit event
+    await writeAudit(
+      {
+        actorUserId: userId,
+        actorType: "Distributor",
+        action: mismatch ? "WEIGHT_MISMATCH" : "DISTRIBUTION_SUCCESS",
+        entityType: "Token",
+        entityId: String(token._id),
+        severity: mismatch ? "Critical" : "Info",
+        meta: { token: token.tokenCode, expected, actual, maxDiff }
+      },
+      session
+    );
+
+    await session.commitTransaction();
+    return res.json({ ok: true, mismatch, expected, actual, maxDiff });
+  } catch (err) {
+    await session.abortTransaction();
+
+    // duplicate distribution record safety
+    if (err?.code === 11000) {
+      return res.status(400).json({ message: "Already completed (duplicate token record)" });
+    }
+
+    console.error(err);
+    return res.status(500).json({ message: "Server Error" });
+  } finally {
+    session.endSession();
+  }
+}
+
+module.exports = { scanAndIssueToken, completeDistribution };
+
