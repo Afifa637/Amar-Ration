@@ -5,8 +5,10 @@ const AuditLogSchema = new mongoose.Schema(
     actorUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     actorType: { type: String, enum: ["Admin", "Distributor", "System"], required: true },
     action: { type: String, required: true },
-    entityType: String,
-    entityId: String,
+
+    entityType: { type: String }, // "Token", "Consumer" etc.
+    entityId: { type: String },   // store string to support polymorphic
+
     severity: { type: String, enum: ["Info", "Warning", "Critical"], default: "Info" },
     meta: { type: Object, default: {} }
   },

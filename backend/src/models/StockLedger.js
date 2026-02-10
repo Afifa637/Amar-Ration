@@ -3,11 +3,11 @@ const mongoose = require("mongoose");
 const StockLedgerSchema = new mongoose.Schema(
   {
     distributorId: { type: mongoose.Schema.Types.ObjectId, ref: "Distributor" },
-    dateKey: String,
+    dateKey: { type: String, required: true }, // YYYY-MM-DD
     type: { type: String, enum: ["IN", "OUT", "ADJUST"], required: true },
     item: { type: String, default: "Rice" },
     qtyKg: { type: Number, required: true },
-    ref: String
+    ref: { type: String } // tokenCode or batch ref etc.
   },
   { timestamps: true }
 );
