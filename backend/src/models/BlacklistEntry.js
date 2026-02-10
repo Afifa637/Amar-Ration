@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const BlacklistEntrySchema = new mongoose.Schema(
   {
     targetType: { type: String, enum: ["Consumer", "Distributor"], required: true },
-    targetRefId: { type: String, required: true },
+    targetRefId: { type: String, required: true }, // consumerId/distributorId as string
     blockType: { type: String, enum: ["Temporary", "Permanent"], required: true },
     reason: { type: String, required: true },
     active: { type: Boolean, default: true },
