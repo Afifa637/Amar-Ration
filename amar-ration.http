@@ -1,0 +1,35 @@
+### Login Distributor
+POST http://localhost:5000/api/auth/login
+Content-Type: application/json
+
+{
+  "phone": "01800000000",
+  "password": "dist123"
+}
+
+### Scan QR
+POST http://localhost:5000/api/distribution/scan
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+Content-Type: application/json
+
+{
+  "qrPayload": "OMS:C0001:2026"
+}
+
+### Complete Distribution
+POST http://localhost:5000/api/distribution/complete
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+Content-Type: application/json
+
+{
+  "tokenCode": "T-123456",
+  "actualKg": 5
+}
+
+### Reports
+GET http://localhost:5000/api/reports/summary
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+
+### Monitoring
+GET http://localhost:5000/api/monitoring/summary
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
