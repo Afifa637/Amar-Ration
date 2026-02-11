@@ -10,7 +10,6 @@ const OMSCard = require("../models/OMSCard");
 const Consumer = require("../models/Consumer");
 const DistributionSession = require("../models/DistributionSession");
 const Token = require("../models/Token");
-const { hashPayload, isQRCodeValidByHash } = require("../services/qr.service");
 const { rationQtyByCategory, makeTokenCode } = require("../services/token.service");
 
 function todayKey() {
