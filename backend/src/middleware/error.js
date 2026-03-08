@@ -4,7 +4,6 @@ function notFound(req, res) {
     message: "Route not found" 
   });
 }
-
 function errorHandler(err, req, res, next) {
   console.error("Error:", err);
 
@@ -47,5 +46,4 @@ function errorHandler(err, req, res, next) {
     message: err.message || "Server Error" 
   });
 }
-
 module.exports = { notFound, errorHandler };
