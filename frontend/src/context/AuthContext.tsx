@@ -73,7 +73,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       // Call backend login API
       const response = await api.post("/auth/login", {
-        email,
+        identifier: email,
         password,
         userType
       });

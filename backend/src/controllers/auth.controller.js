@@ -32,10 +32,18 @@ exports.signup = async (req, res) => {
       });
     }
 
-    if (!["Admin", "Distributor", "FieldUser", "Consumer"].includes(userType)) {
+    // Admin account is preset — cannot be created via signup
+    if (userType === "Admin") {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Admin signup is not allowed. Admin account is preconfigured." 
+      });
+    }
+
+    if (!["Distributor", "FieldUser", "Consumer"].includes(userType)) {
       return res.status(400).json({ 
         success: false, 
-        message: "Invalid user type. Must be Admin, Distributor, FieldUser, or Consumer" 
+        message: "Invalid user type. Must be Distributor, FieldUser, or Consumer" 
       });
     }
 

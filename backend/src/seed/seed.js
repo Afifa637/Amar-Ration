@@ -24,14 +24,18 @@ async function seedDatabase() {
     const defaultPassword = 'Admin@123';
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
+    // Preset admin credentials
+    const adminPassword = 'adminadmin';
+    const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
+
     // Create Admin User
     console.log('👤 Creating Admin user...');
     const admin = await User.create({
       userType: 'Admin',
       name: 'System Administrator',
-      email: 'admin@amarration.gov.bd',
+      email: 'admin_amarration@gmail.com',
       phone: '01711000000',
-      passwordHash: hashedPassword,
+      passwordHash: hashedAdminPassword,
       status: 'Active',
       division: 'Dhaka',
       district: 'Dhaka',

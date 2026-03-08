@@ -20,6 +20,29 @@ export default function SignupPage() {
   const navigate = useNavigate();
   const { role } = useParams<{ role: UserRole }>();
   const auth = useContext(AuthContext);
+
+  // Admin signup is not allowed — admin is preset
+  if (role === "central-admin") {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat relative"
+        style={{ backgroundImage: "url('/assets/image/bg-2.jpg')" }}
+      >
+        <div className="absolute inset-0 bg-black/50"></div>
+        <div className="relative z-10 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
+          <div className="text-6xl mb-4">🔒</div>
+          <h2 className="text-2xl font-bold text-white mb-2">অ্যাডমিন সাইনআপ উপলব্ধ নেই</h2>
+          <p className="text-white/80 mb-6">অ্যাডমিন অ্যাকাউন্ট পূর্বনির্ধারিত। দয়া করে লগইন করুন।</p>
+          <button
+            onClick={() => navigate("/login/central-admin")}
+            className="bg-[#16679c] text-white px-6 py-2.5 rounded-lg hover:bg-[#125a85] font-semibold"
+          >
+            লগইন পেজে যান
+          </button>
+        </div>
+      </div>
+    );
+  }
   
   const [formData, setFormData] = useState({
     name: "",
@@ -274,19 +297,14 @@ export default function SignupPage() {
                 <label className="text-sm font-medium text-white block mb-1">
                   ওয়ার্ড নম্বর <span className="text-red-400">*</span>
                 </label>
-                <select
+                <input
+                  type="text"
                   name="wardNo"
                   value={formData.wardNo}
                   onChange={handleChange}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
-                >
-                  <option value="" className="bg-[#16679c] text-white">নির্বাচন করুন</option>
-                  <option value="01" className="bg-[#16679c] text-white">ওয়ার্ড-০১</option>
-                  <option value="02" className="bg-[#16679c] text-white">ওয়ার্ড-০২</option>
-                  <option value="03" className="bg-[#16679c] text-white">ওয়ার্ড-০৩</option>
-                  <option value="04" className="bg-[#16679c] text-white">ওয়ার্ড-০৪</option>
-                  <option value="05" className="bg-[#16679c] text-white">ওয়ার্ড-০৫</option>
-                </select>
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
+                  placeholder="ওয়ার্ড নম্বর লিখুন"
+                />
               </div>
             )}
 
@@ -366,22 +384,7 @@ export default function SignupPage() {
               </div>
             )}
 
-            {/* Ward - For Distributor and Field Distributor */}
-            {(role === "distributor" || role === "field-distributor") && (
-              <div>
-                <label className="text-sm font-medium text-white block mb-1">
-                  ওয়ার্ড
-                </label>
-                <input
-                  type="text"
-                  name="ward"
-                  value={formData.ward}
-                  onChange={handleChange}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
-                  placeholder="ওয়ার্ড লিখুন"
-                />
-              </div>
-            )}
+
 
             {/* NID Last 4 Digits - For Central Admin (Consumer data entry) */}
             {role === "central-admin" && (

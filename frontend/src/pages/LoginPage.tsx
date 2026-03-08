@@ -136,16 +136,18 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Signup Link */}
-        <div className="mt-4 text-center text-sm text-white/90">
-          নতুন ইউজার?{" "}
-          <button
-            onClick={handleSignupRedirect}
-            className="text-white hover:underline font-semibold"
-          >
-            সাইন আপ করুন
-          </button>
-        </div>
+        {/* Signup Link - Hidden for admin */}
+        {role !== "central-admin" && (
+          <div className="mt-4 text-center text-sm text-white/90">
+            নতুন ইউজার?{" "}
+            <button
+              onClick={handleSignupRedirect}
+              className="text-white hover:underline font-semibold"
+            >
+              সাইন আপ করুন
+            </button>
+          </div>
+        )}
 
         {/* Back to entrance */}
         <div className="mt-3 text-center">
