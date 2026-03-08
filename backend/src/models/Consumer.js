@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const ConsumerSchema = new mongoose.Schema(
   {
     consumerCode: { type: String, unique: true, required: true }, // C0001
+    qrToken: { type: String, unique: true, required: true }, // 64-char hex token for QR scanning
     name: { type: String, required: true },
     nidLast4: { type: String, required: true },
     status: { type: String, enum: ["Active", "Inactive", "Revoked"], default: "Inactive" },
