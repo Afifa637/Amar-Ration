@@ -8,7 +8,7 @@ const authRoutes = require("./routes/auth.routes");
 const distributionRoutes = require("./routes/distribution.routes");
 const monitoringRoutes = require("./routes/monitoring.routes");
 const reportsRoutes = require("./routes/reports.routes");
-const settingsRoutes = require("./routes/settings.routes");
+//const settingsRoutes = require("./routes/settings.routes");
 
 const app = express();
 
@@ -22,7 +22,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/distribution", distributionRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/settings", settingsRoutes);
+//app.use("/api/settings", settingsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
