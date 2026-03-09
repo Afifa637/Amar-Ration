@@ -1,6 +1,21 @@
 import { createContext, useState, useEffect, type ReactNode } from "react";
+import api from "../services/api";
 
 export type UserRole = "central-admin" | "distributor" | "field-distributor";
+
+// Map backend userTypes to frontend roles
+const userTypeToRole: Record<string, UserRole> = {
+  "Admin": "central-admin",
+  "Distributor": "distributor",
+  "FieldUser": "field-distributor",
+};
+
+// Map frontend roles to backend userTypes
+const roleToUserType: Record<UserRole, string> = {
+  "central-admin": "Admin",
+  "distributor": "Distributor",
+  "field-distributor": "FieldUser",
+};
 
 export type User = {
   id: string;
@@ -34,8 +49,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (storedAuth) {
       try {
         const { user, token } = JSON.parse(storedAuth);
-        // In production, validate token with backend
         if (user && token) {
+          // Set token in api headers
+          api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
           setUser(user);
           setIsAuthenticated(true);
         }
@@ -52,54 +68,54 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     role: UserRole
   ): Promise<boolean> => {
     try {
-      // In production, this would be an API call to your backend
-      // For demo purposes, we'll simulate authentication
+      // Map frontend role to backend userType
+      const userType = roleToUserType[role];
       
-      // Demo credentials validation (remove in production)
-      if (!email || !password) {
-        return false;
+      // Call backend login API
+      const response = await api.post("/auth/login", {
+        identifier: email,
+        password,
+        userType
+      });
+
+      if (response.data.success) {
+        const { token, user: backendUser } = response.data.data;
+        
+        // Map backend user to frontend user format
+        const frontendUser: User = {
+          id: backendUser._id,
+          name: backendUser.name,
+          email: backendUser.email,
+          role: userTypeToRole[backendUser.userType] || role,
+          wardNo: backendUser.wardNo,
+          officeAddress: backendUser.officeAddress,
+        };
+
+        // Store in localStorage
+        localStorage.setItem(
+          AUTH_STORAGE_KEY,
+          JSON.stringify({ user: frontendUser, token })
+        );
+
+        // Set token in api headers for subsequent requests
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+        setUser(frontendUser);
+        setIsAuthenticated(true);
+
+        return true;
       }
-
-      // Simulate API call delay
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Create demo user based on role
-      const demoUser: User = {
-        id: `user_${Date.now()}`,
-        name: email.split("@")[0],
-        email: email,
-        role: role,
-        wardNo: role !== "central-admin" ? "ওয়ার্ড-০১" : undefined,
-        officeAddress: role === "distributor" ? "ঢাকা অফিস" : undefined,
-      };
-
-      // Generate demo token (in production, backend sends this)
-      const demoToken = btoa(
-        JSON.stringify({
-          userId: demoUser.id,
-          role: demoUser.role,
-          exp: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-        })
-      );
-
-      // Store in localStorage
-      localStorage.setItem(
-        AUTH_STORAGE_KEY,
-        JSON.stringify({ user: demoUser, token: demoToken })
-      );
-
-      setUser(demoUser);
-      setIsAuthenticated(true);
-
-      return true;
-    } catch (error) {
-      console.error("Login failed:", error);
+      
+      return false;
+    } catch (error: any) {
+      console.error("Login failed:", error.response?.data?.message || error.message);
       return false;
     }
   };
 
   const logout = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
     setIsAuthenticated(false);
   };
