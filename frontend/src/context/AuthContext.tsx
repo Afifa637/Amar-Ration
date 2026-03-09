@@ -2,17 +2,22 @@ import { createContext, useState, useEffect, type ReactNode } from "react";
 
 export type UserRole = "central-admin" | "distributor" | "field-distributor";
 
-export type User = {
+export interface AuthUser {
   id: string;
   name: string;
   email: string;
   role: UserRole;
   wardNo?: string;
   officeAddress?: string;
+}
+
+type StoredAuth = {
+  user: AuthUser;
+  token: string;
 };
 
 type AuthContextType = {
-  user: User | null;
+  user: AuthUser | null;
   isAuthenticated: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
@@ -20,29 +25,37 @@ type AuthContextType = {
 };
 
 const AUTH_STORAGE_KEY = "amar_ration_auth";
+const ADMIN_EMAIL = "admin@amarration.gov.bd";
+const ADMIN_PASSWORD = "Admin@123";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Load user from localStorage on mount
   useEffect(() => {
     const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (storedAuth) {
-      try {
-        const { user, token } = JSON.parse(storedAuth);
-        // In production, validate token with backend
-        if (user && token) {
-          setUser(user);
-          setIsAuthenticated(true);
-        }
-      } catch (error) {
-        console.error("Failed to parse stored auth:", error);
-        localStorage.removeItem(AUTH_STORAGE_KEY);
+
+    if (!storedAuth) return;
+
+    try {
+      const parsed: unknown = JSON.parse(storedAuth);
+
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "user" in parsed &&
+        "token" in parsed
+      ) {
+        const authData = parsed as StoredAuth;
+        setUser(authData.user);
+        setIsAuthenticated(true);
       }
+    } catch (error) {
+      console.error("Failed to parse stored auth:", error);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
     }
   }, []);
 
@@ -52,45 +65,66 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     role: UserRole
   ): Promise<boolean> => {
     try {
-      // In production, this would be an API call to your backend
-      // For demo purposes, we'll simulate authentication
-      
-      // Demo credentials validation (remove in production)
-      if (!email || !password) {
-        return false;
+      if (!email || !password) return false;
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      if (role === "central-admin") {
+        if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+          return false;
+        }
+
+        const adminUser: AuthUser = {
+          id: "admin-fixed-user",
+          name: "Central Admin",
+          email: ADMIN_EMAIL,
+          role: "central-admin",
+        };
+
+        const adminToken = btoa(
+          JSON.stringify({
+            userId: adminUser.id,
+            role: adminUser.role,
+            exp: Date.now() + 24 * 60 * 60 * 1000,
+          })
+        );
+
+        const authData: StoredAuth = {
+          user: adminUser,
+          token: adminToken,
+        };
+
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authData));
+        setUser(adminUser);
+        setIsAuthenticated(true);
+        return true;
       }
 
-      // Simulate API call delay
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Create demo user based on role
-      const demoUser: User = {
+      const demoUser: AuthUser = {
         id: `user_${Date.now()}`,
-        name: email.split("@")[0],
-        email: email,
-        role: role,
-        wardNo: role !== "central-admin" ? "ওয়ার্ড-০১" : undefined,
+        name: email.split("@")[0] || "User",
+        email,
+        role,
+        wardNo: "ওয়ার্ড-০১",
         officeAddress: role === "distributor" ? "ঢাকা অফিস" : undefined,
       };
 
-      // Generate demo token (in production, backend sends this)
       const demoToken = btoa(
         JSON.stringify({
           userId: demoUser.id,
           role: demoUser.role,
-          exp: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+          exp: Date.now() + 24 * 60 * 60 * 1000,
         })
       );
 
-      // Store in localStorage
-      localStorage.setItem(
-        AUTH_STORAGE_KEY,
-        JSON.stringify({ user: demoUser, token: demoToken })
-      );
+      const authData: StoredAuth = {
+        user: demoUser,
+        token: demoToken,
+      };
 
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authData));
       setUser(demoUser);
       setIsAuthenticated(true);
-
       return true;
     } catch (error) {
       console.error("Login failed:", error);

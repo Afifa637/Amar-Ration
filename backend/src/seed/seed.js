@@ -56,7 +56,7 @@ function sha256(s) {
   // create admin
   const adminPass = await bcrypt.hash("admin123", 10);
   const admin = await User.create({
-    userType: "Admin",
+    userType: "Central Admin",
     name: "এডমিন",
     phone: "01700000000",
     passwordHash: adminPass,
@@ -129,7 +129,7 @@ function sha256(s) {
   });
 
   console.log("✅ Seed done!");
-  console.log("Admin login: 01700000000 / admin123");
+  console.log("Central Admin login: 01700000000 / admin123");
   console.log("Distributor login: 01800000000 / dist123");
   console.log("Demo QR payload:", qrPayload);
 

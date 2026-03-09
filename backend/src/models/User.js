@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const UserSchema = new mongoose.Schema(
   {
-    userType: { type: String, enum: ["Admin", "Distributor"], required: true },
+    userType: { type: String, enum: ["Central Admin", "Distributor"], required: true },
     name: { type: String, required: true },
     phone: { type: String, unique: true, sparse: true },
     email: { type: String, unique: true, sparse: true },
