@@ -1,9 +1,8 @@
 const router = require("express").Router();
-const { auth } = require("../middleware/auth");
-const { allowUserTypes } = require("../middleware/rbac");
+const { protect, authorize } = require("../middleware/auth");
 const { scanAndIssueToken, completeDistribution } = require("../controllers/distribution.controller");
 
-router.post("/scan", auth, allowUserTypes("Distributor"), scanAndIssueToken);
-router.post("/complete", auth, allowUserTypes("Distributor"), completeDistribution);
+router.post("/scan", protect, authorize("Distributor", "FieldUser"), scanAndIssueToken);
+router.post("/complete", protect, authorize("Distributor", "FieldUser"), completeDistribution);
 
 module.exports = router;

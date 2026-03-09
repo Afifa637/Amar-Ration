@@ -5,10 +5,6 @@ const OMSCard = require("../models/OMSCard");
 const Consumer = require("../models/Consumer");
 const DistributionSession = require("../models/DistributionSession");
 const Token = require("../models/Token");
-const DistributionRecord = require("../models/DistributionRecord");
-const SystemSetting = require("../models/SystemSetting");
-
-const { hashPayload, isQRCodeValidByHash } = require("../services/qr.service");
 const { rationQtyByCategory, makeTokenCode } = require("../services/token.service");
 const { stockOut } = require("../services/stock.service");
 const { writeAudit } = require("../services/audit.service");
