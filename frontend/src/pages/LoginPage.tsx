@@ -1,10 +1,10 @@
 import { useState, useContext } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AuthContext, UserRole } from "../context/AuthContext";
+import { AuthContext, type UserRole } from "../context/AuthContext";
 
 const roleNames: Record<UserRole, string> = {
   "central-admin": "কেন্দ্রীয় অ্যাডমিন",
-  "distributor": "ডিস্ট্রিবিউটর",
+  distributor: "ডিস্ট্রিবিউটর",
   "field-distributor": "ফিল্ড ডিস্ট্রিবিউটর",
 };
 
@@ -12,8 +12,15 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { role } = useParams<{ role: UserRole }>();
   const auth = useContext(AuthContext);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+
+  const isAdminLogin = role === "central-admin";
+
+  const [email, setEmail] = useState(
+    isAdminLogin ? "admin@amarration.gov.bd" : ""
+  );
+  const [password, setPassword] = useState(
+    isAdminLogin ? "Admin@123" : ""
+  );
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -36,14 +43,17 @@ export default function LoginPage() {
 
     try {
       const success = await auth.login(email, password, role as UserRole);
-      
+
       if (success) {
-        // Redirect based on role
-        navigate("/dashboard");
+        if (role === "central-admin") {
+          navigate("/admin/dashboard");
+        } else {
+          navigate("/dashboard");
+        }
       } else {
         setError("ইমেইল বা পাসওয়ার্ড ভুল");
       }
-    } catch (err) {
+    } catch {
       setError("লগইন করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।");
     } finally {
       setIsLoading(false);
@@ -64,7 +74,6 @@ export default function LoginPage() {
       <div className="absolute inset-0 bg-black/50"></div>
 
       <div className="relative z-10 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-md rounded-2xl shadow-2xl p-6">
-        {/* Logo */}
         <div className="flex justify-center mb-3">
           <img
             src="/assets/image/app_logo.png"
@@ -74,22 +83,21 @@ export default function LoginPage() {
           />
         </div>
 
-        {/* Title */}
         <h1 className="text-xl font-bold mb-1 text-center text-white">
           {roleNames[role as UserRole] || "লগইন"}
         </h1>
         <p className="text-sm text-white/80 text-center mb-4">
-          আপনার অ্যাকাউন্টে লগইন করুন
+          {isAdminLogin
+            ? "অ্যাডমিন প্যানেলে প্রবেশ করতে নির্ধারিত ক্রেডেনশিয়াল ব্যবহার করুন"
+            : "আপনার অ্যাকাউন্টে লগইন করুন"}
         </p>
 
-        {/* Error message */}
         {error && (
           <div className="mb-3 p-2 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
             {error}
           </div>
         )}
 
-        {/* Login Form */}
         <form onSubmit={handleLogin} className="space-y-3">
           <div>
             <label className="text-sm font-medium text-white block mb-1">
@@ -117,6 +125,19 @@ export default function LoginPage() {
             />
           </div>
 
+          {isAdminLogin && (
+            <div className="rounded-lg border border-white/20 bg-white/10 p-3 text-sm text-white/90">
+              <div>
+                Fixed admin email:{" "}
+                <span className="font-semibold">admin@amarration.gov.bd</span>
+              </div>
+              <div>
+                Fixed admin password:{" "}
+                <span className="font-semibold">Admin@123</span>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between text-sm">
             <label className="flex items-center">
               <input type="checkbox" className="mr-2" />
@@ -136,18 +157,18 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Signup Link */}
-        <div className="mt-4 text-center text-sm text-white/90">
-          নতুন ইউজার?{" "}
-          <button
-            onClick={handleSignupRedirect}
-            className="text-white hover:underline font-semibold"
-          >
-            সাইন আপ করুন
-          </button>
-        </div>
+        {!isAdminLogin && (
+          <div className="mt-4 text-center text-sm text-white/90">
+            নতুন ইউজার?{" "}
+            <button
+              onClick={handleSignupRedirect}
+              className="text-white hover:underline font-semibold"
+            >
+              সাইন আপ করুন
+            </button>
+          </div>
+        )}
 
-        {/* Back to entrance */}
         <div className="mt-3 text-center">
           <button
             onClick={() => navigate("/")}
