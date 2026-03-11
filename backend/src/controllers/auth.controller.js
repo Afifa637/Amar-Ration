@@ -191,7 +191,7 @@ exports.signup = async (req, res) => {
 // @access  Public
 exports.login = async (req, res) => {
   try {
-    const { identifier, password } = req.body; // identifier can be email, phone, or consumerCode
+    const { identifier, password, userType } = req.body; // identifier can be email, phone, or consumerCode
 
     // Validation
     if (!identifier || !password) {
@@ -211,6 +211,14 @@ exports.login = async (req, res) => {
     });
 
     if (!user) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Invalid credentials" 
+      });
+    }
+
+    // Verify the user is logging in through the correct portal
+    if (userType && user.userType !== userType) {
       return res.status(401).json({ 
         success: false, 
         message: "Invalid credentials" 

@@ -31,7 +31,7 @@ async function getOrCreateSession(distributorId, session) {
 
 // POST /api/distribution/scan { qrPayload }
 async function scanAndIssueToken(req, res) {
-  const userId = req.user.id;
+  const userId = req.user.userId;
   const dist = await getDistributorByUserId(userId);
   if (!dist) return res.status(403).json({ message: "Distributor profile not found" });
 
@@ -101,7 +101,7 @@ async function scanAndIssueToken(req, res) {
 
 // POST /api/distribution/complete { tokenCode, actualKg }
 async function completeDistribution(req, res) {
-  const userId = req.user.id;
+  const userId = req.user.userId;
   const dist = await getDistributorByUserId(userId);
   if (!dist) return res.status(403).json({ message: "Distributor profile not found" });
 
