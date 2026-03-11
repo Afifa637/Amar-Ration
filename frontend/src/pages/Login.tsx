@@ -1,15 +1,10 @@
-import { useContext, useState } from "react";
-import { AuthContext } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
 const Login = () => {
-  const auth = useContext(AuthContext);
   const navigate = useNavigate();
-  const [name, setName] = useState("অতিথি");
 
   const handleLogin = () => {
-    auth?.login(name);
-    navigate("/dashboard");
+    navigate("/");
   };
 
   return (
@@ -23,8 +18,6 @@ const Login = () => {
         <label className="text-sm font-medium text-gray-700">নাম</label>
         <input
           className="mt-1 w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-green-500"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
           placeholder="আপনার নাম"
         />
 
