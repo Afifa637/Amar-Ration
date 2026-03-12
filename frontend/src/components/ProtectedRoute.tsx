@@ -1,6 +1,6 @@
-import { useContext, useEffect } from "react";
+import { useContext} from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { AuthContext, UserRole } from "../context/AuthContext";
+import { AuthContext, type UserRole } from "../context/AuthContext";
 
 type ProtectedRouteProps = {
   children: React.ReactNode;
@@ -24,7 +24,7 @@ export default function ProtectedRoute({
   }
 
   // If not authenticated, redirect to entrance page
-  if (!auth?.isAuthenticated) {
+  if (!auth?.isAuthenticated || !auth.user) {
     return <Navigate to="/" state={{ from: location }} replace />;
   }
 
