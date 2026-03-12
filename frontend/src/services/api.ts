@@ -1,11 +1,13 @@
-import axios from "axios";
+const API_BASE_URL = "http://localhost:5000/api";
 
-const api = axios.create({
-  baseURL: "http://localhost:5000/api",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+const request = async (endpoint: string, options: RequestInit = {}) => {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
 
 // Attach the JWT token from localStorage on every request so protected
 // endpoints are reachable even when a page is loaded fresh (before the
