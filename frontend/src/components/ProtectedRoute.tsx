@@ -14,8 +14,14 @@ export default function ProtectedRoute({
   const auth = useContext(AuthContext);
   const location = useLocation();
 
-  console.log("ProtectedRoute user:", auth?.user);
-console.log("Allowed roles:", allowedRoles);
+  // Wait until localStorage session is restored before making auth decisions
+  if (!auth?.isInitialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-gray-500 text-sm">লোড হচ্ছে...</div>
+      </div>
+    );
+  }
 
   // If not authenticated, redirect to entrance page
   if (!auth?.isAuthenticated || !auth.user) {

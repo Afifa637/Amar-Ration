@@ -9,20 +9,23 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
     ...options,
   });
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+// Attach the JWT token from localStorage on every request so protected
+// endpoints are reachable even when a page is loaded fresh (before the
+// AuthContext useEffect has had a chance to set the default header).
+api.interceptors.request.use((config) => {
+  const stored = localStorage.getItem("amar_ration_auth");
+  if (stored) {
+    try {
+      const { token } = JSON.parse(stored);
+      if (token) {
+        config.headers = config.headers ?? {};
+        config.headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // malformed storage – ignore
+    }
   }
-
-  return response.json();
-};
-
-const api = {
-  get: (endpoint: string) => request(endpoint),
-  post: (endpoint: string, body: unknown) =>
-    request(endpoint, { method: "POST", body: JSON.stringify(body) }),
-  put: (endpoint: string, body: unknown) =>
-    request(endpoint, { method: "PUT", body: JSON.stringify(body) }),
-  delete: (endpoint: string) => request(endpoint, { method: "DELETE" }),
-};
+  return config;
+});
 
 export default api;

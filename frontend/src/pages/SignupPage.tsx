@@ -386,42 +386,7 @@ export default function SignupPage() {
 
 
 
-            {/* NID Last 4 Digits - For Central Admin (Consumer data entry) */}
-            {role === "central-admin" && (
-              <div>
-                <label className="text-sm font-medium text-white block mb-1">
-                  এনআইডি শেষ ৪ সংখ্যা
-                </label>
-                <input
-                  type="text"
-                  name="nidLast4"
-                  value={formData.nidLast4}
-                  onChange={handleChange}
-                  maxLength={4}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
-                  placeholder="শেষ ৪ ডিজিট"
-                />
-              </div>
-            )}
 
-            {/* Category - For Central Admin (Consumer data entry) */}
-            {role === "central-admin" && (
-              <div>
-                <label className="text-sm font-medium text-white block mb-1">
-                  ক্যাটাগরি
-                </label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
-                >
-                  <option value="A" className="bg-[#16679c] text-white">ক্যাটাগরি A</option>
-                  <option value="B" className="bg-[#16679c] text-white">ক্যাটাগরি B</option>
-                  <option value="C" className="bg-[#16679c] text-white">ক্যাটাগরি C</option>
-                </select>
-              </div>
-            )}
 
             {/* Password */}
             <div>

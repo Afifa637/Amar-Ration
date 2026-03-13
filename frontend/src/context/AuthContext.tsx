@@ -29,6 +29,7 @@ export type User = {
 type AuthContextType = {
   user: User | null;
   isAuthenticated: boolean;
+  isInitialized: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
   hasRole: (allowedRoles: UserRole[]) => boolean;
@@ -42,6 +43,7 @@ export const AuthContext = createContext<AuthContextType | null>(null);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Load user from localStorage on mount
   useEffect(() => {
@@ -60,6 +62,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         localStorage.removeItem(AUTH_STORAGE_KEY);
       }
     }
+    setIsInitialized(true);
   }, []);
 
   const login = async (
@@ -130,6 +133,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       value={{
         user,
         isAuthenticated,
+        isInitialized,
         login,
         logout,
         hasRole,
