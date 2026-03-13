@@ -1,18 +1,11 @@
-import { useContext, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 
 const Login = () => {
-  const auth = useContext(AuthContext);
   const navigate = useNavigate();
-  const [email, setEmail] = useState("demo@demo.com");
-  const [password, setPassword] = useState("123456");
 
-  const handleLogin = async () => {
-    const success = await auth?.login(email, password, "distributor");
-    if (success) {
-      navigate("/dashboard");
-    }
+  const handleLogin = () => {
+    navigate("/");
   };
 
   return (
@@ -35,9 +28,7 @@ const Login = () => {
         <input
           type="password"
           className="mt-1 w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-green-500"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="আপনার পাসওয়ার্ড"
+          placeholder="আপনার নাম"
         />
 
         <button
