@@ -14,9 +14,18 @@ const consumerRoutes = require("./routes/consumer.routes");
 
 const app = express();
 
+app.set("etag", false);
+
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
+
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
 
 app.get("/", (req, res) =>
   res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" }),
