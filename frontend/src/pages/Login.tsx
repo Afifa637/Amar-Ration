@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import { AuthContext } from "../context/AuthContext";
 
+// Legacy login stub - the app uses LoginPage.tsx instead.
 const Login = () => {
   const navigate = useNavigate();
 

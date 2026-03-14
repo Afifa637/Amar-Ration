@@ -18,7 +18,9 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 
-app.get("/", (req, res) => res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" }));
+app.get("/", (req, res) =>
+  res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" }),
+);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);

@@ -28,7 +28,7 @@ const UserSchema = new mongoose.Schema(
     authorityFrom: { type: Date },
     authorityTo: { type: Date }
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 UserSchema.index({ email: 1 });
