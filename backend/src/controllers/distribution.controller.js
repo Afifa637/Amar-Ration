@@ -3,8 +3,16 @@ const mongoose = require("mongoose");
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const DistributionSession = require("../models/DistributionSession");
+const StockLedger = require("../models/StockLedger");
+const DistributionRecord = require("../models/DistributionRecord");
+const OfflineQueue = require("../models/OfflineQueue");
+const SystemSetting = require("../models/SystemSetting");
 const Token = require("../models/Token");
-const { rationQtyByCategory, makeTokenCode } = require("../services/token.service");
+const User = require("../models/User");
+const {
+  rationQtyByCategory,
+  makeTokenCode,
+} = require("../services/token.service");
 const { stockOut } = require("../services/stock.service");
 const { writeAudit } = require("../services/audit.service");
 
@@ -84,9 +92,7 @@ function buildTokenSearchQuery(search) {
 // POST /api/distribution/scan { qrPayload }
 async function scanAndIssueToken(req, res) {
   const userId = req.user.userId;
-  const dist = await getDistributorByUserId(userId);
-  if (!dist) return res.status(403).json({ message: "Distributor profile not found" });
-
+  const distributor = await ensureDistributorProfile(req.user);
   if (!distributor) {
     return res
       .status(403)
@@ -235,8 +241,12 @@ async function scanAndIssueToken(req, res) {
 // POST /api/distribution/complete { tokenCode, actualKg }
 async function completeDistribution(req, res) {
   const userId = req.user.userId;
-  const dist = await getDistributorByUserId(userId);
-  if (!dist) return res.status(403).json({ message: "Distributor profile not found" });
+  const distributor = await ensureDistributorProfile(req.user);
+  if (!distributor) {
+    return res
+      .status(403)
+      .json({ success: false, message: "Distributor profile not found" });
+  }
 
   const { tokenCode, actualKg } = req.body;
 

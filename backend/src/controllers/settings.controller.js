@@ -204,9 +204,14 @@ async function updateMySettings(req, res) {
 
     const key = getDistributorSettingsKey(req.user.userId);
     const current = await SystemSetting.findOne({ key }).lean();
+    const incoming =
+      req.body && typeof req.body === "object"
+        ? req.body.settings || req.body
+        : {};
+
     const nextValue = sanitizeIncomingSettings({
       ...(current?.value || {}),
-      ...(req.body?.settings || {}),
+      ...(incoming || {}),
     });
 
     const updated = await SystemSetting.findOneAndUpdate(
@@ -343,21 +348,17 @@ async function changeMyPassword(req, res) {
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "currentPassword and newPassword are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "currentPassword and newPassword are required",
+      });
     }
 
     if (String(newPassword).length < 6) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "newPassword must be at least 6 characters",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "newPassword must be at least 6 characters",
+      });
     }
 
     const user = await User.findById(req.user.userId);
