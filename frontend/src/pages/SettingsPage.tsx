@@ -28,7 +28,13 @@ export default function SettingsPage() {
     setError("");
     try {
       const data = await getDistributorSettings();
-      setSettings(data.settings);
+      if (Array.isArray(data.settings)) {
+        setSettings(null);
+        setProfile(null);
+        setError("এই পেজটি ডিস্ট্রিবিউটর সেটিংসের জন্য");
+        return;
+      }
+      setSettings(data.settings as DistributorSettings);
       setProfile(data.profile || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "সেটিংস লোড ব্যর্থ");

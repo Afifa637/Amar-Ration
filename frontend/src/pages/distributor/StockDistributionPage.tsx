@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
-import Modal from "../components/ui/Modal";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import {
   completeDistribution,
   getDistributionRecords,
@@ -10,7 +10,7 @@ import {
   getDistributionTokens,
   type DistributionRecord,
   type DistributionToken,
-} from "../services/api";
+} from "../../services/api";
 
 export default function StockDistributionPage() {
   const [records, setRecords] = useState<DistributionRecord[]>([]);

@@ -11,6 +11,7 @@ const monitoringRoutes = require("./routes/monitoring.routes");
 const reportsRoutes = require("./routes/reports.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const consumerRoutes = require("./routes/consumer.routes");
+const adminRoutes = require("./routes/admin.routes");
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/consumers", consumerRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

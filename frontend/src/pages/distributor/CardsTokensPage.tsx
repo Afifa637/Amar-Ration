@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
-import Modal from "../components/ui/Modal";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import {
   cancelDistributionToken,
   getDistributionStats,
@@ -10,7 +10,7 @@ import {
   issueToken,
   type DistributionToken,
   type TokenStatus,
-} from "../services/api";
+} from "../../services/api";
 
 const statusTone: Record<TokenStatus, "blue" | "green" | "red" | "yellow"> = {
   Issued: "blue",
