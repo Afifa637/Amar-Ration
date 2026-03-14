@@ -1,54 +1,17 @@
-const router = require("express").Router();
-const { protect, authorize } = require("../middleware/auth");
-const {
-  addConsumer,
-  getConsumers,
-  getConsumerById,
-  updateConsumer,
-  deleteConsumer,
-  getConsumerStats,
-} = require("../controllers/consumer.controller");
+const express = require("express");
+const router = express.Router();
+const consumerController = require("../controllers/consumer.controller");
+const { protect } = require("../middleware/auth");
 
-router.get(
-  "/stats",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  getConsumerStats,
-);
+// All routes require authentication
+router.use(protect);
 
-router.get(
-  "/",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  getConsumers,
-);
-
-router.post(
-  "/",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  addConsumer,
-);
-
-router.get(
-  "/:id",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  getConsumerById,
-);
-
-router.put(
-  "/:id",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  updateConsumer,
-);
-
-router.delete(
-  "/:id",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  deleteConsumer,
-);
+// Consumer CRUD routes
+router.post("/", consumerController.addConsumer);
+router.get("/", consumerController.getConsumers);
+router.get("/stats", consumerController.getConsumerStats);
+router.get("/:id", consumerController.getConsumerById);
+router.put("/:id", consumerController.updateConsumer);
+router.delete("/:id", consumerController.deleteConsumer);
 
 module.exports = router;

@@ -48,45 +48,6 @@ npm start
 
 Server runs at: **http://localhost:5000**
 
-## Database যাচাই (Seed/CRUD কোথায় যাচ্ছে)
-
-অনেক সময় Seed সফল হলেও Atlas UI-তে দেখা যায় না, কারণ backend অন্য `MONGO_URI` (যেমন local) ব্যবহার করে।
-
-### 1) Active DB check
-Backend চালুর সময় এখন লগ দেখাবে:
-- `host`
-- `database`
-
-এটি [src/config/db.js](src/config/db.js)-এ যোগ করা হয়েছে।
-
-### 2) Verify collections and names
-```bash
-npm run db:verify
-```
-
-এই কমান্ড দেখাবে:
-- বর্তমান অ্যাপের কার্যকর collections আছে কি না
-- enterprise 35+ target collections আছে কি না
-- পুরো existing collection list
-
-### 3) Create enterprise 35+ collection names (optional bootstrap)
-```bash
-npm run db:create-enterprise
-```
-
-এটি missing target collections create করবে (schema/CRUD auto তৈরি করে না, শুধু collection names bootstrap করে)।
-
-### 4) Seed data
-```bash
-npm run seed
-```
-
-### 5) If you want Atlas data only
-- `backend/.env` এ `MONGO_URI` Atlas connection string দিন
-- backend restart করুন
-- আবার `npm run seed` দিন
-- Atlas-এ একই database name open করুন
-
 ## API Routes
 
 ### Authentication (`/api/auth`)

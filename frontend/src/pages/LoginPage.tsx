@@ -157,7 +157,8 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {!isAdminLogin && (
+        {/* Signup Link - Hidden for admin */}
+        {role !== "central-admin" && (
           <div className="mt-4 text-center text-sm text-white/90">
             নতুন ইউজার?{" "}
             <button

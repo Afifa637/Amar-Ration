@@ -1,44 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const { protect, authorize } = require("../middleware/auth");
-const {
-  getMySettings,
-  updateMySettings,
-  resetMySettings,
-  updateMyProfile,
-  changeMyPassword,
-} = require("../controllers/settings.controller");
 
-router.get(
-  "/",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  getMySettings,
-);
-
-router.put(
-  "/",
-  protect,
-  authorize("Distributor", "FieldUser"),
-  updateMySettings,
-);
-router.post(
-  "/reset",
-  protect,
-  authorize("Distributor", "FieldUser"),
-  resetMySettings,
-);
-router.put(
-  "/profile",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  updateMyProfile,
-);
-router.put(
-  "/password",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  changeMyPassword,
-);
+// Placeholder for settings routes
+// Only Admin can access settings
+router.get("/", protect, authorize("Admin"), (req, res) => {
+  res.json({ message: "Settings endpoint - coming soon" });
+});
 
 module.exports = router;

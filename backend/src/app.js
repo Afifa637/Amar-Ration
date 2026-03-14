@@ -5,10 +5,10 @@ const morgan = require("morgan");
 const { notFound, errorHandler } = require("./middleware/error");
 
 const authRoutes = require("./routes/auth.routes");
+const usersRoutes = require("./routes/users.routes");
 const distributionRoutes = require("./routes/distribution.routes");
 const monitoringRoutes = require("./routes/monitoring.routes");
 const reportsRoutes = require("./routes/reports.routes");
-const distributorRoutes = require("./routes/distributor.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const consumerRoutes = require("./routes/consumer.routes");
 
@@ -23,10 +23,10 @@ app.get("/", (req, res) =>
 );
 
 app.use("/api/auth", authRoutes);
+app.use("/api/users", usersRoutes);
 app.use("/api/distribution", distributionRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/distributor", distributorRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/consumers", consumerRoutes);
 
