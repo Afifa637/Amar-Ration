@@ -22,25 +22,54 @@ function Tile({
   );
 }
 
-// ✅ Local demo KPI (later replace by API)
-const kpis = {
-  totalConsumers: 3400,
-  familyCount: 3230,
-  cancelOrError: 170,
-  todayTokens: 3100,
-  successDelivery: 38,
-  pending: 0,
+export type DashboardKpi = {
+  totalConsumers: number;
+  familyCount: number;
+  cancelOrError: number;
+  todayTokens: number;
+  successDelivery: number;
+  pending: number;
 };
 
-export default function StatCard() {
+export default function StatCard({ kpis }: { kpis: DashboardKpi }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-      <Tile title="মোট উপকারভোগী" value={kpis.totalConsumers} sub="নিবন্ধিত উপকারভোগী সংখ্যা" bg="bg-[#e8f1fb]" />
-      <Tile title="পরিবার সংখ্যা" value={kpis.familyCount} sub="কার্ড/পরিবার ইউনিট সংখ্যা" bg="bg-[#eaf7ee]" />
-      <Tile title="বাতিল/ত্রুটি" value={kpis.cancelOrError} sub="ভুল/বাতিল রেকর্ড সংখ্যা" bg="bg-[#fdecec]" />
-      <Tile title="আজকের টোকেন" value={kpis.todayTokens} sub="আজ ইস্যু হওয়া টোকেন" bg="bg-[#f3ecff]" />
-      <Tile title="সফল বিতরণ" value={kpis.successDelivery} sub="আজ সফল বিতরণ সংখ্যা" bg="bg-[#e9fbfb]" />
-      <Tile title="অমীমাংসিত" value={kpis.pending} sub="অপেক্ষমান/মুলতবি সংখ্যা" bg="bg-[#fff6e6]" />
+      <Tile
+        title="মোট উপকারভোগী"
+        value={kpis.totalConsumers}
+        sub="নিবন্ধিত উপকারভোগী সংখ্যা"
+        bg="bg-[#e8f1fb]"
+      />
+      <Tile
+        title="পরিবার সংখ্যা"
+        value={kpis.familyCount}
+        sub="কার্ড/পরিবার ইউনিট সংখ্যা"
+        bg="bg-[#eaf7ee]"
+      />
+      <Tile
+        title="বাতিল/ত্রুটি"
+        value={kpis.cancelOrError}
+        sub="ভুল/বাতিল রেকর্ড সংখ্যা"
+        bg="bg-[#fdecec]"
+      />
+      <Tile
+        title="আজকের টোকেন"
+        value={kpis.todayTokens}
+        sub="আজ ইস্যু হওয়া টোকেন"
+        bg="bg-[#f3ecff]"
+      />
+      <Tile
+        title="সফল বিতরণ"
+        value={kpis.successDelivery}
+        sub="আজ সফল বিতরণ সংখ্যা"
+        bg="bg-[#e9fbfb]"
+      />
+      <Tile
+        title="অমীমাংসিত"
+        value={kpis.pending}
+        sub="অপেক্ষমান/মুলতবি সংখ্যা"
+        bg="bg-[#fff6e6]"
+      />
     </div>
   );
 }

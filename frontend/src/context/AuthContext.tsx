@@ -27,7 +27,7 @@ export type User = {
 };
 
 type AuthContextType = {
-  user: User | null;
+  user: AuthUser | null;
   isAuthenticated: boolean;
   isInitialized: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<boolean>;
@@ -35,20 +35,22 @@ type AuthContextType = {
   hasRole: (allowedRoles: UserRole[]) => boolean;
 };
 
-const AUTH_STORAGE_KEY = "amar_ration_auth";
-
 // eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Load user from localStorage on mount
   useEffect(() => {
-    const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (storedAuth) {
+    let isMounted = true;
+
+    const initializeAuth = async () => {
+      const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+
+      if (!storedAuth) return;
+
       try {
         const { user, token } = JSON.parse(storedAuth);
         if (user && token) {
@@ -60,6 +62,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (error) {
         console.error("Failed to parse stored auth:", error);
         localStorage.removeItem(AUTH_STORAGE_KEY);
+        delete api.defaults.headers.common["Authorization"];
+        if (isMounted) {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       }
     }
     setIsInitialized(true);
@@ -68,7 +75,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = async (
     email: string,
     password: string,
-    role: UserRole
+    role: UserRole,
   ): Promise<boolean> => {
     try {
       // Map frontend role to backend userType
