@@ -11,18 +11,48 @@ const DistributionRecord = require("../models/DistributionRecord");
 const DistributionSession = require("../models/DistributionSession");
 const StockLedger = require("../models/StockLedger");
 const SystemSetting = require("../models/SystemSetting");
+const User = require("../models/User");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
 async function getDistributorProfileByUserId(userId) {
+  if (!userId) return null;
   return Distributor.findOne({ userId }).lean();
+}
+
+async function ensureDistributorProfile(reqUser) {
+  const userId = reqUser?.userId;
+  if (!userId) return null;
+
+  let distributor = await Distributor.findOne({ userId }).lean();
+  if (distributor) return distributor;
+
+  const user = await User.findById(userId).lean();
+  if (!user) return null;
+  if (user.userType !== "Distributor" && user.userType !== "FieldUser") {
+    return null;
+  }
+
+  const created = await Distributor.create({
+    userId: user._id,
+    division: user.division,
+    district: user.district,
+    upazila: user.upazila,
+    unionName: user.unionName,
+    ward: user.ward,
+    authorityStatus: user.authorityStatus || "Active",
+    authorityFrom: user.authorityFrom || new Date(),
+    authorityTo: user.authorityTo,
+  });
+
+  return created.toObject();
 }
 
 async function getDistributorDashboard(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
@@ -52,10 +82,7 @@ async function getDistributorDashboard(req, res) {
         status: "Pending",
       }),
       AuditLog.find({
-        $or: [
-          { actorUserId: req.user.id },
-          { actorType: "Distributor" },
-        ],
+        $or: [{ actorUserId: req.user.userId }, { actorType: "Distributor" }],
       })
         .sort({ createdAt: -1 })
         .limit(10)
@@ -113,7 +140,7 @@ async function getDistributorDashboard(req, res) {
 
 async function getBeneficiaries(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
@@ -148,9 +175,7 @@ async function getBeneficiaries(req, res) {
 
     const cardMap = new Map(cards.map((c) => [String(c.consumerId), c]));
 
-    const qrIds = cards
-      .map((c) => c.qrCodeId)
-      .filter(Boolean);
+    const qrIds = cards.map((c) => c.qrCodeId).filter(Boolean);
 
     const qrs = await QRCode.find({
       _id: { $in: qrIds },
@@ -180,9 +205,7 @@ async function getBeneficiaries(req, res) {
     });
 
     if (tab === "flags") {
-      rows = rows.filter(
-        (r) => r.familyFlag || r.blacklistStatus !== "None"
-      );
+      rows = rows.filter((r) => r.familyFlag || r.blacklistStatus !== "None");
     }
 
     if (q && q.trim()) {
@@ -191,7 +214,7 @@ async function getBeneficiaries(req, res) {
         (r) =>
           (r.consumerCode || "").toLowerCase().includes(needle) ||
           (r.name || "").toLowerCase().includes(needle) ||
-          (r.nidLast4 || "").includes(q.trim())
+          (r.nidLast4 || "").includes(q.trim()),
       );
     }
 
@@ -207,7 +230,7 @@ async function getBeneficiaries(req, res) {
 
 async function getDistributorTokens(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
@@ -246,17 +269,14 @@ async function getDistributorTokens(req, res) {
 
 async function getDistributorAudit(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
     }
 
     const logs = await AuditLog.find({
-      $or: [
-        { actorUserId: req.user.id },
-        { actorType: "Distributor" },
-      ],
+      $or: [{ actorUserId: req.user.userId }, { actorType: "Distributor" }],
     })
       .sort({ createdAt: -1 })
       .limit(100)
@@ -276,7 +296,7 @@ async function getDistributorAudit(req, res) {
 
 async function getDistributorReports(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
@@ -311,7 +331,9 @@ async function getDistributorReports(req, res) {
 
     const totalTokens = tokenDocs.length;
     const usedTokens = tokenDocs.filter((t) => t.status === "Used").length;
-    const cancelledTokens = tokenDocs.filter((t) => t.status === "Cancelled").length;
+    const cancelledTokens = tokenDocs.filter(
+      (t) => t.status === "Cancelled",
+    ).length;
 
     res.json({
       totalTokens,
@@ -328,7 +350,7 @@ async function getDistributorReports(req, res) {
 
 async function getDistributorMonitoring(req, res) {
   try {
-    const distributor = await getDistributorProfileByUserId(req.user.id);
+    const distributor = await ensureDistributorProfile(req.user);
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor profile not found" });
@@ -344,7 +366,7 @@ async function getDistributorMonitoring(req, res) {
         .limit(30)
         .lean(),
       AuditLog.find({
-        actorUserId: req.user.id,
+        actorUserId: req.user.userId,
         severity: "Critical",
       })
         .sort({ createdAt: -1 })

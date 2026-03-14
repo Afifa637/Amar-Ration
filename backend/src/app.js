@@ -9,7 +9,8 @@ const distributionRoutes = require("./routes/distribution.routes");
 const monitoringRoutes = require("./routes/monitoring.routes");
 const reportsRoutes = require("./routes/reports.routes");
 const distributorRoutes = require("./routes/distributor.routes");
-//const settingsRoutes = require("./routes/settings.routes");
+const settingsRoutes = require("./routes/settings.routes");
+const consumerRoutes = require("./routes/consumer.routes");
 
 const app = express();
 
@@ -18,7 +19,7 @@ app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 
 app.get("/", (req, res) =>
-  res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" })
+  res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" }),
 );
 
 app.use("/api/auth", authRoutes);
@@ -26,7 +27,8 @@ app.use("/api/distribution", distributionRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/distributor", distributorRoutes);
-//app.use("/api/settings", settingsRoutes);
+app.use("/api/settings", settingsRoutes);
+app.use("/api/consumers", consumerRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

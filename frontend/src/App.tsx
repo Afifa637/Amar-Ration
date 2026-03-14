@@ -18,11 +18,6 @@ import HelpPage from "./pages/distributor/HelpPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminDistributorsPage from "./pages/admin/AdminDistributorsPage";
 import AdminConsumersPage from "./pages/admin/AdminConsumersPage";
-import AdminCardsPage from "./pages/admin/AdminCardsPage";
-import AdminDistributionPage from "./pages/admin/AdminDistributionPage";
-import AdminAuditPage from "./pages/admin/AdminAuditPage";
-import AdminReportsPage from "./pages/admin/AdminReportsPage";
-import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
 
 export default function App() {
   return (
@@ -45,14 +40,6 @@ export default function App() {
             element={<AdminDistributorsPage />}
           />
           <Route path="/admin/consumers" element={<AdminConsumersPage />} />
-          <Route path="/admin/cards" element={<AdminCardsPage />} />
-          <Route
-            path="/admin/distribution"
-            element={<AdminDistributionPage />}
-          />
-          <Route path="/admin/audit" element={<AdminAuditPage />} />
-          <Route path="/admin/reports" element={<AdminReportsPage />} />
-          <Route path="/admin/settings" element={<AdminSettingsPage />} />
         </Route>
 
         <Route
