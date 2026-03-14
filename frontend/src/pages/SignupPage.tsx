@@ -1,6 +1,14 @@
 import { useState, useContext } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AuthContext, UserRole } from "../context/AuthContext";
+import api from "../services/api";
+
+// Map frontend roles to backend userTypes
+const roleToUserType: Record<UserRole, string> = {
+  "central-admin": "Admin",
+  "distributor": "Distributor",
+  "field-distributor": "FieldUser",
+};
 
 const roleNames: Record<UserRole, string> = {
   "central-admin": "কেন্দ্রীয় অ্যাডমিন",
@@ -12,6 +20,29 @@ export default function SignupPage() {
   const navigate = useNavigate();
   const { role } = useParams<{ role: UserRole }>();
   const auth = useContext(AuthContext);
+
+  // Admin signup is not allowed — admin is preset
+  if (role === "central-admin") {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat relative"
+        style={{ backgroundImage: "url('/assets/image/bg-2.jpg')" }}
+      >
+        <div className="absolute inset-0 bg-black/50"></div>
+        <div className="relative z-10 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
+          <div className="text-6xl mb-4">🔒</div>
+          <h2 className="text-2xl font-bold text-white mb-2">অ্যাডমিন সাইনআপ উপলব্ধ নেই</h2>
+          <p className="text-white/80 mb-6">অ্যাডমিন অ্যাকাউন্ট পূর্বনির্ধারিত। দয়া করে লগইন করুন।</p>
+          <button
+            onClick={() => navigate("/login/central-admin")}
+            className="bg-[#16679c] text-white px-6 py-2.5 rounded-lg hover:bg-[#125a85] font-semibold"
+          >
+            লগইন পেজে যান
+          </button>
+        </div>
+      </div>
+    );
+  }
   
   const [formData, setFormData] = useState({
     name: "",
@@ -21,6 +52,13 @@ export default function SignupPage() {
     confirmPassword: "",
     wardNo: "",
     officeAddress: "",
+    division: "",
+    district: "",
+    upazila: "",
+    unionName: "",
+    ward: "",
+    nidLast4: "",
+    category: "A",
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -70,30 +108,82 @@ export default function SignupPage() {
       return;
     }
 
+    if ((role === "distributor" || role === "field-distributor") && 
+        (!formData.division || !formData.district || !formData.upazila)) {
+      setError("বিভাগ, জেলা এবং উপজেলা আবশ্যক");
+      setLoading(false);
+      return;
+    }
+
     try {
-      // In production, this would call a registration API
-      // Simulating API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Map frontend role to backend userType
+      const userType = roleToUserType[role as UserRole];
       
-      // Demo signup - save user data (in production, this would be handled by backend)
-      console.log("Signup successful:", { role, ...formData });
-      
-      // Auto-login after successful signup
-      if (auth) {
-        const loginSuccess = await auth.login(formData.email, formData.password, role as UserRole);
-        if (loginSuccess) {
-          setSuccess(true);
-          // Redirect to dashboard after showing success message
-          setTimeout(() => {
-            navigate("/dashboard");
-          }, 1500);
-        } else {
-          setError("সাইনআপ সফল, কিন্তু লগইন ব্যর্থ হয়েছে");
-          setLoading(false);
+      // Prepare signup data
+      const signupData: any = {
+        userType,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        password: formData.password,
+      };
+
+      // Add role-specific fields
+      if (role === "distributor") {
+        signupData.wardNo = formData.wardNo;
+        signupData.officeAddress = formData.officeAddress;
+        signupData.division = formData.division;
+        signupData.district = formData.district;
+        signupData.upazila = formData.upazila;
+        signupData.unionName = formData.unionName;
+        signupData.ward = formData.ward;
+      } else if (role === "field-distributor") {
+        signupData.wardNo = formData.wardNo;
+        signupData.division = formData.division;
+        signupData.district = formData.district;
+        signupData.upazila = formData.upazila;
+        signupData.unionName = formData.unionName;
+        signupData.ward = formData.ward;
+      } else if (role === "central-admin") {
+        // Admin might create consumer accounts
+        if (formData.nidLast4) {
+          signupData.nidLast4 = formData.nidLast4;
+          signupData.category = formData.category;
         }
       }
-    } catch (err) {
-      setError("সাইনআপে সমস্যা হয়েছে। আবার চেষ্টা করুন");
+
+      // Call backend API
+      const response = await api.post("/auth/signup", signupData);
+      
+      if (response.data.success) {
+        console.log("Signup successful:", response.data);
+        
+        // Store token
+        const { token, user } = response.data.data;
+        localStorage.setItem("amar_ration_auth", JSON.stringify({ token, user }));
+        
+        // Auto-login after successful signup
+        if (auth) {
+          // Update auth context with user data
+          const loginSuccess = await auth.login(formData.email, formData.password, role as UserRole);
+          if (loginSuccess) {
+            setSuccess(true);
+            // Redirect to dashboard after showing success message
+            setTimeout(() => {
+              navigate("/dashboard");
+            }, 1500);
+          } else {
+            setSuccess(true);
+            setTimeout(() => {
+              navigate(`/login/${role}`);
+            }, 1500);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Signup error:", err);
+      const errorMessage = err.response?.data?.message || "সাইনআপে সমস্যা হয়েছে। আবার চেষ্টা করুন";
+      setError(errorMessage);
       setLoading(false);
     }
   };
@@ -207,21 +297,96 @@ export default function SignupPage() {
                 <label className="text-sm font-medium text-white block mb-1">
                   ওয়ার্ড নম্বর <span className="text-red-400">*</span>
                 </label>
-                <select
+                <input
+                  type="text"
                   name="wardNo"
                   value={formData.wardNo}
+                  onChange={handleChange}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
+                  placeholder="ওয়ার্ড নম্বর লিখুন"
+                />
+              </div>
+            )}
+
+            {/* Division - For Distributor and Field Distributor */}
+            {(role === "distributor" || role === "field-distributor") && (
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  বিভাগ <span className="text-red-400">*</span>
+                </label>
+                <select
+                  name="division"
+                  value={formData.division}
                   onChange={handleChange}
                   className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
                 >
                   <option value="" className="bg-[#16679c] text-white">নির্বাচন করুন</option>
-                  <option value="01" className="bg-[#16679c] text-white">ওয়ার্ড-০১</option>
-                  <option value="02" className="bg-[#16679c] text-white">ওয়ার্ড-০২</option>
-                  <option value="03" className="bg-[#16679c] text-white">ওয়ার্ড-০৩</option>
-                  <option value="04" className="bg-[#16679c] text-white">ওয়ার্ড-০৪</option>
-                  <option value="05" className="bg-[#16679c] text-white">ওয়ার্ড-০৫</option>
+                  <option value="Dhaka" className="bg-[#16679c] text-white">ঢাকা</option>
+                  <option value="Chittagong" className="bg-[#16679c] text-white">চট্টগ্রাম</option>
+                  <option value="Rajshahi" className="bg-[#16679c] text-white">রাজশাহী</option>
+                  <option value="Khulna" className="bg-[#16679c] text-white">খুলনা</option>
+                  <option value="Barisal" className="bg-[#16679c] text-white">বরিশাল</option>
+                  <option value="Sylhet" className="bg-[#16679c] text-white">সিলেট</option>
+                  <option value="Rangpur" className="bg-[#16679c] text-white">রংপুর</option>
+                  <option value="Mymensingh" className="bg-[#16679c] text-white">ময়মনসিংহ</option>
                 </select>
               </div>
             )}
+
+            {/* District - For Distributor and Field Distributor */}
+            {(role === "distributor" || role === "field-distributor") && (
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  জেলা <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="district"
+                  value={formData.district}
+                  onChange={handleChange}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
+                  placeholder="জেলা লিখুন"
+                />
+              </div>
+            )}
+
+            {/* Upazila - For Distributor and Field Distributor */}
+            {(role === "distributor" || role === "field-distributor") && (
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  উপজেলা <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="upazila"
+                  value={formData.upazila}
+                  onChange={handleChange}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
+                  placeholder="উপজেলা লিখুন"
+                />
+              </div>
+            )}
+
+            {/* Union Name - For Distributor and Field Distributor */}
+            {(role === "distributor" || role === "field-distributor") && (
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  ইউনিয়ন
+                </label>
+                <input
+                  type="text"
+                  name="unionName"
+                  value={formData.unionName}
+                  onChange={handleChange}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
+                  placeholder="ইউনিয়ন নাম লিখুন"
+                />
+              </div>
+            )}
+
+
+
+
 
             {/* Password */}
             <div>

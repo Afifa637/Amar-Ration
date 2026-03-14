@@ -1,24 +1,23 @@
 import { createContext, useState, useEffect, type ReactNode } from "react";
-import axios from "axios";
-import api, { AUTH_STORAGE_KEY } from "../services/api";
+import api from "../services/api";
 
 export type UserRole = "central-admin" | "distributor" | "field-distributor";
 
 // Map backend userTypes to frontend roles
 const userTypeToRole: Record<string, UserRole> = {
-  Admin: "central-admin",
-  Distributor: "distributor",
-  FieldUser: "field-distributor",
+  "Admin": "central-admin",
+  "Distributor": "distributor",
+  "FieldUser": "field-distributor",
 };
 
 // Map frontend roles to backend userTypes
 const roleToUserType: Record<UserRole, string> = {
   "central-admin": "Admin",
-  distributor: "Distributor",
+  "distributor": "Distributor",
   "field-distributor": "FieldUser",
 };
 
-export type AuthUser = {
+export type User = {
   id: string;
   name: string;
   email: string;
@@ -30,6 +29,7 @@ export type AuthUser = {
 type AuthContextType = {
   user: AuthUser | null;
   isAuthenticated: boolean;
+  isInitialized: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
   hasRole: (allowedRoles: UserRole[]) => boolean;
@@ -41,6 +41,7 @@ export const AuthContext = createContext<AuthContextType | null>(null);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -52,18 +53,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       try {
         const { user, token } = JSON.parse(storedAuth);
-
         if (user && token) {
           // Set token in api headers
-          api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-
-          // Verify token with backend so stale/expired tokens don't cause repeated 401 on pages
-          await api.get("/auth/me");
-
-          if (isMounted) {
-            setUser(user);
-            setIsAuthenticated(true);
-          }
+          api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          setUser(user);
+          setIsAuthenticated(true);
         }
       } catch (error) {
         console.error("Failed to parse stored auth:", error);
@@ -74,13 +68,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setIsAuthenticated(false);
         }
       }
-    };
-
-    void initializeAuth();
-
-    return () => {
-      isMounted = false;
-    };
+    }
+    setIsInitialized(true);
   }, []);
 
   const login = async (
@@ -91,19 +80,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       // Map frontend role to backend userType
       const userType = roleToUserType[role];
-
+      
       // Call backend login API
       const response = await api.post("/auth/login", {
         identifier: email,
         password,
-        userType,
+        userType
       });
 
       if (response.data.success) {
         const { token, user: backendUser } = response.data.data;
-
+        
         // Map backend user to frontend user format
-        const frontendUser: AuthUser = {
+        const frontendUser: User = {
           id: backendUser._id,
           name: backendUser.name,
           email: backendUser.email,
@@ -115,33 +104,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // Store in localStorage
         localStorage.setItem(
           AUTH_STORAGE_KEY,
-          JSON.stringify({ user: frontendUser, token }),
+          JSON.stringify({ user: frontendUser, token })
         );
 
         // Set token in api headers for subsequent requests
-        api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
         setUser(frontendUser);
         setIsAuthenticated(true);
+
         return true;
       }
-
+      
       return false;
-    } catch (error: unknown) {
-      const message = axios.isAxiosError<{ message?: string }>(error)
-        ? error.response?.data?.message || error.message
-        : error instanceof Error
-          ? error.message
-          : "Unknown error";
-
-      console.error("Login failed:", message);
+    } catch (error: any) {
+      console.error("Login failed:", error.response?.data?.message || error.message);
       return false;
     }
   };
 
   const logout = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
-    delete api.defaults.headers.common["Authorization"];
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -156,6 +140,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       value={{
         user,
         isAuthenticated,
+        isInitialized,
         login,
         logout,
         hasRole,

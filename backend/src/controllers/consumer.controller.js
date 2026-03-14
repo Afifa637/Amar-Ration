@@ -1,14 +1,14 @@
 const crypto = require("crypto");
 const Consumer = require("../models/Consumer");
+const Family = require("../models/Family");
 const User = require("../models/User");
-const Distributor = require("../models/Distributor");
 
 // Generate unique consumer code
 const generateConsumerCode = async () => {
   const lastConsumer = await Consumer.findOne()
     .sort({ createdAt: -1 })
     .select("consumerCode");
-
+  
   if (lastConsumer && lastConsumer.consumerCode) {
     const lastNumber = parseInt(lastConsumer.consumerCode.substring(1));
     return `C${String(lastNumber + 1).padStart(4, "0")}`;
@@ -21,72 +21,26 @@ const generateQRToken = () => {
   return crypto.randomBytes(32).toString("hex");
 };
 
-const getActorContext = async (reqUser) => {
-  const user = await User.findById(reqUser.userId).lean();
-  if (!user) return { user: null, distributor: null };
-
-  let distributor = null;
-  if (user.userType === "Distributor" || user.userType === "FieldUser") {
-    distributor = await Distributor.findOne({ userId: user._id });
-
-    if (!distributor) {
-      distributor = await Distributor.create({
-        userId: user._id,
-        division: user.division,
-        district: user.district,
-        upazila: user.upazila,
-        unionName: user.unionName,
-        ward: user.ward,
-        authorityStatus: user.authorityStatus || "Active",
-        authorityFrom: user.authorityFrom || new Date(),
-        authorityTo: user.authorityTo,
-      });
-    }
-  }
-
-  return { user, distributor };
-};
-
 // @route   POST /api/consumers
 // @desc    Add new consumer (Distributor only)
 // @access  Private (Distributor)
 exports.addConsumer = async (req, res) => {
   try {
-    const {
-      name,
-      nidLast4,
-      category,
-      status,
-      division,
-      district,
-      upazila,
-      unionName,
-      ward,
-      familyId,
-    } = req.body;
-
+    const { name, nidLast4, category, division, district, upazila, unionName, ward, familyId } = req.body;
+    
     // Validation
     if (!name || !nidLast4 || !category) {
       return res.status(400).json({
         success: false,
-        message: "Name, NID last 4 digits, and category are required",
+        message: "Name, NID last 4 digits, and category are required"
       });
     }
 
-    if (
-      !["Distributor", "FieldUser", "Central-Admin"].includes(req.user.userType)
-    ) {
+    // Check if user is a distributor
+    if (req.user.userType !== "Distributor") {
       return res.status(403).json({
         success: false,
-        message: "Only distributor roles can add consumers",
-      });
-    }
-
-    const { user, distributor } = await getActorContext(req.user);
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "User not found",
+        message: "Only distributors can add consumers"
       });
     }
 
@@ -101,14 +55,14 @@ exports.addConsumer = async (req, res) => {
       name,
       nidLast4,
       category,
-      status: status || "Inactive",
-      division: division || user.division,
-      district: district || user.district,
-      upazila: upazila || user.upazila,
-      unionName: unionName || user.unionName,
-      ward: ward || user.ward,
-      createdByDistributor: distributor?._id,
-      familyId: familyId || null,
+      status: "Active",
+      division: division || req.user.division,
+      district: district || req.user.district,
+      upazila: upazila || req.user.upazila,
+      unionName: unionName || req.user.unionName,
+      ward: ward || req.user.ward,
+      createdByDistributor: req.user.userId,
+      familyId: familyId || null
     });
 
     res.status(201).json({
@@ -128,15 +82,15 @@ exports.addConsumer = async (req, res) => {
           upazila: consumer.upazila,
           unionName: consumer.unionName,
           ward: consumer.ward,
-          createdAt: consumer.createdAt,
-        },
-      },
+          createdAt: consumer.createdAt
+        }
+      }
     });
   } catch (error) {
     console.error("Add consumer error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while adding consumer",
+      message: "Server error while adding consumer"
     });
   }
 };
@@ -146,60 +100,44 @@ exports.addConsumer = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.getConsumers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, category, status, ward } = req.query;
-    const { user, distributor } = await getActorContext(req.user);
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "User not found" });
-    }
-
+    const { page = 1, limit = 10, search, category, status } = req.query;
+    
     // Build query
-    const query = {};
-
-    // If distributor/field user, always scope by distributor ownership
-    if (
-      (user.userType === "Distributor" || user.userType === "FieldUser") &&
-      distributor?._id
-    ) {
-      query.createdByDistributor = distributor._id;
+    let query = {};
+    
+    // If distributor, filter by their ward
+    if (req.user.userType === "Distributor") {
+      query.ward = req.user.ward;
     }
-
+    
     // Add search filter
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
         { consumerCode: { $regex: search, $options: "i" } },
-        { nidLast4: { $regex: search, $options: "i" } },
+        { nidLast4: { $regex: search, $options: "i" } }
       ];
     }
-
+    
     // Add category filter
     if (category) {
       query.category = category;
     }
-
+    
     // Add status filter
     if (status) {
       query.status = status;
     }
 
-    if (ward) {
-      query.ward = ward;
-    }
-
     // Get total count
     const total = await Consumer.countDocuments(query);
-
+    
     // Get paginated consumers
-    const pageNum = Math.max(1, Number(page) || 1);
-    const limitNum = Math.min(1000, Math.max(1, Number(limit) || 10));
-
     const consumers = await Consumer.find(query)
+      .populate("createdByDistributor", "name email")
       .sort({ createdAt: -1 })
-      .limit(limitNum)
-      .skip((pageNum - 1) * limitNum);
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
 
     res.status(200).json({
       success: true,
@@ -207,17 +145,16 @@ exports.getConsumers = async (req, res) => {
         consumers,
         pagination: {
           total,
-          page: pageNum,
-          pages: Math.ceil(total / limitNum),
-          limit: limitNum,
-        },
-      },
+          page: parseInt(page),
+          pages: Math.ceil(total / limit)
+        }
+      }
     });
   } catch (error) {
     console.error("Get consumers error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while fetching consumers",
+      message: "Server error while fetching consumers"
     });
   }
 };
@@ -227,44 +164,26 @@ exports.getConsumers = async (req, res) => {
 // @access  Private
 exports.getConsumerById = async (req, res) => {
   try {
-    const { user, distributor } = await getActorContext(req.user);
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const consumer = await Consumer.findById(req.params.id).populate(
-      "familyId",
-    );
+    const consumer = await Consumer.findById(req.params.id)
+      .populate("createdByDistributor", "name email")
+      .populate("familyId");
 
     if (!consumer) {
       return res.status(404).json({
         success: false,
-        message: "Consumer not found",
-      });
-    }
-
-    if (
-      (user.userType === "Distributor" || user.userType === "FieldUser") &&
-      distributor?._id &&
-      String(consumer.createdByDistributor || "") !== String(distributor._id)
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "This consumer is outside your authority",
+        message: "Consumer not found"
       });
     }
 
     res.status(200).json({
       success: true,
-      data: { consumer },
+      data: { consumer }
     });
   } catch (error) {
     console.error("Get consumer error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while fetching consumer",
+      message: "Server error while fetching consumer"
     });
   }
 };
@@ -274,32 +193,14 @@ exports.getConsumerById = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.updateConsumer = async (req, res) => {
   try {
-    const { name, nidLast4, category, status, ward } = req.body;
-    const { user, distributor } = await getActorContext(req.user);
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "User not found" });
-    }
-
+    const { name, nidLast4, category, status } = req.body;
+    
     const consumer = await Consumer.findById(req.params.id);
-
+    
     if (!consumer) {
       return res.status(404).json({
         success: false,
-        message: "Consumer not found",
-      });
-    }
-
-    if (
-      (user.userType === "Distributor" || user.userType === "FieldUser") &&
-      distributor?._id &&
-      String(consumer.createdByDistributor || "") !== String(distributor._id)
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update consumers in your authority",
+        message: "Consumer not found"
       });
     }
 
@@ -308,20 +209,19 @@ exports.updateConsumer = async (req, res) => {
     if (nidLast4) consumer.nidLast4 = nidLast4;
     if (category) consumer.category = category;
     if (status) consumer.status = status;
-    if (ward) consumer.ward = ward;
 
     await consumer.save();
 
     res.status(200).json({
       success: true,
       message: "Consumer updated successfully",
-      data: { consumer },
+      data: { consumer }
     });
   } catch (error) {
     console.error("Update consumer error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while updating consumer",
+      message: "Server error while updating consumer"
     });
   }
 };
@@ -331,52 +231,31 @@ exports.updateConsumer = async (req, res) => {
 // @access  Private (Admin only)
 exports.deleteConsumer = async (req, res) => {
   try {
-    const { user, distributor } = await getActorContext(req.user);
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "User not found" });
-    }
-
-    if (!["Admin", "Distributor", "FieldUser"].includes(user.userType)) {
+    if (req.user.userType !== "Admin") {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized",
+        message: "Only admins can delete consumers"
       });
     }
 
-    const consumer = await Consumer.findById(req.params.id);
-
+    const consumer = await Consumer.findByIdAndDelete(req.params.id);
+    
     if (!consumer) {
       return res.status(404).json({
         success: false,
-        message: "Consumer not found",
+        message: "Consumer not found"
       });
     }
-
-    if (
-      (user.userType === "Distributor" || user.userType === "FieldUser") &&
-      distributor?._id &&
-      String(consumer.createdByDistributor || "") !== String(distributor._id)
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only delete consumers in your authority",
-      });
-    }
-
-    await Consumer.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,
-      message: "Consumer deleted successfully",
+      message: "Consumer deleted successfully"
     });
   } catch (error) {
     console.error("Delete consumer error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while deleting consumer",
+      message: "Server error while deleting consumer"
     });
   }
 };
@@ -386,21 +265,11 @@ exports.deleteConsumer = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.getConsumerStats = async (req, res) => {
   try {
-    const { user, distributor } = await getActorContext(req.user);
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const query = {};
-
-    // If distributor/field user, always scope by distributor ownership
-    if (
-      (user.userType === "Distributor" || user.userType === "FieldUser") &&
-      distributor?._id
-    ) {
-      query.createdByDistributor = distributor._id;
+    let query = {};
+    
+    // If distributor, filter by their ward
+    if (req.user.userType === "Distributor") {
+      query.ward = req.user.ward;
     }
 
     const stats = {
@@ -410,18 +279,18 @@ exports.getConsumerStats = async (req, res) => {
       revoked: await Consumer.countDocuments({ ...query, status: "Revoked" }),
       categoryA: await Consumer.countDocuments({ ...query, category: "A" }),
       categoryB: await Consumer.countDocuments({ ...query, category: "B" }),
-      categoryC: await Consumer.countDocuments({ ...query, category: "C" }),
+      categoryC: await Consumer.countDocuments({ ...query, category: "C" })
     };
 
     res.status(200).json({
       success: true,
-      data: { stats },
+      data: { stats }
     });
   } catch (error) {
     console.error("Get stats error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while fetching statistics",
+      message: "Server error while fetching statistics"
     });
   }
 };
