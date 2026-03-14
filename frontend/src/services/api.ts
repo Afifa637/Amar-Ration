@@ -130,6 +130,67 @@ export type AuditLogEntry = {
   createdAt: string;
 };
 
+export type AdminSummary = {
+  stats: {
+    pendingDistributors: number;
+    activeConsumers: number;
+    duplicateFamilies: number;
+    issuedQRCards: number;
+    todayTokens: number;
+    auditAlerts: number;
+  };
+  ops: {
+    validScans: number;
+    rejectedScans: number;
+    tokensGenerated: number;
+    stockOutKg: number;
+    offlineQueue: number;
+  };
+  alerts: AuditLogEntry[];
+};
+
+export type AdminDistributorRow = {
+  userId: string;
+  distributorId: string | null;
+  name: string;
+  phone?: string;
+  email?: string;
+  ward?: string;
+  officeAddress?: string;
+  authorityStatus: "Active" | "Suspended" | "Revoked" | "Pending";
+  createdAt?: string;
+};
+
+export type AdminDistributorsResponse = {
+  rows: AdminDistributorRow[];
+  stats: Record<string, number> & { total: number; pending: number };
+};
+
+export type AdminCardsSummary = {
+  issuedCards: number;
+  activeQR: number;
+  inactiveRevoked: number;
+  dueForRotation: number;
+};
+
+export type AdminDistributionMonitorRow = {
+  ward: string;
+  expectedKg: number;
+  actualKg: number;
+  status: "Matched" | "Mismatch";
+  action: string;
+};
+
+export type AdminConsumerReviewRow = {
+  id: string;
+  consumerCode: string;
+  name: string;
+  nidLast4: string;
+  status: ConsumerStatus;
+  blacklistStatus?: "None" | "Temp" | "Permanent";
+  familyFlag: boolean;
+};
+
 export type MonitoringBlacklistEntry = {
   _id: string;
   distributorId?: string;
@@ -404,6 +465,50 @@ export async function getDistributionQuickInfo() {
   return response.data.data;
 }
 
+export async function getAdminSummary() {
+  const response = await api.get<{ data: AdminSummary }>("/admin/summary");
+  return response.data.data;
+}
+
+export async function getAdminDistributors() {
+  const response = await api.get<{ data: AdminDistributorsResponse }>(
+    "/admin/distributors",
+  );
+  return response.data.data;
+}
+
+export async function updateAdminDistributorStatus(
+  userId: string,
+  status: "Active" | "Suspended" | "Revoked",
+) {
+  const response = await api.patch<{
+    data: { userId: string; authorityStatus: string };
+  }>(`/admin/distributors/${userId}/status`, { status });
+  return response.data.data;
+}
+
+export async function getAdminCardsSummary() {
+  const response = await api.get<{ data: AdminCardsSummary }>(
+    "/admin/cards/summary",
+  );
+  return response.data.data;
+}
+
+export async function getAdminDistributionMonitoring() {
+  const response = await api.get<{ data: { rows: AdminDistributionMonitorRow[] } }>(
+    "/admin/distribution/monitoring",
+  );
+  return response.data.data;
+}
+
+export async function getAdminConsumerReview(params?: { limit?: number }) {
+  const response = await api.get<{ data: { rows: AdminConsumerReviewRow[] } }>(
+    "/admin/consumers/review",
+    { params },
+  );
+  return response.data.data;
+}
+
 export async function getReportSummary() {
   const response = await api.get<{
     totalTokens: number;
@@ -561,7 +666,11 @@ export async function syncAllOfflineQueue() {
 
 export async function getDistributorSettings() {
   const response = await api.get<{
-    data: { settings: DistributorSettings; profile?: SettingsProfile };
+    data: {
+      isAdmin?: boolean;
+      settings: DistributorSettings | Array<{ key: string; value: unknown }>;
+      profile?: SettingsProfile;
+    };
   }>("/settings");
   return response.data.data;
 }

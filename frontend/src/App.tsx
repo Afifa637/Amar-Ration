@@ -6,18 +6,23 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import EntrancePage from "./pages/EntrancePage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
-import DistributorDashboard from "./pages/DistributorDashboard";
-import BeneficiariesPage from "./pages/BeneficiariesPage";
-import CardsTokensPage from "./pages/CardsTokensPage";
-import StockDistributionPage from "./pages/StockDistributionPage";
-import AuditLogPage from "./pages/AuditLogPage";
-import ReportsPage from "./pages/ReportsPage";
-import MonitoringPage from "./pages/MonitoringPage";
+import DistributorDashboard from "./pages/distributor/DistributorDashboard";
+import BeneficiariesPage from "./pages/distributor/BeneficiariesPage";
+import CardsTokensPage from "./pages/distributor/CardsTokensPage";
+import StockDistributionPage from "./pages/distributor/StockDistributionPage";
+import AuditLogPage from "./pages/distributor/AuditLogPage";
+import ReportsPage from "./pages/distributor/ReportsPage";
+import MonitoringPage from "./pages/distributor/MonitoringPage";
 import SettingsPage from "./pages/SettingsPage";
 import HelpPage from "./pages/HelpPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminDistributorsPage from "./pages/admin/AdminDistributorsPage";
 import AdminConsumersPage from "./pages/admin/AdminConsumersPage";
+import AdminCardsPage from "./pages/admin/AdminCardsPage";
+import AdminDistributionPage from "./pages/admin/AdminDistributionPage";
+import AdminAuditPage from "./pages/admin/AdminAuditPage";
+import AdminReportsPage from "./pages/admin/AdminReportsPage";
+import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
 
 export default function App() {
   return (
@@ -40,6 +45,14 @@ export default function App() {
             element={<AdminDistributorsPage />}
           />
           <Route path="/admin/consumers" element={<AdminConsumersPage />} />
+          <Route path="/admin/cards" element={<AdminCardsPage />} />
+          <Route
+            path="/admin/distribution"
+            element={<AdminDistributionPage />}
+          />
+          <Route path="/admin/audit" element={<AdminAuditPage />} />
+          <Route path="/admin/reports" element={<AdminReportsPage />} />
+          <Route path="/admin/settings" element={<AdminSettingsPage />} />
         </Route>
 
         <Route

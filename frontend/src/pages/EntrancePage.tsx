@@ -36,7 +36,7 @@ const EntrancePage = () => {
       <div className="absolute inset-0 bg-black/40"></div>
 
       {/* Content */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto flex-grow flex flex-col">
+      <div className="relative z-10 w-full max-w-5xl mx-auto grow flex flex-col">
         {/* Logo at the top */}
         <div className="flex justify-center">
           <img
@@ -72,7 +72,7 @@ const EntrancePage = () => {
                 </div>
 
                 {/* Title */}
-                <div className="flex-grow flex flex-col justify-center">
+                <div className="grow flex flex-col justify-center">
                   <h2 className="text-white font-bold" style={{ fontSize: '26px', marginBottom: '10px' }}>
                     {option.title}
                   </h2>
