@@ -1,6 +1,5 @@
 const router = require("express").Router();
-const { auth } = require("../middleware/auth");
-const { allowUserTypes } = require("../middleware/rbac");
+const { protect, authorize } = require("../middleware/auth");
 const {
   getDistributorDashboard,
   getBeneficiaries,
@@ -11,7 +10,7 @@ const {
   getDistributorSettings,
 } = require("../controllers/distributor.controller");
 
-router.use(auth, allowUserTypes("Distributor", "Admin"));
+router.use(protect, authorize("Distributor", "Admin"));
 
 router.get("/dashboard", getDistributorDashboard);
 router.get("/beneficiaries", getBeneficiaries);

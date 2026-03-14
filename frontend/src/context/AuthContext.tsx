@@ -1,19 +1,30 @@
 import { createContext, useState, useEffect, type ReactNode } from "react";
+import axios from "axios";
+import api, { AUTH_STORAGE_KEY } from "../services/api";
 
 export type UserRole = "central-admin" | "distributor" | "field-distributor";
 
-export interface AuthUser {
+// Map backend userTypes to frontend roles
+const userTypeToRole: Record<string, UserRole> = {
+  Admin: "central-admin",
+  Distributor: "distributor",
+  FieldUser: "field-distributor",
+};
+
+// Map frontend roles to backend userTypes
+const roleToUserType: Record<UserRole, string> = {
+  "central-admin": "Admin",
+  distributor: "Distributor",
+  "field-distributor": "FieldUser",
+};
+
+export type AuthUser = {
   id: string;
   name: string;
   email: string;
   role: UserRole;
   wardNo?: string;
   officeAddress?: string;
-}
-
-type StoredAuth = {
-  user: AuthUser;
-  token: string;
 };
 
 type AuthContextType = {
@@ -24,10 +35,6 @@ type AuthContextType = {
   hasRole: (allowedRoles: UserRole[]) => boolean;
 };
 
-const AUTH_STORAGE_KEY = "amar_ration_auth";
-const ADMIN_EMAIL = "admin@amarration.gov.bd";
-const ADMIN_PASSWORD = "Admin@123";
-
 // eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextType | null>(null);
 
@@ -36,104 +43,105 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+    let isMounted = true;
 
-    if (!storedAuth) return;
+    const initializeAuth = async () => {
+      const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
 
-    try {
-      const parsed: unknown = JSON.parse(storedAuth);
+      if (!storedAuth) return;
 
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "user" in parsed &&
-        "token" in parsed
-      ) {
-        const authData = parsed as StoredAuth;
-        setUser(authData.user);
-        setIsAuthenticated(true);
+      try {
+        const { user, token } = JSON.parse(storedAuth);
+
+        if (user && token) {
+          // Set token in api headers
+          api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+
+          // Verify token with backend so stale/expired tokens don't cause repeated 401 on pages
+          await api.get("/auth/me");
+
+          if (isMounted) {
+            setUser(user);
+            setIsAuthenticated(true);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to parse stored auth:", error);
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        delete api.defaults.headers.common["Authorization"];
+        if (isMounted) {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       }
-    } catch (error) {
-      console.error("Failed to parse stored auth:", error);
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-    }
+    };
+
+    void initializeAuth();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const login = async (
     email: string,
     password: string,
-    role: UserRole
+    role: UserRole,
   ): Promise<boolean> => {
     try {
-      if (!email || !password) return false;
+      // Map frontend role to backend userType
+      const userType = roleToUserType[role];
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Call backend login API
+      const response = await api.post("/auth/login", {
+        identifier: email,
+        password,
+        userType,
+      });
 
-      if (role === "central-admin") {
-        if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-          return false;
-        }
+      if (response.data.success) {
+        const { token, user: backendUser } = response.data.data;
 
-        const adminUser: AuthUser = {
-          id: "admin-fixed-user",
-          name: "Central Admin",
-          email: ADMIN_EMAIL,
-          role: "central-admin",
+        // Map backend user to frontend user format
+        const frontendUser: AuthUser = {
+          id: backendUser._id,
+          name: backendUser.name,
+          email: backendUser.email,
+          role: userTypeToRole[backendUser.userType] || role,
+          wardNo: backendUser.wardNo,
+          officeAddress: backendUser.officeAddress,
         };
 
-        const adminToken = btoa(
-          JSON.stringify({
-            userId: adminUser.id,
-            role: adminUser.role,
-            exp: Date.now() + 24 * 60 * 60 * 1000,
-          })
+        // Store in localStorage
+        localStorage.setItem(
+          AUTH_STORAGE_KEY,
+          JSON.stringify({ user: frontendUser, token }),
         );
 
-        const authData: StoredAuth = {
-          user: adminUser,
-          token: adminToken,
-        };
+        // Set token in api headers for subsequent requests
+        api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
 
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authData));
-        setUser(adminUser);
+        setUser(frontendUser);
         setIsAuthenticated(true);
         return true;
       }
 
-      const demoUser: AuthUser = {
-        id: `user_${Date.now()}`,
-        name: email.split("@")[0] || "User",
-        email,
-        role,
-        wardNo: "ওয়ার্ড-০১",
-        officeAddress: role === "distributor" ? "ঢাকা অফিস" : undefined,
-      };
+      return false;
+    } catch (error: unknown) {
+      const message = axios.isAxiosError<{ message?: string }>(error)
+        ? error.response?.data?.message || error.message
+        : error instanceof Error
+          ? error.message
+          : "Unknown error";
 
-      const demoToken = btoa(
-        JSON.stringify({
-          userId: demoUser.id,
-          role: demoUser.role,
-          exp: Date.now() + 24 * 60 * 60 * 1000,
-        })
-      );
-
-      const authData: StoredAuth = {
-        user: demoUser,
-        token: demoToken,
-      };
-
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authData));
-      setUser(demoUser);
-      setIsAuthenticated(true);
-      return true;
-    } catch (error) {
-      console.error("Login failed:", error);
+      console.error("Login failed:", message);
       return false;
     }
   };
 
   const logout = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    delete api.defaults.headers.common["Authorization"];
     setUser(null);
     setIsAuthenticated(false);
   };

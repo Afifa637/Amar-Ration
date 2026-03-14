@@ -7,7 +7,9 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed": "node src/seed/seed.js",
-    "indexes": "node src/setup/ensure-indexes.js"
+    "indexes": "node src/setup/ensure-indexes.js",
+    "db:verify": "node src/setup/verify-collections.js",
+    "db:create-enterprise": "node src/setup/create-missing-enterprise-collections.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
