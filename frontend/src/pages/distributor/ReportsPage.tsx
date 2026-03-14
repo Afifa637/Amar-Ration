@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
 import {
   getAuditLogs,
   getDistributionReport,
@@ -11,7 +11,7 @@ import {
   type DistributionReportRow,
   type TokenAnalytics,
   type TokenStatus,
-} from "../services/api";
+} from "../../services/api";
 
 type Tab = "distribution" | "stock" | "token" | "audit";
 

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
-import Modal from "../components/ui/Modal";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import {
   createConsumer,
   deleteConsumer,
@@ -12,7 +12,7 @@ import {
   type ConsumerCategory,
   type ConsumerStatus,
   updateConsumer,
-} from "../services/api";
+} from "../../services/api";
 
 type FormState = {
   name: string;

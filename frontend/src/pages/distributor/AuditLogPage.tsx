@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
 import {
   exportAuditLogsCsv,
   getAuditLogs,
   type AuditLogEntry,
   type AuditSeverity,
-} from "../services/api";
+} from "../../services/api";
 
 const DEFAULT_LIMIT = 20;
 

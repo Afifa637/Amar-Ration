@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import PortalSection from "../components/PortalSection";
-import Button from "../components/ui/Button";
-import Badge from "../components/ui/Badge";
-import Modal from "../components/ui/Modal";
+import PortalSection from "../../components/PortalSection";
+import Button from "../../components/ui/Button";
+import Badge from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import {
   createBlacklistEntry,
   createOfflineQueue,
@@ -16,7 +16,7 @@ import {
   type MonitoringBlacklistEntry,
   type MonitoringSummary,
   type OfflineQueueItem,
-} from "../services/api";
+} from "../../services/api";
 
 type BlacklistForm = {
   targetType: "Consumer" | "Distributor";

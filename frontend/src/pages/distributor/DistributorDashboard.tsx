@@ -3,16 +3,16 @@ import {
   getConsumers,
   getDistributionRecords,
   getDistributionTokens,
-} from "../services/api";
+} from "../../services/api";
 import FilterBar, {
   type DashboardFilterOptions,
   type DashboardFilterValue,
-} from "../components/FilterBar";
-import StatCard, { type DashboardKpi } from "../components/StatCard";
+} from "../../components/FilterBar";
+import StatCard, { type DashboardKpi } from "../../components/StatCard";
 import ReportTable, {
   type DashboardReportRow,
-} from "../components/ReportTable";
-import NotesPanel from "../components/NotesPanel";
+} from "../../components/ReportTable";
+import NotesPanel from "../../components/NotesPanel";
 
 type DashboardConsumer = {
   _id: string;
