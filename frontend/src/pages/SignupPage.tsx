@@ -6,13 +6,13 @@ import api from "../services/api";
 // Map frontend roles to backend userTypes
 const roleToUserType: Record<UserRole, string> = {
   "central-admin": "Admin",
-  "distributor": "Distributor",
+  distributor: "Distributor",
   "field-distributor": "FieldUser",
 };
 
 const roleNames: Record<UserRole, string> = {
   "central-admin": "কেন্দ্রীয় অ্যাডমিন",
-  "distributor": "ডিস্ট্রিবিউটর",
+  distributor: "ডিস্ট্রিবিউটর",
   "field-distributor": "ফিল্ড ডিস্ট্রিবিউটর",
 };
 
@@ -31,8 +31,12 @@ export default function SignupPage() {
         <div className="absolute inset-0 bg-black/50"></div>
         <div className="relative z-10 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
           <div className="text-6xl mb-4">🔒</div>
-          <h2 className="text-2xl font-bold text-white mb-2">অ্যাডমিন সাইনআপ উপলব্ধ নেই</h2>
-          <p className="text-white/80 mb-6">অ্যাডমিন অ্যাকাউন্ট পূর্বনির্ধারিত। দয়া করে লগইন করুন।</p>
+          <h2 className="text-2xl font-bold text-white mb-2">
+            অ্যাডমিন সাইনআপ উপলব্ধ নেই
+          </h2>
+          <p className="text-white/80 mb-6">
+            অ্যাডমিন অ্যাকাউন্ট পূর্বনির্ধারিত। দয়া করে লগইন করুন।
+          </p>
           <button
             onClick={() => navigate("/login/central-admin")}
             className="bg-[#16679c] text-white px-6 py-2.5 rounded-lg hover:bg-[#125a85] font-semibold"
@@ -43,7 +47,7 @@ export default function SignupPage() {
       </div>
     );
   }
-  
+
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -62,9 +66,16 @@ export default function SignupPage() {
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState(
+    "ড্যাশবোর্ডে রিডাইরেক্ট করা হচ্ছে...",
+  );
   const [loading, setLoading] = useState(false);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >,
+  ) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
@@ -77,7 +88,12 @@ export default function SignupPage() {
     setLoading(true);
 
     // Validation
-    if (!formData.name || !formData.email || !formData.phone || !formData.password) {
+    if (
+      !formData.name ||
+      !formData.email ||
+      !formData.phone ||
+      !formData.password
+    ) {
       setError("সব আবশ্যক ক্ষেত্র পূরণ করুন");
       setLoading(false);
       return;
@@ -96,7 +112,10 @@ export default function SignupPage() {
     }
 
     // Role-specific validation
-    if ((role === "distributor" || role === "field-distributor") && !formData.wardNo) {
+    if (
+      (role === "distributor" || role === "field-distributor") &&
+      !formData.wardNo
+    ) {
       setError("ওয়ার্ড নম্বর আবশ্যক");
       setLoading(false);
       return;
@@ -108,8 +127,10 @@ export default function SignupPage() {
       return;
     }
 
-    if ((role === "distributor" || role === "field-distributor") && 
-        (!formData.division || !formData.district || !formData.upazila)) {
+    if (
+      (role === "distributor" || role === "field-distributor") &&
+      (!formData.division || !formData.district || !formData.upazila)
+    ) {
       setError("বিভাগ, জেলা এবং উপজেলা আবশ্যক");
       setLoading(false);
       return;
@@ -118,7 +139,7 @@ export default function SignupPage() {
     try {
       // Map frontend role to backend userType
       const userType = roleToUserType[role as UserRole];
-      
+
       // Prepare signup data
       const signupData: any = {
         userType,
@@ -154,21 +175,31 @@ export default function SignupPage() {
 
       // Call backend API
       const response = await api.post("/auth/signup", signupData);
-      
+
       if (response.data.success) {
         console.log("Signup successful:", response.data);
-        
-        // Store token
-        const { token, user } = response.data.data;
-        localStorage.setItem("amar_ration_auth", JSON.stringify({ token, user }));
-        
+
+        if (role === "distributor" || role === "field-distributor") {
+          setSuccessMessage(
+            "আপনার আবেদন গ্রহণ হয়েছে। অ্যাডমিন অনুমোদনের অপেক্ষায় থাকুন।",
+          );
+          setSuccess(true);
+          setTimeout(() => {
+            navigate("/pending-approval");
+          }, 1500);
+          return;
+        }
+
         // Auto-login after successful signup
         if (auth) {
-          // Update auth context with user data
-          const loginSuccess = await auth.login(formData.email, formData.password, role as UserRole);
-          if (loginSuccess) {
+          const loginResult = await auth.login(
+            formData.email,
+            formData.password,
+            role as UserRole,
+          );
+
+          if (loginResult.success) {
             setSuccess(true);
-            // Redirect to dashboard after showing success message
             setTimeout(() => {
               navigate("/dashboard");
             }, 1500);
@@ -182,7 +213,9 @@ export default function SignupPage() {
       }
     } catch (err: any) {
       console.error("Signup error:", err);
-      const errorMessage = err.response?.data?.message || "সাইনআপে সমস্যা হয়েছে। আবার চেষ্টা করুন";
+      const errorMessage =
+        err.response?.data?.message ||
+        "সাইনআপে সমস্যা হয়েছে। আবার চেষ্টা করুন";
       setError(errorMessage);
       setLoading(false);
     }
@@ -202,7 +235,7 @@ export default function SignupPage() {
           <h2 className="text-2xl font-bold text-white mb-2">
             সাইনআপ সফল হয়েছে!
           </h2>
-          <p className="text-white/80">ড্যাশবোর্ডে রিডাইরেক্ট করা হচ্ছে...</p>
+          <p className="text-white/80">{successMessage}</p>
         </div>
       </div>
     );
@@ -320,15 +353,39 @@ export default function SignupPage() {
                   onChange={handleChange}
                   className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-sm"
                 >
-                  <option value="" className="bg-[#16679c] text-white">নির্বাচন করুন</option>
-                  <option value="Dhaka" className="bg-[#16679c] text-white">ঢাকা</option>
-                  <option value="Chittagong" className="bg-[#16679c] text-white">চট্টগ্রাম</option>
-                  <option value="Rajshahi" className="bg-[#16679c] text-white">রাজশাহী</option>
-                  <option value="Khulna" className="bg-[#16679c] text-white">খুলনা</option>
-                  <option value="Barisal" className="bg-[#16679c] text-white">বরিশাল</option>
-                  <option value="Sylhet" className="bg-[#16679c] text-white">সিলেট</option>
-                  <option value="Rangpur" className="bg-[#16679c] text-white">রংপুর</option>
-                  <option value="Mymensingh" className="bg-[#16679c] text-white">ময়মনসিংহ</option>
+                  <option value="" className="bg-[#16679c] text-white">
+                    নির্বাচন করুন
+                  </option>
+                  <option value="Dhaka" className="bg-[#16679c] text-white">
+                    ঢাকা
+                  </option>
+                  <option
+                    value="Chittagong"
+                    className="bg-[#16679c] text-white"
+                  >
+                    চট্টগ্রাম
+                  </option>
+                  <option value="Rajshahi" className="bg-[#16679c] text-white">
+                    রাজশাহী
+                  </option>
+                  <option value="Khulna" className="bg-[#16679c] text-white">
+                    খুলনা
+                  </option>
+                  <option value="Barisal" className="bg-[#16679c] text-white">
+                    বরিশাল
+                  </option>
+                  <option value="Sylhet" className="bg-[#16679c] text-white">
+                    সিলেট
+                  </option>
+                  <option value="Rangpur" className="bg-[#16679c] text-white">
+                    রংপুর
+                  </option>
+                  <option
+                    value="Mymensingh"
+                    className="bg-[#16679c] text-white"
+                  >
+                    ময়মনসিংহ
+                  </option>
                 </select>
               </div>
             )}
@@ -383,10 +440,6 @@ export default function SignupPage() {
                 />
               </div>
             )}
-
-
-
-
 
             {/* Password */}
             <div>

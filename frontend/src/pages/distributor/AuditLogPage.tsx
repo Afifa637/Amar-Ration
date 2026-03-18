@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import {
   exportAuditLogsCsv,
   getAuditLogs,
+  getDistributorAuditRequests,
+  submitAuditReport,
   type AuditLogEntry,
   type AuditSeverity,
+  type AuditReportRequest,
 } from "../../services/api";
 
 const DEFAULT_LIMIT = 20;
@@ -36,25 +40,34 @@ export default function AuditLogPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [requests, setRequests] = useState<AuditReportRequest[]>([]);
+  const [activeRequest, setActiveRequest] = useState<AuditReportRequest | null>(
+    null,
+  );
+  const [reportText, setReportText] = useState("");
 
   const loadData = async (targetPage = page) => {
     setLoading(true);
     setError("");
     setMessage("");
     try {
-      const data = await getAuditLogs({
-        page: targetPage,
-        limit: DEFAULT_LIMIT,
-        search: search.trim() || undefined,
-        action: action.trim() || undefined,
-        severity: severity || undefined,
-        from: from || undefined,
-        to: to || undefined,
-      });
+      const [data, requestData] = await Promise.all([
+        getAuditLogs({
+          page: targetPage,
+          limit: DEFAULT_LIMIT,
+          search: search.trim() || undefined,
+          action: action.trim() || undefined,
+          severity: severity || undefined,
+          from: from || undefined,
+          to: to || undefined,
+        }),
+        getDistributorAuditRequests(),
+      ]);
 
       setLogs(data.logs);
       setPage(data.pagination.page);
       setPages(Math.max(1, data.pagination.pages || 1));
+      setRequests(requestData.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "অডিট লগ লোড ব্যর্থ");
     } finally {
@@ -95,6 +108,22 @@ export default function AuditLogPage() {
       setMessage("CSV এক্সপোর্ট সম্পন্ন হয়েছে");
     } catch (err) {
       setError(err instanceof Error ? err.message : "CSV এক্সপোর্ট ব্যর্থ");
+    }
+  };
+
+  const onSubmitReport = async () => {
+    if (!activeRequest) return;
+    try {
+      setLoading(true);
+      await submitAuditReport(activeRequest._id, reportText);
+      setMessage("অডিট রিপোর্ট জমা হয়েছে");
+      setActiveRequest(null);
+      setReportText("");
+      await loadData(1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "রিপোর্ট জমা ব্যর্থ");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -265,6 +294,84 @@ export default function AuditLogPage() {
           </div>
         </div>
       </PortalSection>
+
+      <PortalSection title="অডিট রিপোর্ট রিকোয়েস্ট">
+        {requests.length === 0 ? (
+          <div className="text-[12px] text-[#6b7280]">
+            কোনো পেন্ডিং রিকোয়েস্ট নেই
+          </div>
+        ) : (
+          <div className="border rounded overflow-hidden">
+            <table className="w-full text-[12px]">
+              <thead className="bg-[#f8fafc]">
+                <tr>
+                  <th className="border p-2">স্ট্যাটাস</th>
+                  <th className="border p-2">ডেডলাইন</th>
+                  <th className="border p-2">সময়</th>
+                  <th className="border p-2">অ্যাকশন</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((req) => (
+                  <tr key={req._id}>
+                    <td className="border p-2 text-center">{req.status}</td>
+                    <td className="border p-2 text-center">
+                      {req.dueAt
+                        ? new Date(req.dueAt).toLocaleDateString()
+                        : "—"}
+                    </td>
+                    <td className="border p-2 text-center">
+                      {new Date(req.createdAt).toLocaleString()}
+                    </td>
+                    <td className="border p-2 text-center">
+                      {req.status === "Requested" ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setActiveRequest(req);
+                            setReportText("");
+                          }}
+                        >
+                          রিপোর্ট জমা দিন
+                        </Button>
+                      ) : (
+                        "জমা হয়েছে"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </PortalSection>
+
+      <Modal
+        open={!!activeRequest}
+        title="অডিট রিপোর্ট জমা"
+        onClose={() => setActiveRequest(null)}
+      >
+        <div className="space-y-2 text-[13px]">
+          <div>
+            <strong>নির্দেশনা:</strong> {activeRequest?.note || "—"}
+          </div>
+          <textarea
+            value={reportText}
+            onChange={(e) => setReportText(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-[12px]"
+            rows={5}
+            placeholder="অডিট রিপোর্ট লিখুন"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setActiveRequest(null)}>
+              বন্ধ
+            </Button>
+            <Button onClick={() => void onSubmitReport()} disabled={loading}>
+              জমা দিন
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

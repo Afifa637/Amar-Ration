@@ -5,11 +5,9 @@ const User = require("../models/User");
 
 // Generate JWT Token
 const generateToken = (userId, userType) => {
-  return jwt.sign(
-    { userId, userType },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || "2h" }
-  );
+  return jwt.sign({ userId, userType }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "2h",
+  });
 };
 
 // Generate unique QR token for consumer
@@ -22,51 +20,50 @@ const generateQRToken = () => {
 // @access  Public
 exports.signup = async (req, res) => {
   try {
-    const { userType, name, email, phone, password, ...additionalFields } = req.body;
+    const { userType, name, email, phone, password, ...additionalFields } =
+      req.body;
 
     // Validation
     if (!userType || !name || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "UserType, name, and password are required" 
+      return res.status(400).json({
+        success: false,
+        message: "UserType, name, and password are required",
       });
     }
 
     // Admin account is preset — cannot be created via signup
     if (userType === "Admin") {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Admin signup is not allowed. Admin account is preconfigured." 
+      return res.status(403).json({
+        success: false,
+        message: "Admin signup is not allowed. Admin account is preconfigured.",
       });
     }
 
     if (!["Distributor", "FieldUser", "Consumer"].includes(userType)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid user type. Must be Distributor, FieldUser, or Consumer" 
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid user type. Must be Distributor, FieldUser, or Consumer",
       });
     }
 
     // Check if email or phone is provided
     if (!email && !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Either email or phone is required" 
+      return res.status(400).json({
+        success: false,
+        message: "Either email or phone is required",
       });
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({
-      $or: [
-        email ? { email } : null,
-        phone ? { phone } : null
-      ].filter(Boolean)
+      $or: [email ? { email } : null, phone ? { phone } : null].filter(Boolean),
     });
 
     if (existingUser) {
-      return res.status(409).json({ 
-        success: false, 
-        message: "User with this email or phone already exists" 
+      return res.status(409).json({
+        success: false,
+        message: "User with this email or phone already exists",
       });
     }
 
@@ -80,7 +77,7 @@ exports.signup = async (req, res) => {
       const lastConsumer = await User.findOne({ userType: "Consumer" })
         .sort({ createdAt: -1 })
         .select("consumerCode");
-      
+
       if (lastConsumer && lastConsumer.consumerCode) {
         const lastNumber = parseInt(lastConsumer.consumerCode.substring(1));
         consumerCode = `C${String(lastNumber + 1).padStart(4, "0")}`;
@@ -99,7 +96,7 @@ exports.signup = async (req, res) => {
       email,
       phone,
       passwordHash,
-      status: "Active"
+      status: "Active",
     };
 
     // Add user-type specific fields
@@ -116,8 +113,7 @@ exports.signup = async (req, res) => {
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
       userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Active";
-      userData.authorityFrom = new Date();
+      userData.authorityStatus = "Pending";
     } else if (userType === "FieldUser") {
       userData.wardNo = additionalFields.wardNo;
       userData.division = additionalFields.division;
@@ -125,8 +121,7 @@ exports.signup = async (req, res) => {
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
       userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Active";
-      userData.authorityFrom = new Date();
+      userData.authorityStatus = "Pending";
     }
 
     // Save user to database
@@ -143,10 +138,10 @@ exports.signup = async (req, res) => {
       email: user.email,
       phone: user.phone,
       status: user.status,
-      ...(userType === "Consumer" && { 
+      ...(userType === "Consumer" && {
         consumerCode: user.consumerCode,
         category: user.category,
-        qrToken: user.qrToken
+        qrToken: user.qrToken,
       }),
       ...(userType === "Distributor" && {
         wardNo: user.wardNo,
@@ -155,7 +150,7 @@ exports.signup = async (req, res) => {
         district: user.district,
         upazila: user.upazila,
         unionName: user.unionName,
-        ward: user.ward
+        ward: user.ward,
       }),
       ...(userType === "FieldUser" && {
         wardNo: user.wardNo,
@@ -163,8 +158,8 @@ exports.signup = async (req, res) => {
         district: user.district,
         upazila: user.upazila,
         unionName: user.unionName,
-        ward: user.ward
-      })
+        ward: user.ward,
+      }),
     };
 
     res.status(201).json({
@@ -172,16 +167,15 @@ exports.signup = async (req, res) => {
       message: "User registered successfully",
       data: {
         user: userResponse,
-        token
-      }
+        token,
+      },
     });
-
   } catch (error) {
     console.error("Signup error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Error registering user",
-      error: error.message 
+      error: error.message,
     });
   }
 };
@@ -195,9 +189,10 @@ exports.login = async (req, res) => {
 
     // Validation
     if (!identifier || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Identifier (email/phone/consumerCode) and password are required" 
+      return res.status(400).json({
+        success: false,
+        message:
+          "Identifier (email/phone/consumerCode) and password are required",
       });
     }
 
@@ -206,41 +201,58 @@ exports.login = async (req, res) => {
       $or: [
         { email: identifier },
         { phone: identifier },
-        { consumerCode: identifier }
-      ]
+        { consumerCode: identifier },
+      ],
     });
 
     if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid credentials" 
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
       });
     }
 
     // Verify the user is logging in through the correct portal
     if (userType && user.userType !== userType) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid credentials" 
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
       });
     }
 
     // Check if user is active
     if (user.status !== "Active") {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Account is ${user.status}. Please contact administrator.` 
+      return res.status(403).json({
+        success: false,
+        message: `Account is ${user.status}. Please contact administrator.`,
       });
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-    
+
     if (!isPasswordValid) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid credentials" 
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
       });
+    }
+
+    // Distributor/FieldUser must be approved by admin
+    if (["Distributor", "FieldUser"].includes(user.userType)) {
+      const authority = user.authorityStatus || "Pending";
+      if (authority !== "Active") {
+        const pendingMessage =
+          authority === "Pending"
+            ? "Waiting for admin approval"
+            : `Account is ${authority}. Please contact administrator.`;
+
+        return res.status(403).json({
+          success: false,
+          message: pendingMessage,
+          code: authority === "Pending" ? "PENDING_APPROVAL" : "ACCESS_BLOCKED",
+        });
+      }
     }
 
     // Update last login
@@ -259,10 +271,10 @@ exports.login = async (req, res) => {
       phone: user.phone,
       status: user.status,
       lastLoginAt: user.lastLoginAt,
-      ...(user.userType === "Consumer" && { 
+      ...(user.userType === "Consumer" && {
         consumerCode: user.consumerCode,
         category: user.category,
-        qrToken: user.qrToken
+        qrToken: user.qrToken,
       }),
       ...(user.userType === "Distributor" && {
         wardNo: user.wardNo,
@@ -272,7 +284,7 @@ exports.login = async (req, res) => {
         upazila: user.upazila,
         unionName: user.unionName,
         ward: user.ward,
-        authorityStatus: user.authorityStatus
+        authorityStatus: user.authorityStatus,
       }),
       ...(user.userType === "FieldUser" && {
         wardNo: user.wardNo,
@@ -281,8 +293,8 @@ exports.login = async (req, res) => {
         upazila: user.upazila,
         unionName: user.unionName,
         ward: user.ward,
-        authorityStatus: user.authorityStatus
-      })
+        authorityStatus: user.authorityStatus,
+      }),
     };
 
     res.status(200).json({
@@ -290,16 +302,15 @@ exports.login = async (req, res) => {
       message: "Login successful",
       data: {
         user: userResponse,
-        token
-      }
+        token,
+      },
     });
-
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Error logging in",
-      error: error.message 
+      error: error.message,
     });
   }
 };
@@ -312,23 +323,22 @@ exports.getMe = async (req, res) => {
     const user = await User.findById(req.user.userId).select("-passwordHash");
 
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      data: { user }
+      data: { user },
     });
-
   } catch (error) {
     console.error("Get me error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Error fetching user profile",
-      error: error.message 
+      error: error.message,
     });
   }
 };
@@ -341,28 +351,31 @@ exports.changePassword = async (req, res) => {
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Current password and new password are required" 
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required",
       });
     }
 
     const user = await User.findById(req.user.userId);
 
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
       });
     }
 
     // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.passwordHash);
-    
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+
     if (!isPasswordValid) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Current password is incorrect" 
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
       });
     }
 
@@ -372,15 +385,14 @@ exports.changePassword = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Password changed successfully"
+      message: "Password changed successfully",
     });
-
   } catch (error) {
     console.error("Change password error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Error changing password",
-      error: error.message 
+      error: error.message,
     });
   }
 };

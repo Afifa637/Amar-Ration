@@ -16,11 +16,9 @@ export default function LoginPage() {
   const isAdminLogin = role === "central-admin";
 
   const [email, setEmail] = useState(
-    isAdminLogin ? "admin@amarration.gov.bd" : ""
+    isAdminLogin ? "admin@amarration.gov.bd" : "",
   );
-  const [password, setPassword] = useState(
-    isAdminLogin ? "Admin@123" : ""
-  );
+  const [password, setPassword] = useState(isAdminLogin ? "Admin@123" : "");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -42,14 +40,20 @@ export default function LoginPage() {
     }
 
     try {
-      const success = await auth.login(email, password, role as UserRole);
+      const result = await auth.login(email, password, role as UserRole);
 
-      if (success) {
+      if (result.success) {
         if (role === "central-admin") {
           navigate("/admin/dashboard");
         } else {
           navigate("/dashboard");
         }
+      } else if (result.reason === "pending-approval") {
+        navigate("/pending-approval");
+      } else if (result.reason === "blocked") {
+        setError(
+          "আপনার অ্যাকাউন্টটি স্থগিত/বাতিল হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।",
+        );
       } else {
         setError("ইমেইল বা পাসওয়ার্ড ভুল");
       }
