@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
 
+const crypto = require("crypto");
+
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const DistributionSession = require("../models/DistributionSession");
@@ -9,12 +11,19 @@ const OfflineQueue = require("../models/OfflineQueue");
 const SystemSetting = require("../models/SystemSetting");
 const Token = require("../models/Token");
 const User = require("../models/User");
+const Family = require("../models/Family");
+const OMSCard = require("../models/OMSCard");
+const QRCode = require("../models/QRCode");
 const {
   rationQtyByCategory,
   makeTokenCode,
 } = require("../services/token.service");
 const { stockOut } = require("../services/stock.service");
 const { writeAudit } = require("../services/audit.service");
+const {
+  notifyAdmins,
+  notifyUser,
+} = require("../services/notification.service");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -62,17 +71,26 @@ async function getOrCreateSession(distributorId, session) {
   return created[0];
 }
 
+function sha256(s) {
+  return crypto.createHash("sha256").update(s).digest("hex");
+}
+
 async function resolveConsumerFromPayload(qrPayload) {
   const payload = String(qrPayload || "").trim();
-  if (!payload) return null;
+  if (!payload) return { consumer: null, qr: null, card: null };
 
-  const orConditions = [{ consumerCode: payload }, { qrToken: payload }];
+  const payloadHash = sha256(payload);
+  const qr = await QRCode.findOne({
+    $or: [{ payload }, { payloadHash }],
+  }).lean();
 
-  if (/^[a-f\d]{24}$/i.test(payload)) {
-    orConditions.push({ _id: payload });
-  }
+  if (!qr) return { consumer: null, qr: null, card: null };
 
-  return Consumer.findOne({ $or: orConditions });
+  const card = await OMSCard.findOne({ qrCodeId: qr._id }).lean();
+  if (!card) return { consumer: null, qr, card: null };
+
+  const consumer = await Consumer.findById(card.consumerId);
+  return { consumer, qr, card };
 }
 
 function parseThreshold(settingValue) {
@@ -106,11 +124,61 @@ async function scanAndIssueToken(req, res) {
       .json({ success: false, message: "qrPayload required" });
   }
 
-  const consumer = await resolveConsumerFromPayload(qrPayload);
-  if (!consumer) {
+  const { consumer, qr, card } = await resolveConsumerFromPayload(qrPayload);
+  if (!qr || !card || !consumer) {
     return res
       .status(404)
-      .json({ success: false, message: "Consumer not found" });
+      .json({ success: false, message: "Invalid OMS QR code" });
+  }
+
+  if (card.cardStatus !== "Active") {
+    await writeAudit({
+      actorUserId: userId,
+      actorType: "Distributor",
+      action: "QR_SCAN_REJECT_CARD_INACTIVE",
+      entityType: "OMSCard",
+      entityId: String(card._id),
+      severity: "Warning",
+      meta: { consumer: consumer.consumerCode, cardStatus: card.cardStatus },
+    });
+
+    return res.status(400).json({
+      success: false,
+      message: "OMS card is not active",
+    });
+  }
+
+  if (qr.status !== "Valid") {
+    await writeAudit({
+      actorUserId: userId,
+      actorType: "Distributor",
+      action: "QR_SCAN_REJECT_QR_STATUS",
+      entityType: "QRCode",
+      entityId: String(qr._id),
+      severity: "Warning",
+      meta: { status: qr.status },
+    });
+
+    return res
+      .status(400)
+      .json({ success: false, message: "QR code is not valid" });
+  }
+
+  if (qr.validTo && new Date() > new Date(qr.validTo)) {
+    await QRCode.findByIdAndUpdate(qr._id, { status: "Expired" });
+    await writeAudit({
+      actorUserId: userId,
+      actorType: "Distributor",
+      action: "QR_SCAN_REJECT_QR_EXPIRED",
+      entityType: "QRCode",
+      entityId: String(qr._id),
+      severity: "Warning",
+      meta: { validTo: qr.validTo },
+    });
+
+    return res
+      .status(400)
+      .json({ success: false, message: "QR code has expired" });
   }
 
   if (distributor.ward && consumer.ward && distributor.ward !== consumer.ward) {
@@ -133,6 +201,26 @@ async function scanAndIssueToken(req, res) {
     return res
       .status(400)
       .json({ success: false, message: "Beneficiary is blacklisted" });
+  }
+
+  if (consumer.familyId) {
+    const family = await Family.findById(consumer.familyId).lean();
+    if (family?.flaggedDuplicate) {
+      await writeAudit({
+        actorUserId: userId,
+        actorType: "Distributor",
+        action: "QR_SCAN_REJECT_FAMILY_DUPLICATE",
+        entityType: "Family",
+        entityId: String(consumer.familyId),
+        severity: "Warning",
+        meta: { consumer: consumer.consumerCode },
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Family duplication detected; admin review required",
+      });
+    }
   }
 
   if (consumer.status !== "Active") {
@@ -213,6 +301,12 @@ async function scanAndIssueToken(req, res) {
       },
       session,
     );
+
+    await notifyUser(req.user.userId, {
+      title: "Token issued",
+      message: `Token ${tokenDoc.tokenCode} issued for ${consumer.consumerCode}.`,
+      meta: { token: tokenDoc.tokenCode, consumer: consumer.consumerCode },
+    });
 
     await session.commitTransaction();
 
@@ -346,6 +440,20 @@ async function completeDistribution(req, res) {
       },
       session,
     );
+
+    if (mismatch) {
+      await notifyUser(req.user.userId, {
+        title: "Weight mismatch alert",
+        message: `Token ${token.tokenCode} mismatch: expected ${expected}kg, actual ${actual}kg.`,
+        meta: { token: token.tokenCode, expected, actual },
+      });
+
+      await notifyAdmins({
+        title: "Weight mismatch alert",
+        message: `Token ${token.tokenCode} mismatch: expected ${expected}kg, actual ${actual}kg.`,
+        meta: { token: token.tokenCode, expected, actual },
+      });
+    }
 
     await session.commitTransaction();
     return res.json({

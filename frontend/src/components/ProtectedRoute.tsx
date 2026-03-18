@@ -1,4 +1,4 @@
-import { useContext} from "react";
+import { useContext } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { AuthContext, type UserRole } from "../context/AuthContext";
 
@@ -50,6 +50,13 @@ export default function ProtectedRoute({
         </div>
       </div>
     );
+  }
+
+  if (
+    auth.user.role !== "central-admin" &&
+    auth.user.authorityStatus !== "Active"
+  ) {
+    return <Navigate to="/pending-approval" replace />;
   }
 
   return <>{children}</>;

@@ -24,13 +24,18 @@ export type AuthUser = {
   role: UserRole;
   wardNo?: string;
   officeAddress?: string;
+  authorityStatus?: "Pending" | "Active" | "Suspended" | "Revoked";
 };
 
 type AuthContextType = {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isInitialized: boolean;
-  login: (email: string, password: string, role: UserRole) => Promise<boolean>;
+  login: (
+    email: string,
+    password: string,
+    role: UserRole,
+  ) => Promise<{ success: boolean; reason?: "pending-approval" | "blocked" }>;
   logout: () => void;
   hasRole: (allowedRoles: UserRole[]) => boolean;
 };
@@ -89,7 +94,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     email: string,
     password: string,
     role: UserRole,
-  ): Promise<boolean> => {
+  ): Promise<{ success: boolean; reason?: "pending-approval" | "blocked" }> => {
     try {
       // Map frontend role to backend userType
       const userType = roleToUserType[role];
@@ -112,6 +117,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           role: userTypeToRole[backendUser.userType] || role,
           wardNo: backendUser.wardNo,
           officeAddress: backendUser.officeAddress,
+          authorityStatus: backendUser.authorityStatus,
         };
 
         // Store in localStorage
@@ -126,14 +132,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(frontendUser);
         setIsAuthenticated(true);
 
-        return true;
+        return { success: true };
       }
 
-      return false;
-    } catch (error) {
+      return { success: false };
+    } catch (error: unknown) {
+      const responseCode =
+        typeof error === "object" && error && "response" in error
+          ? (error as { response?: { data?: { code?: string } } })?.response
+              ?.data?.code
+          : undefined;
+      if (responseCode === "PENDING_APPROVAL") {
+        return { success: false, reason: "pending-approval" };
+      }
+      if (responseCode === "ACCESS_BLOCKED") {
+        return { success: false, reason: "blocked" };
+      }
+
       const message = error instanceof Error ? error.message : "Login failed";
       console.error("Login failed:", message);
-      return false;
+      return { success: false };
     }
   };
 

@@ -6,6 +6,9 @@ const ConsumerSchema = new mongoose.Schema(
     qrToken: { type: String, unique: true, required: true }, // 64-char hex token for QR scanning
     name: { type: String, required: true },
     nidLast4: { type: String, required: true },
+    nidFull: { type: String, required: true },
+    fatherNidFull: { type: String, required: true },
+    motherNidFull: { type: String, required: true },
     status: {
       type: String,
       enum: ["Active", "Inactive", "Revoked"],
@@ -41,5 +44,9 @@ ConsumerSchema.index({
   unionName: 1,
   ward: 1,
 });
+
+ConsumerSchema.index({ nidFull: 1 });
+ConsumerSchema.index({ fatherNidFull: 1 });
+ConsumerSchema.index({ motherNidFull: 1 });
 
 module.exports = mongoose.model("Consumer", ConsumerSchema);

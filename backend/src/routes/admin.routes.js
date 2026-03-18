@@ -7,7 +7,13 @@ const {
   getAdminCardsSummary,
   getAdminDistributionMonitoring,
   getAdminConsumerReview,
+  getAdminAuditDetail,
 } = require("../controllers/admin.controller");
+const {
+  listAuditReportRequests,
+  requestAuditReport,
+  reviewAuditReportRequest,
+} = require("../controllers/audit-report.controller");
 
 router.use(protect, authorize("Admin"));
 
@@ -17,5 +23,9 @@ router.patch("/distributors/:userId/status", updateDistributorStatus);
 router.get("/cards/summary", getAdminCardsSummary);
 router.get("/distribution/monitoring", getAdminDistributionMonitoring);
 router.get("/consumers/review", getAdminConsumerReview);
+router.get("/audit/:id/detail", getAdminAuditDetail);
+router.get("/audit/requests", listAuditReportRequests);
+router.post("/audit/requests", requestAuditReport);
+router.patch("/audit/requests/:id/review", reviewAuditReportRequest);
 
 module.exports = router;
