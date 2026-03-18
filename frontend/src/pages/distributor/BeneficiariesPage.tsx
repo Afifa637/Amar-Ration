@@ -16,7 +16,9 @@ import {
 
 type FormState = {
   name: string;
-  nidLast4: string;
+  nidFull: string;
+  fatherNidFull: string;
+  motherNidFull: string;
   category: ConsumerCategory;
   status: ConsumerStatus;
   ward: string;
@@ -24,7 +26,9 @@ type FormState = {
 
 const emptyForm: FormState = {
   name: "",
-  nidLast4: "",
+  nidFull: "",
+  fatherNidFull: "",
+  motherNidFull: "",
   category: "A",
   status: "Inactive",
   ward: "",
@@ -33,7 +37,7 @@ const emptyForm: FormState = {
 export default function BeneficiariesPage() {
   const [tab, setTab] = useState<"long" | "flags">("long");
   const [q, setQ] = useState("");
-  const [ward, setWard] = useState<string>("সব");
+  const [ward, setWard] = useState<string>("সব এলাকা");
   const [status, setStatus] = useState("সব");
   const [openAdd, setOpenAdd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -48,6 +52,10 @@ export default function BeneficiariesPage() {
   });
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<Consumer | null>(null);
+
+  const normalizeNid = (value: string) => value.replace(/\D/g, "");
+  const isValidNid = (value: string) =>
+    value.length === 10 || value.length === 13 || value.length === 17;
 
   const loadData = async () => {
     setLoading(true);
@@ -85,9 +93,10 @@ export default function BeneficiariesPage() {
         c.name.includes(q) ||
         c.nidLast4.includes(q);
 
-      const matchWard = ward === "সব" || (c.ward ?? "") === ward;
+      const matchWard = ward === "সব এলাকা" || (c.ward ?? "") === ward;
       const matchStatus = status === "সব" || c.status === status;
-      const flagged = c.blacklistStatus && c.blacklistStatus !== "None";
+      const flagged =
+        (c.blacklistStatus && c.blacklistStatus !== "None") || c.familyFlag;
 
       if (tab === "flags") return matchQ && matchWard && flagged;
       return matchQ && matchWard && matchStatus;
@@ -99,12 +108,21 @@ export default function BeneficiariesPage() {
     consumers.forEach((c) => {
       if (c.ward) unique.add(c.ward);
     });
-    return ["সব", ...Array.from(unique)];
+    return ["সব এলাকা", ...Array.from(unique)];
   }, [consumers]);
 
   const saveConsumer = async () => {
-    if (!form.name.trim() || form.nidLast4.trim().length !== 4) {
-      setError("নাম এবং NID শেষ ৪ ডিজিট সঠিকভাবে দিন");
+    const consumerNid = normalizeNid(form.nidFull);
+    const fatherNid = normalizeNid(form.fatherNidFull);
+    const motherNid = normalizeNid(form.motherNidFull);
+
+    if (
+      !form.name.trim() ||
+      !isValidNid(consumerNid) ||
+      !isValidNid(fatherNid) ||
+      !isValidNid(motherNid)
+    ) {
+      setError("নাম এবং নিজ/পিতা/মাতার NID ১০/১৩/১৭ ডিজিট হতে হবে");
       return;
     }
 
@@ -115,7 +133,9 @@ export default function BeneficiariesPage() {
       if (editing) {
         await updateConsumer(editing._id, {
           name: form.name,
-          nidLast4: form.nidLast4,
+          nidFull: consumerNid,
+          fatherNidFull: fatherNid,
+          motherNidFull: motherNid,
           category: form.category,
           status: form.status,
           ward: form.ward || undefined,
@@ -124,7 +144,9 @@ export default function BeneficiariesPage() {
       } else {
         await createConsumer({
           name: form.name,
-          nidLast4: form.nidLast4,
+          nidFull: consumerNid,
+          fatherNidFull: fatherNid,
+          motherNidFull: motherNid,
           category: form.category,
           status: form.status,
           ward: form.ward || undefined,
@@ -256,7 +278,7 @@ export default function BeneficiariesPage() {
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
             disabled={tab === "flags"}
           >
-            <option>সব</option>
+            <option>সব স্ট্যাটাস</option>
             <option>Active</option>
             <option>Inactive</option>
             <option>Revoked</option>
@@ -274,7 +296,7 @@ export default function BeneficiariesPage() {
               variant="secondary"
               onClick={() => {
                 setQ("");
-                setWard("সব");
+                setWard("সব এলাকা");
                 setStatus("সব");
               }}
             >
@@ -332,7 +354,7 @@ export default function BeneficiariesPage() {
                       )}
                     </td>
                     <td className="border border-[#cfd6e0] p-2 text-center">
-                      {c.blacklistStatus && c.blacklistStatus !== "None" ? (
+                      {c.familyFlag ? (
                         <Badge tone="red">⚠ ফ্ল্যাগড</Badge>
                       ) : (
                         <Badge tone="gray">না</Badge>
@@ -346,7 +368,9 @@ export default function BeneficiariesPage() {
                             setEditing(c);
                             setForm({
                               name: c.name,
-                              nidLast4: c.nidLast4,
+                              nidFull: c.nidFull || "",
+                              fatherNidFull: c.fatherNidFull || "",
+                              motherNidFull: c.motherNidFull || "",
                               category: c.category,
                               status: c.status,
                               ward: c.ward || "",
@@ -397,17 +421,45 @@ export default function BeneficiariesPage() {
             />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">NID শেষ ৪ ডিজিট</div>
+            <div className="text-[12px] mb-1 font-medium">নিজের NID</div>
             <input
-              value={form.nidLast4}
+              value={form.nidFull}
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  nidLast4: e.target.value.replace(/\D/g, "").slice(0, 4),
+                  nidFull: normalizeNid(e.target.value),
                 }))
               }
               className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-              placeholder="1234"
+              placeholder="১০/১৩/১৭ ডিজিট"
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">পিতার NID</div>
+            <input
+              value={form.fatherNidFull}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  fatherNidFull: normalizeNid(e.target.value),
+                }))
+              }
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+              placeholder="১০/১৩/১৭ ডিজিট"
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">মাতার NID</div>
+            <input
+              value={form.motherNidFull}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  motherNidFull: normalizeNid(e.target.value),
+                }))
+              }
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+              placeholder="১০/১৩/১৭ ডিজিট"
             />
           </div>
           <div>

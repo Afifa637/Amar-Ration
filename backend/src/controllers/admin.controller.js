@@ -9,6 +9,10 @@ const DistributionRecord = require("../models/DistributionRecord");
 const StockLedger = require("../models/StockLedger");
 const OfflineQueue = require("../models/OfflineQueue");
 const AuditLog = require("../models/AuditLog");
+const BlacklistEntry = require("../models/BlacklistEntry");
+const AuditReportRequest = require("../models/AuditReportRequest");
+const { writeAudit } = require("../services/audit.service");
+const { notifyUser } = require("../services/notification.service");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -114,10 +118,22 @@ async function getAdminDistributors(req, res) {
       distributorDocs.map((d) => [String(d.userId), d]),
     );
 
+    const auditRequests = await AuditReportRequest.find({
+      status: { $in: ["Requested", "Submitted", "Reviewed"] },
+      decision: { $ne: "Approved" },
+    })
+      .select("distributorUserId status decision dueAt")
+      .lean();
+
+    const auditMap = new Map(
+      auditRequests.map((r) => [String(r.distributorUserId), r]),
+    );
+
     const rows = users.map((user) => {
       const distributor = distributorMap.get(String(user._id));
       const authorityStatus =
         user.authorityStatus || distributor?.authorityStatus || "Pending";
+      const auditReq = auditMap.get(String(user._id));
 
       return {
         userId: String(user._id),
@@ -128,6 +144,9 @@ async function getAdminDistributors(req, res) {
         ward: user.ward || distributor?.ward || "",
         officeAddress: user.officeAddress || "",
         authorityStatus,
+        auditRequired: Boolean(auditReq),
+        auditRequestStatus: auditReq?.status || null,
+        auditDueAt: auditReq?.dueAt || null,
         createdAt: user.createdAt,
       };
     });
@@ -189,6 +208,22 @@ async function updateDistributorStatus(req, res) {
       distributor.authorityStatus = status;
       await distributor.save();
     }
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Admin",
+      action: "DISTRIBUTOR_STATUS_UPDATED",
+      entityType: "Distributor",
+      entityId: String(distributor._id),
+      severity: status === "Active" ? "Info" : "Warning",
+      meta: { status },
+    });
+
+    await notifyUser(user._id, {
+      title: "Distributor status updated",
+      message: `Your distributor account status is now ${status}.`,
+      meta: { status },
+    });
 
     res.json({
       success: true,
@@ -299,6 +334,57 @@ async function getAdminConsumerReview(req, res) {
   }
 }
 
+async function getAdminAuditDetail(req, res) {
+  try {
+    const log = await AuditLog.findById(req.params.id).lean();
+    if (!log) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Audit log not found" });
+    }
+
+    let consumer = null;
+
+    const populateConsumer = async (id) =>
+      Consumer.findById(id)
+        .populate(
+          "createdByDistributor",
+          "name phone email ward officeAddress division district upazila unionName",
+        )
+        .populate("familyId")
+        .lean();
+
+    if (log.entityType === "Consumer" && log.entityId) {
+      consumer = await populateConsumer(log.entityId);
+    }
+
+    if (!consumer && log.entityType === "Token" && log.entityId) {
+      const token = await Token.findById(log.entityId)
+        .populate({
+          path: "consumerId",
+          populate: [
+            { path: "createdByDistributor", select: "name phone email ward" },
+            { path: "familyId" },
+          ],
+        })
+        .lean();
+      consumer = token?.consumerId || null;
+    }
+
+    if (!consumer && log.entityType === "BlacklistEntry" && log.entityId) {
+      const entry = await BlacklistEntry.findById(log.entityId).lean();
+      if (entry?.targetType === "Consumer" && entry.targetRefId) {
+        consumer = await populateConsumer(entry.targetRefId);
+      }
+    }
+
+    res.json({ success: true, data: { log, consumer } });
+  } catch (error) {
+    console.error("getAdminAuditDetail error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   getAdminSummary,
   getAdminDistributors,
@@ -306,4 +392,5 @@ module.exports = {
   getAdminCardsSummary,
   getAdminDistributionMonitoring,
   getAdminConsumerReview,
+  getAdminAuditDetail,
 };

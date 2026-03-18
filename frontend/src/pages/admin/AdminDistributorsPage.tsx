@@ -119,6 +119,7 @@ export default function AdminDistributorsPage() {
                   "ওয়ার্ড",
                   "নাম",
                   "স্ট্যাটাস",
+                  "অডিট ফ্ল্যাগ",
                   "অ্যাডমিন অ্যাকশন",
                 ].map((head) => (
                   <th key={head} className="p-2 border border-[#d7dde6]">
@@ -137,6 +138,9 @@ export default function AdminDistributorsPage() {
                   <td className="p-2 border border-[#d7dde6]">{row.name}</td>
                   <td className="p-2 border border-[#d7dde6]">
                     {statusLabel(row.authorityStatus)}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.auditRequired ? "রিপোর্ট প্রয়োজন" : "—"}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     <div className="flex flex-wrap gap-2">

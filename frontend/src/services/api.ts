@@ -57,6 +57,9 @@ export type Consumer = {
   qrToken: string;
   name: string;
   nidLast4: string;
+  nidFull?: string;
+  fatherNidFull?: string;
+  motherNidFull?: string;
   category: ConsumerCategory;
   status: ConsumerStatus;
   division?: string;
@@ -64,7 +67,13 @@ export type Consumer = {
   upazila?: string;
   unionName?: string;
   ward?: string;
+  createdByDistributor?: {
+    name?: string;
+    phone?: string;
+    email?: string;
+  };
   blacklistStatus?: "None" | "Temp" | "Permanent";
+  familyFlag?: boolean;
   createdAt: string;
 };
 
@@ -130,6 +139,30 @@ export type AuditLogEntry = {
   createdAt: string;
 };
 
+export type AuditReportRequest = {
+  _id: string;
+  distributorUserId:
+    | string
+    | {
+        _id: string;
+        name?: string;
+        phone?: string;
+        email?: string;
+        ward?: string;
+      };
+  requestedByAdminId?: string;
+  auditLogId?: AuditLogEntry | string;
+  note?: string;
+  reportText?: string;
+  dueAt?: string;
+  overdueNotified?: boolean;
+  decision?: "Approved" | "Rejected" | "Suspended";
+  reviewedAt?: string;
+  status: "Requested" | "Submitted" | "Reviewed" | "Closed";
+  submittedAt?: string;
+  createdAt: string;
+};
+
 export type AdminSummary = {
   stats: {
     pendingDistributors: number;
@@ -159,6 +192,9 @@ export type AdminDistributorRow = {
   officeAddress?: string;
   authorityStatus: "Active" | "Suspended" | "Revoked" | "Pending";
   createdAt?: string;
+  auditRequired?: boolean;
+  auditRequestStatus?: string | null;
+  auditDueAt?: string | null;
 };
 
 export type AdminDistributorsResponse = {
@@ -209,6 +245,9 @@ export type OfflineQueueItem = {
   distributorId: string;
   payload: Record<string, unknown>;
   status: "Pending" | "Synced" | "Failed";
+  errorMessage?: string;
+  resolvedAction?: string;
+  syncedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -336,7 +375,9 @@ export async function getConsumers(params?: {
 
 export async function createConsumer(payload: {
   name: string;
-  nidLast4: string;
+  nidFull: string;
+  fatherNidFull: string;
+  motherNidFull: string;
   category: ConsumerCategory;
   status?: ConsumerStatus;
   ward?: string;
@@ -352,7 +393,9 @@ export async function updateConsumer(
   consumerId: string,
   payload: {
     name?: string;
-    nidLast4?: string;
+    nidFull?: string;
+    fatherNidFull?: string;
+    motherNidFull?: string;
     category?: ConsumerCategory;
     status?: ConsumerStatus;
     ward?: string;
@@ -509,6 +552,46 @@ export async function getAdminConsumerReview(params?: { limit?: number }) {
   return response.data.data;
 }
 
+export async function getAdminAuditDetail(auditId: string) {
+  const response = await api.get<{
+    data: {
+      log: AuditLogEntry;
+      consumer?: Consumer;
+    };
+  }>(`/admin/audit/${auditId}/detail`);
+  return response.data.data;
+}
+
+export async function requestAuditReport(payload: {
+  distributorUserId: string;
+  auditLogId?: string;
+  note?: string;
+}) {
+  const response = await api.post<{ data: { request: AuditReportRequest } }>(
+    "/admin/audit/requests",
+    payload,
+  );
+  return response.data.data;
+}
+
+export async function getAdminAuditRequests() {
+  const response = await api.get<{ data: { items: AuditReportRequest[] } }>(
+    "/admin/audit/requests",
+  );
+  return response.data.data;
+}
+
+export async function reviewAuditReportRequest(
+  requestId: string,
+  decision: "Approved" | "Rejected" | "Suspended",
+) {
+  const response = await api.patch<{ data: { request: AuditReportRequest } }>(
+    `/admin/audit/requests/${requestId}/review`,
+    { decision },
+  );
+  return response.data.data;
+}
+
 export async function getReportSummary() {
   const response = await api.get<{
     totalTokens: number;
@@ -658,10 +741,41 @@ export async function syncOfflineQueueItem(itemId: string) {
 }
 
 export async function syncAllOfflineQueue() {
-  const response = await api.post<{ data: { syncedCount: number } }>(
+  const response = await api.post<{
+    data: { syncedCount: number; failedCount?: number };
+  }>(
     "/monitoring/offline-queue/sync-all",
   );
   return response.data.data;
+}
+
+export async function getDistributorAuditRequests() {
+  const response = await api.get<{ data: { items: AuditReportRequest[] } }>(
+    "/distributor/audit-requests",
+  );
+  return response.data.data;
+}
+
+export async function submitAuditReport(
+  requestId: string,
+  reportText: string,
+) {
+  const response = await api.post<{ data: { request: AuditReportRequest } }>(
+    `/distributor/audit-requests/${requestId}/submit`,
+    { reportText },
+  );
+  return response.data.data;
+}
+
+export async function resolveOfflineQueueItem(
+  itemId: string,
+  action: "discard" | "markSynced",
+) {
+  const response = await api.patch<{ data: { item: OfflineQueueItem } }>(
+    `/monitoring/offline-queue/${itemId}/resolve`,
+    { action },
+  );
+  return unwrap<{ item: OfflineQueueItem }>(response);
 }
 
 export async function getDistributorSettings() {

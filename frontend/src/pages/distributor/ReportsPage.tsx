@@ -69,7 +69,16 @@ export default function ReportsPage() {
 
       setSummary(summaryData);
       setRows(distributionData.rows);
-      setTotals(distributionData.totals);
+      setTotals(
+        distributionData.rows.reduce(
+          (acc, row) => ({
+            expectedKg: acc.expectedKg + row.expectedKg,
+            actualKg: acc.actualKg + row.actualKg,
+            mismatches: acc.mismatches + (row.mismatch ? 1 : 0),
+          }),
+          { expectedKg: 0, actualKg: 0, mismatches: 0 },
+        ),
+      );
       setTokenAnalytics(analyticsData);
       setAuditRows(auditData.logs);
     } catch (err) {
