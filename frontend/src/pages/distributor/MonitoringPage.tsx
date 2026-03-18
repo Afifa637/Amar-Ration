@@ -10,6 +10,7 @@ import {
   getBlacklistEntries,
   getMonitoringSummary,
   getOfflineQueue,
+  resolveOfflineQueueItem,
   syncAllOfflineQueue,
   syncOfflineQueueItem,
   updateBlacklistEntry,
@@ -40,6 +41,9 @@ export default function MonitoringPage() {
   const [summary, setSummary] = useState<MonitoringSummary | null>(null);
   const [blacklist, setBlacklist] = useState<MonitoringBlacklistEntry[]>([]);
   const [offlineQueue, setOfflineQueue] = useState<OfflineQueueItem[]>([]);
+  const [offlineTab, setOfflineTab] = useState<"Pending" | "Failed" | "Synced">(
+    "Pending",
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -61,7 +65,7 @@ export default function MonitoringPage() {
       const [summaryData, blacklistData, queueData] = await Promise.all([
         getMonitoringSummary(),
         getBlacklistEntries({ limit: 100 }),
-        getOfflineQueue({ status: "Pending", limit: 100 }),
+        getOfflineQueue({ limit: 200 }),
       ]);
 
       setSummary(summaryData);
@@ -172,7 +176,9 @@ export default function MonitoringPage() {
     try {
       setLoading(true);
       const result = await syncAllOfflineQueue();
-      setMessage(`${result?.syncedCount ?? 0} টি item sync হয়েছে`);
+      setMessage(
+        `${result?.syncedCount ?? 0} টি item sync হয়েছে, ${result?.failedCount ?? 0} টি ব্যর্থ`,
+      );
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "সব Sync ব্যর্থ");
@@ -345,6 +351,26 @@ export default function MonitoringPage() {
           </Button>
         }
       >
+        <div className="flex flex-wrap gap-2 mb-3">
+          {(["Pending", "Failed", "Synced"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setOfflineTab(tab)}
+              className={`px-3 py-1.5 rounded text-[12px] border ${
+                offlineTab === tab
+                  ? "bg-[#1f77b4] text-white border-[#1f77b4]"
+                  : "bg-white border-[#cfd6e0]"
+              }`}
+            >
+              {tab === "Pending"
+                ? "পেন্ডিং"
+                : tab === "Failed"
+                  ? "কনফ্লিক্ট"
+                  : "সিঙ্কড"}
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-3">
           <input
             value={offlinePayload}
@@ -361,7 +387,7 @@ export default function MonitoringPage() {
           </Button>
         </div>
 
-        {offlineQueue.length === 0 ? (
+        {offlineQueue.filter((o) => o.status === offlineTab).length === 0 ? (
           <div className="text-[12px] text-[#374151]">
             কোনো পেন্ডিং অফলাইন ডেটা নেই।
           </div>
@@ -374,33 +400,81 @@ export default function MonitoringPage() {
                   <th className="border p-2">ডেটা</th>
                   <th className="border p-2">সময়</th>
                   <th className="border p-2">স্ট্যাটাস</th>
+                  <th className="border p-2">কারণ</th>
                   <th className="border p-2">অ্যাকশন</th>
                 </tr>
               </thead>
               <tbody>
-                {offlineQueue.map((o) => (
-                  <tr key={o._id}>
-                    <td className="border p-2 text-center">
-                      {o._id.slice(-6)}
-                    </td>
-                    <td className="border p-2">{JSON.stringify(o.payload)}</td>
-                    <td className="border p-2 text-center">
-                      {new Date(o.createdAt).toLocaleString()}
-                    </td>
-                    <td className="border p-2 text-center">
-                      <Badge tone="yellow">সিঙ্ক অপেক্ষমাণ</Badge>
-                    </td>
-                    <td className="border p-2 text-center">
-                      <Button
-                        variant="ghost"
-                        onClick={() => void onSyncOne(o._id)}
-                        disabled={loading}
-                      >
-                        সিঙ্ক
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {offlineQueue
+                  .filter((o) => o.status === offlineTab)
+                  .map((o) => (
+                    <tr key={o._id}>
+                      <td className="border p-2 text-center">
+                        {o._id.slice(-6)}
+                      </td>
+                      <td className="border p-2">
+                        {JSON.stringify(o.payload)}
+                      </td>
+                      <td className="border p-2 text-center">
+                        {new Date(o.createdAt).toLocaleString()}
+                      </td>
+                      <td className="border p-2 text-center">
+                        {o.status === "Pending" && (
+                          <Badge tone="yellow">সিঙ্ক অপেক্ষমাণ</Badge>
+                        )}
+                        {o.status === "Failed" && (
+                          <Badge tone="red">কনফ্লিক্ট</Badge>
+                        )}
+                        {o.status === "Synced" && (
+                          <Badge tone="green">সিঙ্কড</Badge>
+                        )}
+                      </td>
+                      <td className="border p-2 text-center">
+                        {o.errorMessage || "—"}
+                      </td>
+                      <td className="border p-2 text-center">
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {(o.status === "Pending" ||
+                            o.status === "Failed") && (
+                            <Button
+                              variant="ghost"
+                              onClick={() => void onSyncOne(o._id)}
+                              disabled={loading}
+                            >
+                              সিঙ্ক
+                            </Button>
+                          )}
+                          {o.status === "Failed" && (
+                            <Button
+                              variant="secondary"
+                              onClick={async () => {
+                                try {
+                                  setLoading(true);
+                                  await resolveOfflineQueueItem(
+                                    o._id,
+                                    "discard",
+                                  );
+                                  setMessage("কনফ্লিক্ট ডিসকার্ড করা হয়েছে");
+                                  await loadData();
+                                } catch (err) {
+                                  setError(
+                                    err instanceof Error
+                                      ? err.message
+                                      : "রিজলভ ব্যর্থ",
+                                  );
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              disabled={loading}
+                            >
+                              ডিসকার্ড
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

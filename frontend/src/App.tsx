@@ -6,6 +6,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import EntrancePage from "./pages/EntrancePage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import PendingApprovalPage from "./pages/PendingApprovalPage";
 import DistributorDashboard from "./pages/distributor/DistributorDashboard";
 import BeneficiariesPage from "./pages/distributor/BeneficiariesPage";
 import CardsTokensPage from "./pages/distributor/CardsTokensPage";
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/" element={<EntrancePage />} />
         <Route path="/login/:role" element={<LoginPage />} />
         <Route path="/signup/:role" element={<SignupPage />} />
+        <Route path="/pending-approval" element={<PendingApprovalPage />} />
 
         <Route
           element={

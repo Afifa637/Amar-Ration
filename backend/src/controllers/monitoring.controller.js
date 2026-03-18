@@ -5,6 +5,10 @@ const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const User = require("../models/User");
 const { writeAudit } = require("../services/audit.service");
+const {
+  scanAndIssueToken,
+  completeDistribution,
+} = require("./distribution.controller");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -48,6 +52,31 @@ function getScopeFilter(distributor) {
 function applyBlacklistStatus(blockType, active) {
   if (!active) return "None";
   return blockType === "Permanent" ? "Permanent" : "Temp";
+}
+
+function buildMockReq(user, body) {
+  return {
+    user,
+    body,
+    params: {},
+    query: {},
+  };
+}
+
+function runController(controller, req) {
+  return new Promise((resolve) => {
+    const res = {
+      statusCode: 200,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload) {
+        resolve({ statusCode: this.statusCode, payload });
+      },
+    };
+    controller(req, res);
+  });
 }
 
 async function syncTargetStatus(entry) {
@@ -204,12 +233,10 @@ async function createBlacklistEntry(req, res) {
     } = req.body;
 
     if (!targetType || !targetRefId || !blockType || !reason) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "targetType, targetRefId, blockType and reason are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "targetType, targetRefId, blockType and reason are required",
+      });
     }
 
     const entry = await BlacklistEntry.create({
@@ -239,13 +266,11 @@ async function createBlacklistEntry(req, res) {
       },
     });
 
-    res
-      .status(201)
-      .json({
-        success: true,
-        message: "Blacklist entry created",
-        data: { entry },
-      });
+    res.status(201).json({
+      success: true,
+      message: "Blacklist entry created",
+      data: { entry },
+    });
   } catch (error) {
     console.error("createBlacklistEntry error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -418,13 +443,11 @@ async function createOfflineQueueEntry(req, res) {
       severity: "Info",
     });
 
-    res
-      .status(201)
-      .json({
-        success: true,
-        message: "Offline queue entry created",
-        data: { item },
-      });
+    res.status(201).json({
+      success: true,
+      message: "Offline queue entry created",
+      data: { item },
+    });
   } catch (error) {
     console.error("createOfflineQueueEntry error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -448,7 +471,58 @@ async function syncOfflineQueueItem(req, res) {
         .json({ success: false, message: "Offline queue item not found" });
     }
 
+    const payload = item.payload || {};
+    const action = String(payload.action || "").toUpperCase();
+
+    let result = null;
+
+    if (action === "SCAN") {
+      const qrPayload =
+        payload.qrPayload || payload.qrToken || payload.consumerCode;
+      result = await runController(
+        scanAndIssueToken,
+        buildMockReq(req.user, { qrPayload }),
+      );
+    } else if (action === "COMPLETE") {
+      result = await runController(
+        completeDistribution,
+        buildMockReq(req.user, {
+          tokenCode: payload.tokenCode,
+          actualKg: payload.actualKg,
+        }),
+      );
+    } else {
+      result = {
+        statusCode: 400,
+        payload: { message: "Unsupported offline action" },
+      };
+    }
+
+    if (result.statusCode >= 400) {
+      item.status = "Failed";
+      item.errorMessage = result.payload?.message || "Sync failed";
+      await item.save();
+
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType: req.user.userType === "Admin" ? "Admin" : "Distributor",
+        action: "OFFLINE_QUEUE_SYNC_FAILED",
+        entityType: "OfflineQueue",
+        entityId: String(item._id),
+        severity: "Warning",
+        meta: { error: item.errorMessage },
+      });
+
+      return res.status(409).json({
+        success: false,
+        message: item.errorMessage,
+        data: { item },
+      });
+    }
+
     item.status = "Synced";
+    item.errorMessage = undefined;
+    item.syncedAt = new Date();
     await item.save();
 
     await writeAudit({
@@ -477,26 +551,122 @@ async function syncAllOfflineQueue(req, res) {
     }
 
     const query = { ...getScopeFilter(distributor), status: "Pending" };
-    const result = await OfflineQueue.updateMany(query, {
-      $set: { status: "Synced" },
-    });
+    const items = await OfflineQueue.find(query).lean();
+
+    let syncedCount = 0;
+    let failedCount = 0;
+
+    for (const item of items) {
+      const payload = item.payload || {};
+      const action = String(payload.action || "").toUpperCase();
+
+      let result = null;
+      if (action === "SCAN") {
+        const qrPayload =
+          payload.qrPayload || payload.qrToken || payload.consumerCode;
+        result = await runController(
+          scanAndIssueToken,
+          buildMockReq(req.user, { qrPayload }),
+        );
+      } else if (action === "COMPLETE") {
+        result = await runController(
+          completeDistribution,
+          buildMockReq(req.user, {
+            tokenCode: payload.tokenCode,
+            actualKg: payload.actualKg,
+          }),
+        );
+      } else {
+        result = {
+          statusCode: 400,
+          payload: { message: "Unsupported offline action" },
+        };
+      }
+
+      if (result.statusCode >= 400) {
+        failedCount += 1;
+        await OfflineQueue.findByIdAndUpdate(item._id, {
+          $set: {
+            status: "Failed",
+            errorMessage: result.payload?.message || "Sync failed",
+          },
+        });
+        continue;
+      }
+
+      syncedCount += 1;
+      await OfflineQueue.findByIdAndUpdate(item._id, {
+        $set: {
+          status: "Synced",
+          errorMessage: undefined,
+          syncedAt: new Date(),
+        },
+      });
+    }
 
     await writeAudit({
       actorUserId: req.user.userId,
       actorType: req.user.userType === "Admin" ? "Admin" : "Distributor",
       action: "OFFLINE_QUEUE_SYNCED_ALL",
       entityType: "OfflineQueue",
-      severity: "Info",
-      meta: { modifiedCount: result.modifiedCount },
+      severity: failedCount > 0 ? "Warning" : "Info",
+      meta: { syncedCount, failedCount },
     });
 
     res.json({
       success: true,
-      message: "All pending items synced",
-      data: { syncedCount: result.modifiedCount },
+      message: "Offline sync completed",
+      data: { syncedCount, failedCount },
     });
   } catch (error) {
     console.error("syncAllOfflineQueue error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function resolveOfflineQueueItem(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (req.user.userType !== "Admin" && !distributor) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Distributor profile not found" });
+    }
+
+    const query = { _id: req.params.id, ...getScopeFilter(distributor) };
+    const item = await OfflineQueue.findOne(query);
+    if (!item) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Offline queue item not found" });
+    }
+
+    const { action } = req.body || {};
+    if (!action || !["discard", "markSynced"].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "action must be discard or markSynced",
+      });
+    }
+
+    item.status = "Synced";
+    item.resolvedAction = action;
+    item.syncedAt = new Date();
+    await item.save();
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: req.user.userType === "Admin" ? "Admin" : "Distributor",
+      action: "OFFLINE_QUEUE_RESOLVED",
+      entityType: "OfflineQueue",
+      entityId: String(item._id),
+      severity: "Info",
+      meta: { action },
+    });
+
+    res.json({ success: true, message: "Queue item resolved", data: { item } });
+  } catch (error) {
+    console.error("resolveOfflineQueueItem error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 }
@@ -511,4 +681,5 @@ module.exports = {
   createOfflineQueueEntry,
   syncOfflineQueueItem,
   syncAllOfflineQueue,
+  resolveOfflineQueueItem,
 };

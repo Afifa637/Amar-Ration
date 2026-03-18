@@ -1,8 +1,16 @@
 const crypto = require("crypto");
 const Consumer = require("../models/Consumer");
 const Family = require("../models/Family");
+const OMSCard = require("../models/OMSCard");
+const QRCode = require("../models/QRCode");
+const SystemSetting = require("../models/SystemSetting");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
+const { writeAudit } = require("../services/audit.service");
+const {
+  notifyAdmins,
+  notifyUser,
+} = require("../services/notification.service");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -51,6 +59,99 @@ const generateQRToken = () => {
   return crypto.randomBytes(32).toString("hex");
 };
 
+const NID_LENGTHS = new Set([10, 13, 17]);
+
+function normalizeNid(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isValidNid(value) {
+  return NID_LENGTHS.has(value.length);
+}
+
+function getLast4(value) {
+  return value.slice(-4);
+}
+
+function sha256(s) {
+  return crypto.createHash("sha256").update(s).digest("hex");
+}
+
+async function getQrExpiryDays(userId) {
+  const key = `distributor:${String(userId)}:settings`;
+  const setting = await SystemSetting.findOne({ key }).lean();
+  const days = Number(setting?.value?.qr?.expiryCycleDays);
+  if (Number.isFinite(days) && days > 0) return days;
+  return 30;
+}
+
+async function resolveFamilyByNids(
+  { nidFull, fatherNidFull, motherNidFull },
+  excludeId,
+) {
+  const nidSet = Array.from(
+    new Set([nidFull, fatherNidFull, motherNidFull].filter(Boolean)),
+  );
+
+  if (nidSet.length === 0) {
+    return { familyId: null, hasDuplicate: false, matchedIds: [] };
+  }
+
+  const matchQuery = {
+    $or: [
+      { nidFull: { $in: nidSet } },
+      { fatherNidFull: { $in: nidSet } },
+      { motherNidFull: { $in: nidSet } },
+    ],
+  };
+
+  if (excludeId) {
+    matchQuery._id = { $ne: excludeId };
+  }
+
+  const matches = await Consumer.find(matchQuery).select("_id familyId").lean();
+
+  let familyId = matches.find((m) => m.familyId)?.familyId || null;
+
+  if (!familyId && matches.length > 0) {
+    const familyKey = crypto
+      .createHash("sha256")
+      .update(`FAMILY-${nidSet.sort().join("|")}`)
+      .digest("hex");
+
+    const existing = await Family.findOne({ familyKey });
+    if (existing) {
+      familyId = existing._id;
+      if (!existing.flaggedDuplicate) {
+        existing.flaggedDuplicate = true;
+        await existing.save();
+      }
+    } else {
+      const created = await Family.create({
+        familyKey,
+        fatherNidLast4: getLast4(fatherNidFull),
+        motherNidLast4: getLast4(motherNidFull),
+        flaggedDuplicate: true,
+      });
+      familyId = created._id;
+    }
+  }
+
+  if (matches.length > 0 && familyId) {
+    await Consumer.updateMany(
+      { _id: { $in: matches.map((m) => m._id) } },
+      { $set: { familyId } },
+    );
+    await Family.findByIdAndUpdate(familyId, { flaggedDuplicate: true });
+  }
+
+  return {
+    familyId,
+    hasDuplicate: matches.length > 0,
+    matchedIds: matches.map((m) => String(m._id)),
+  };
+}
+
 // @route   POST /api/consumers
 // @desc    Add new consumer (Distributor only)
 // @access  Private (Distributor)
@@ -58,21 +159,47 @@ exports.addConsumer = async (req, res) => {
   try {
     const {
       name,
-      nidLast4,
+      nidFull,
+      fatherNidFull,
+      motherNidFull,
       category,
       division,
       district,
       upazila,
       unionName,
       ward,
-      familyId,
+      status,
     } = req.body;
 
     // Validation
-    if (!name || !nidLast4 || !category) {
+    if (!name || !nidFull || !fatherNidFull || !motherNidFull || !category) {
       return res.status(400).json({
         success: false,
-        message: "Name, NID last 4 digits, and category are required",
+        message:
+          "Name, consumer NID, father NID, mother NID, and category are required",
+      });
+    }
+
+    const normalizedNid = normalizeNid(nidFull);
+    const normalizedFather = normalizeNid(fatherNidFull);
+    const normalizedMother = normalizeNid(motherNidFull);
+
+    if (!isValidNid(normalizedNid)) {
+      return res.status(400).json({
+        success: false,
+        message: "Consumer NID must be 10/13/17 digits",
+      });
+    }
+    if (!isValidNid(normalizedFather)) {
+      return res.status(400).json({
+        success: false,
+        message: "Father NID must be 10/13/17 digits",
+      });
+    }
+    if (!isValidNid(normalizedMother)) {
+      return res.status(400).json({
+        success: false,
+        message: "Mother NID must be 10/13/17 digits",
       });
     }
 
@@ -93,17 +220,91 @@ exports.addConsumer = async (req, res) => {
       consumerCode,
       qrToken,
       name,
-      nidLast4,
+      nidLast4: getLast4(normalizedNid),
+      nidFull: normalizedNid,
+      fatherNidFull: normalizedFather,
+      motherNidFull: normalizedMother,
       category,
-      status: "Active",
+      status: status || "Inactive",
       division: division || req.user.division,
       district: district || req.user.district,
       upazila: upazila || req.user.upazila,
       unionName: unionName || req.user.unionName,
       ward: ward || req.user.ward,
       createdByDistributor: distributor._id,
-      familyId: familyId || null,
     });
+
+    const qrDays = await getQrExpiryDays(req.user.userId);
+    const now = new Date();
+    const validTo = new Date(now.getTime() + qrDays * 86400000);
+    const qrStatus =
+      consumer.status === "Active"
+        ? "Valid"
+        : consumer.status === "Revoked"
+          ? "Revoked"
+          : "Invalid";
+
+    const qr = await QRCode.create({
+      payload: qrToken,
+      payloadHash: sha256(qrToken),
+      validFrom: now,
+      validTo,
+      status: qrStatus,
+    });
+
+    await OMSCard.create({
+      consumerId: consumer._id,
+      cardStatus:
+        consumer.status === "Active"
+          ? "Active"
+          : consumer.status === "Revoked"
+            ? "Revoked"
+            : "Inactive",
+      qrCodeId: qr._id,
+    });
+
+    const familyResult = await resolveFamilyByNids(
+      {
+        nidFull: normalizedNid,
+        fatherNidFull: normalizedFather,
+        motherNidFull: normalizedMother,
+      },
+      consumer._id,
+    );
+
+    if (familyResult.familyId) {
+      consumer.familyId = familyResult.familyId;
+      await consumer.save();
+    }
+
+    if (familyResult.hasDuplicate) {
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType: "Distributor",
+        action: "Family duplicate NID detected",
+        entityType: "Consumer",
+        entityId: String(consumer._id),
+        severity: "Warning",
+        meta: {
+          matchedConsumerIds: familyResult.matchedIds,
+          nidFull: normalizedNid,
+          fatherNidFull: normalizedFather,
+          motherNidFull: normalizedMother,
+        },
+      });
+
+      await notifyUser(req.user.userId, {
+        title: "Family duplicate detected",
+        message: `Family duplicate found for ${consumer.consumerCode}.`,
+        meta: { consumerCode: consumer.consumerCode },
+      });
+
+      await notifyAdmins({
+        title: "Family duplicate detected",
+        message: `Family duplicate found for ${consumer.consumerCode}.`,
+        meta: { consumerCode: consumer.consumerCode },
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -115,6 +316,9 @@ exports.addConsumer = async (req, res) => {
           qrToken: consumer.qrToken,
           name: consumer.name,
           nidLast4: consumer.nidLast4,
+          nidFull: consumer.nidFull,
+          fatherNidFull: consumer.fatherNidFull,
+          motherNidFull: consumer.motherNidFull,
           category: consumer.category,
           status: consumer.status,
           division: consumer.division,
@@ -185,14 +389,21 @@ exports.getConsumers = async (req, res) => {
     // Get paginated consumers
     const consumers = await Consumer.find(query)
       .populate("createdByDistributor", "name email")
+      .populate("familyId", "flaggedDuplicate")
       .sort({ createdAt: -1 })
       .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .skip((page - 1) * limit)
+      .lean();
+
+    const consumersWithFlag = consumers.map((consumer) => ({
+      ...consumer,
+      familyFlag: Boolean(consumer.familyId?.flaggedDuplicate),
+    }));
 
     res.status(200).json({
       success: true,
       data: {
-        consumers,
+        consumers: consumersWithFlag,
         pagination: {
           total,
           page: parseInt(page),
@@ -243,7 +454,8 @@ exports.getConsumerById = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.updateConsumer = async (req, res) => {
   try {
-    const { name, nidLast4, category, status } = req.body;
+    const { name, nidFull, fatherNidFull, motherNidFull, category, status } =
+      req.body;
 
     const consumer = await Consumer.findById(req.params.id);
 
@@ -254,13 +466,192 @@ exports.updateConsumer = async (req, res) => {
       });
     }
 
+    const shouldRevalidateNids =
+      Boolean(nidFull || fatherNidFull || motherNidFull) ||
+      !consumer.nidFull ||
+      !consumer.fatherNidFull ||
+      !consumer.motherNidFull;
+
+    if (shouldRevalidateNids) {
+      const normalizedNid = normalizeNid(nidFull ?? consumer.nidFull);
+      const normalizedFather = normalizeNid(
+        fatherNidFull ?? consumer.fatherNidFull,
+      );
+      const normalizedMother = normalizeNid(
+        motherNidFull ?? consumer.motherNidFull,
+      );
+
+      if (!normalizedNid || !normalizedFather || !normalizedMother) {
+        return res.status(400).json({
+          success: false,
+          message: "Consumer, father, and mother NID are required",
+        });
+      }
+
+      if (!isValidNid(normalizedNid)) {
+        return res.status(400).json({
+          success: false,
+          message: "Consumer NID must be 10/13/17 digits",
+        });
+      }
+      if (!isValidNid(normalizedFather)) {
+        return res.status(400).json({
+          success: false,
+          message: "Father NID must be 10/13/17 digits",
+        });
+      }
+      if (!isValidNid(normalizedMother)) {
+        return res.status(400).json({
+          success: false,
+          message: "Mother NID must be 10/13/17 digits",
+        });
+      }
+
+      consumer.nidFull = normalizedNid;
+      consumer.fatherNidFull = normalizedFather;
+      consumer.motherNidFull = normalizedMother;
+      consumer.nidLast4 = getLast4(normalizedNid);
+    }
+
+    const previousStatus = consumer.status;
+
+    if (status && req.user.userType !== "Admin" && status === "Active") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin approval required to activate consumer",
+      });
+    }
+
     // Update fields
     if (name) consumer.name = name;
-    if (nidLast4) consumer.nidLast4 = nidLast4;
     if (category) consumer.category = category;
     if (status) consumer.status = status;
 
+    const previousFamilyId = consumer.familyId
+      ? String(consumer.familyId)
+      : null;
+
+    const familyResult = await resolveFamilyByNids(
+      {
+        nidFull: consumer.nidFull,
+        fatherNidFull: consumer.fatherNidFull,
+        motherNidFull: consumer.motherNidFull,
+      },
+      consumer._id,
+    );
+
+    if (familyResult.familyId) {
+      consumer.familyId = familyResult.familyId;
+    }
+
     await consumer.save();
+
+    if (status && status !== previousStatus) {
+      const card = await OMSCard.findOne({ consumerId: consumer._id });
+      if (card) {
+        card.cardStatus =
+          consumer.status === "Active"
+            ? "Active"
+            : consumer.status === "Revoked"
+              ? "Revoked"
+              : "Inactive";
+        await card.save();
+
+        if (card.qrCodeId) {
+          const qr = await QRCode.findById(card.qrCodeId);
+          if (qr) {
+            if (consumer.status === "Active") {
+              if (qr.validTo && new Date() > qr.validTo) {
+                qr.status = "Expired";
+              } else {
+                qr.status = "Valid";
+              }
+            } else if (consumer.status === "Revoked") {
+              qr.status = "Revoked";
+            } else {
+              qr.status = "Invalid";
+            }
+            await qr.save();
+          }
+        }
+      }
+
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType:
+          req.user.userType === "Admin" ? "Central Admin" : "Distributor",
+        action: "CONSUMER_STATUS_UPDATED",
+        entityType: "Consumer",
+        entityId: String(consumer._id),
+        severity: status === "Active" ? "Info" : "Warning",
+        meta: { from: previousStatus, to: status },
+      });
+
+      const distributor = consumer.createdByDistributor
+        ? await Distributor.findById(consumer.createdByDistributor).lean()
+        : null;
+
+      if (distributor?.userId) {
+        await notifyUser(distributor.userId, {
+          title: "Consumer status updated",
+          message: `${consumer.consumerCode} is now ${status}.`,
+          meta: { consumerCode: consumer.consumerCode, status },
+        });
+      }
+
+      if (req.user.userType !== "Admin") {
+        await notifyAdmins({
+          title: "Consumer status change requested",
+          message: `${consumer.consumerCode} status updated to ${status} by distributor.`,
+          meta: { consumerCode: consumer.consumerCode, status },
+        });
+      }
+    }
+
+    if (
+      previousFamilyId &&
+      familyResult.familyId &&
+      previousFamilyId !== String(familyResult.familyId)
+    ) {
+      const remaining = await Consumer.countDocuments({
+        familyId: previousFamilyId,
+      });
+      if (remaining <= 1) {
+        await Family.findByIdAndUpdate(previousFamilyId, {
+          flaggedDuplicate: false,
+        });
+      }
+    }
+
+    if (familyResult.hasDuplicate) {
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType:
+          req.user.userType === "Admin" ? "Central Admin" : "Distributor",
+        action: "Family duplicate NID detected",
+        entityType: "Consumer",
+        entityId: String(consumer._id),
+        severity: "Warning",
+        meta: {
+          matchedConsumerIds: familyResult.matchedIds,
+          nidFull: consumer.nidFull,
+          fatherNidFull: consumer.fatherNidFull,
+          motherNidFull: consumer.motherNidFull,
+        },
+      });
+
+      await notifyUser(req.user.userId, {
+        title: "Family duplicate detected",
+        message: `Family duplicate found for ${consumer.consumerCode}.`,
+        meta: { consumerCode: consumer.consumerCode },
+      });
+
+      await notifyAdmins({
+        title: "Family duplicate detected",
+        message: `Family duplicate found for ${consumer.consumerCode}.`,
+        meta: { consumerCode: consumer.consumerCode },
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -281,14 +672,7 @@ exports.updateConsumer = async (req, res) => {
 // @access  Private (Admin only)
 exports.deleteConsumer = async (req, res) => {
   try {
-    if (req.user.userType !== "Admin") {
-      return res.status(403).json({
-        success: false,
-        message: "Only admins can delete consumers",
-      });
-    }
-
-    const consumer = await Consumer.findByIdAndDelete(req.params.id);
+    const consumer = await Consumer.findById(req.params.id);
 
     if (!consumer) {
       return res.status(404).json({
@@ -296,6 +680,28 @@ exports.deleteConsumer = async (req, res) => {
         message: "Consumer not found",
       });
     }
+
+    if (req.user.userType !== "Admin") {
+      const distributor = await ensureDistributorProfile(req.user);
+      if (!distributor) {
+        return res.status(403).json({
+          success: false,
+          message: "Distributor profile not found",
+        });
+      }
+
+      if (
+        !consumer.createdByDistributor ||
+        String(consumer.createdByDistributor) !== String(distributor._id)
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to delete this consumer",
+        });
+      }
+    }
+
+    await Consumer.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,

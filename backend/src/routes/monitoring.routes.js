@@ -10,6 +10,7 @@ const {
   createOfflineQueueEntry,
   syncOfflineQueueItem,
   syncAllOfflineQueue,
+  resolveOfflineQueueItem,
 } = require("../controllers/monitoring.controller");
 
 router.get(
@@ -65,6 +66,12 @@ router.post(
   protect,
   authorize("Admin", "Distributor"),
   syncAllOfflineQueue,
+);
+router.patch(
+  "/offline-queue/:id/resolve",
+  protect,
+  authorize("Admin", "Distributor"),
+  resolveOfflineQueueItem,
 );
 
 module.exports = router;

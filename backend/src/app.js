@@ -12,6 +12,7 @@ const reportsRoutes = require("./routes/reports.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const consumerRoutes = require("./routes/consumer.routes");
 const adminRoutes = require("./routes/admin.routes");
+const distributorRoutes = require("./routes/distributor.routes");
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/consumers", consumerRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/distributor", distributorRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
