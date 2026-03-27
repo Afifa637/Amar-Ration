@@ -12,7 +12,7 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   @override
-  void initState() {
+  Future<void> initState() async {
     super.initState();
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('amar_ration_auth');
