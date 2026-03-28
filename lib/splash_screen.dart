@@ -1,7 +1,7 @@
-import 'package:amar_ration_app/signup_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
+import 'home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -24,7 +24,7 @@ class _SplashScreenState extends State<SplashScreen> {
       // Navigate to HomeScreen if token exists
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const SignUpScreen()),
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
       );
     } else {
       // Navigate to LoginScreen if no token
