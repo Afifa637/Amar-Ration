@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
+import 'qr_scanner_screen.dart';
+import 'scan_history_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -15,6 +17,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int eligibleCount = 0;
   int ineligibleCount = 0;
   List<Map<String, dynamic>> recentScans = [];
+  int _currentBottomNavIndex = 0;
 
   @override
   void initState() {
@@ -139,9 +142,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 140,
                 child: ElevatedButton(
                   onPressed: () {
-                    // Navigate to QR Scanner Screen
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('QR Scanner Screen (Coming Soon)')),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const QRScannerScreen(),
+                      ),
                     );
                   },
                   style: ElevatedButton.styleFrom(
@@ -357,7 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF16679c),
         selectedItemColor: Colors.white,
         unselectedItemColor: const Color(0xFFB3D9FF),
-        currentIndex: 0,
+        currentIndex: _currentBottomNavIndex,
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
@@ -379,14 +384,28 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         onTap: (index) {
           setState(() {
-            if (index == 3) {
-              // Navigate to Profile Screen
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const ProfileScreen()),
-              );
-            }
+            _currentBottomNavIndex = index;
           });
+
+          if (index == 1) {
+            // Navigate to QR Scanner
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const QRScannerScreen()),
+            );
+          } else if (index == 2) {
+            // Navigate to Scan History
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ScanHistoryScreen()),
+            );
+          } else if (index == 3) {
+            // Navigate to Profile Screen
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ProfileScreen()),
+            );
+          }
         },
       ),
     );

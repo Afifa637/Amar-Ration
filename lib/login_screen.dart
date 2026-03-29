@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/api_service.dart';
 import 'signup_screen.dart';
 import 'home_screen.dart';
 
@@ -50,15 +51,28 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // TODO: Integrate with actual backend API
-      // For now, simulate successful login
-      await Future.delayed(const Duration(seconds: 1));
+      // Call real backend API
+      final identifier = _emailController.text.trim();
+      final password = _passwordController.text;
 
-      // Store token in SharedPreferences (mock token)
+      final result = await ApiService.login(
+        identifier: identifier,
+        password: password,
+        userType: 'FieldUser', // This login screen is for FieldUser type
+      );
+
+      final token = result['data']?['token'] as String?;
+      final user = result['data']?['user'] as Map<String, dynamic>?;
+
+      if (token == null || user == null) {
+        throw Exception('Invalid server response');
+      }
+
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('amar_ration_auth', 'mock_jwt_token_${DateTime.now().millisecondsSinceEpoch}');
-      await prefs.setString('user_name', _emailController.text.split('@')[0]);
-      await prefs.setString('user_email', _emailController.text);
+      await prefs.setString('amar_ration_auth', token);
+      await prefs.setString('user_name', user['name'] ?? '');
+      if (user['email'] != null) await prefs.setString('user_email', user['email']);
+      if (user['phone'] != null) await prefs.setString('user_phone', user['phone']);
       await prefs.setString('login_time', DateTime.now().toString());
 
       if (mounted) {
@@ -69,7 +83,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'লগইন ব্যর্থ। পুনরায় চেষ্টা করুন।';
+        if (e is ApiException) {
+          _errorMessage = e.message;
+        } else {
+          _errorMessage = 'লগইন ব্যর্থ। পুনরায় চেষ্টা করুন।';
+        }
       });
     } finally {
       setState(() {

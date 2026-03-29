@@ -51,9 +51,6 @@ dependencies:
   # JSON Serialization
   json_annotation: ^4.8.0
 
-  # Date/Time
-  intl: ^0.20.2
-
   # UI/Polish
   flutter_localizations:
     sdk: flutter
