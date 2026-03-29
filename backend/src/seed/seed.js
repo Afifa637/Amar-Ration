@@ -37,6 +37,9 @@ const CONSUMER_SEED = [
     code: "C0001",
     name: "রহিম উদ্দিন",
     nidLast4: "1101",
+    nidFull: "12345678901101",
+    fatherNidFull: "12345678901001",
+    motherNidFull: "12345678901002",
     category: "A",
     ward: "ওয়ার্ড-০১",
   },
@@ -44,6 +47,9 @@ const CONSUMER_SEED = [
     code: "C0002",
     name: "করিমা বেগম",
     nidLast4: "1102",
+    nidFull: "12345678901102",
+    fatherNidFull: "12345678901003",
+    motherNidFull: "12345678901004",
     category: "A",
     ward: "ওয়ার্ড-০১",
   },
@@ -51,6 +57,9 @@ const CONSUMER_SEED = [
     code: "C0003",
     name: "সালমা আক্তার",
     nidLast4: "1103",
+    nidFull: "12345678901103",
+    fatherNidFull: "12345678901005",
+    motherNidFull: "12345678901006",
     category: "B",
     ward: "ওয়ার্ড-০১",
   },
@@ -58,6 +67,9 @@ const CONSUMER_SEED = [
     code: "C0004",
     name: "জাহিদ হাসান",
     nidLast4: "1104",
+    nidFull: "12345678901104",
+    fatherNidFull: "12345678901007",
+    motherNidFull: "12345678901008",
     category: "B",
     ward: "ওয়ার্ড-০১",
   },
@@ -65,6 +77,9 @@ const CONSUMER_SEED = [
     code: "C0005",
     name: "মোসা. আসমা",
     nidLast4: "1105",
+    nidFull: "12345678901105",
+    fatherNidFull: "12345678901009",
+    motherNidFull: "12345678901010",
     category: "C",
     ward: "ওয়ার্ড-০১",
   },
@@ -72,6 +87,9 @@ const CONSUMER_SEED = [
     code: "C0006",
     name: "হাসিনা খাতুন",
     nidLast4: "1106",
+    nidFull: "12345678901106",
+    fatherNidFull: "12345678901011",
+    motherNidFull: "12345678901012",
     category: "A",
     ward: "ওয়ার্ড-০১",
     status: "Inactive",
@@ -80,6 +98,9 @@ const CONSUMER_SEED = [
     code: "C0007",
     name: "নাসির উদ্দিন",
     nidLast4: "1107",
+    nidFull: "12345678901107",
+    fatherNidFull: "12345678901013",
+    motherNidFull: "12345678901014",
     category: "C",
     ward: "ওয়ার্ড-০১",
     status: "Revoked",
@@ -88,6 +109,9 @@ const CONSUMER_SEED = [
     code: "C0008",
     name: "ফারজানা বেগম",
     nidLast4: "1108",
+    nidFull: "12345678901108",
+    fatherNidFull: "12345678901015",
+    motherNidFull: "12345678901016",
     category: "B",
     ward: "ওয়ার্ড-০১",
   },
@@ -96,6 +120,9 @@ const CONSUMER_SEED = [
     code: "C0009",
     name: "আবুল কালাম",
     nidLast4: "2201",
+    nidFull: "12345678902201",
+    fatherNidFull: "12345678902001",
+    motherNidFull: "12345678902002",
     category: "A",
     ward: "ওয়ার্ড-০২",
   },
@@ -103,6 +130,9 @@ const CONSUMER_SEED = [
     code: "C0010",
     name: "মোছা. রহিমা",
     nidLast4: "2202",
+    nidFull: "12345678902202",
+    fatherNidFull: "12345678902003",
+    motherNidFull: "12345678902004",
     category: "B",
     ward: "ওয়ার্ড-০২",
   },
@@ -110,6 +140,9 @@ const CONSUMER_SEED = [
     code: "C0011",
     name: "শাহজাহান মিয়া",
     nidLast4: "2203",
+    nidFull: "12345678902203",
+    fatherNidFull: "12345678902005",
+    motherNidFull: "12345678902006",
     category: "C",
     ward: "ওয়ার্ড-০২",
   },
@@ -117,6 +150,9 @@ const CONSUMER_SEED = [
     code: "C0012",
     name: "জোছনা বেগম",
     nidLast4: "2204",
+    nidFull: "12345678902204",
+    fatherNidFull: "12345678902007",
+    motherNidFull: "12345678902008",
     category: "A",
     ward: "ওয়ার্ড-০২",
   },
@@ -124,6 +160,9 @@ const CONSUMER_SEED = [
     code: "C0013",
     name: "রফিকুল ইসলাম",
     nidLast4: "2205",
+    nidFull: "12345678902205",
+    fatherNidFull: "12345678902009",
+    motherNidFull: "12345678902010",
     category: "B",
     ward: "ওয়ার্ড-০২",
   },
@@ -131,6 +170,9 @@ const CONSUMER_SEED = [
     code: "C0014",
     name: "কুলসুম বেগম",
     nidLast4: "2206",
+    nidFull: "12345678902206",
+    fatherNidFull: "12345678902011",
+    motherNidFull: "12345678902012",
     category: "C",
     ward: "ওয়ার্ড-০২",
   },
@@ -138,6 +180,9 @@ const CONSUMER_SEED = [
     code: "C0015",
     name: "মো. শহিদুল",
     nidLast4: "2207",
+    nidFull: "12345678902207",
+    fatherNidFull: "12345678902013",
+    motherNidFull: "12345678902014",
     category: "A",
     ward: "ওয়ার্ড-০২",
     status: "Inactive",
@@ -146,6 +191,9 @@ const CONSUMER_SEED = [
     code: "C0016",
     name: "নুরজাহান বেগম",
     nidLast4: "2208",
+    nidFull: "12345678902208",
+    fatherNidFull: "12345678902015",
+    motherNidFull: "12345678902016",
     category: "B",
     ward: "ওয়ার্ড-০২",
   },
@@ -154,6 +202,9 @@ const CONSUMER_SEED = [
     code: "C0017",
     name: "আমিনুল হক",
     nidLast4: "3301",
+    nidFull: "12345678903301",
+    fatherNidFull: "12345678903001",
+    motherNidFull: "12345678903002",
     category: "A",
     ward: "ওয়ার্ড-০৩",
   },
@@ -161,6 +212,9 @@ const CONSUMER_SEED = [
     code: "C0018",
     name: "শিরিন আক্তার",
     nidLast4: "3302",
+    nidFull: "12345678903302",
+    fatherNidFull: "12345678903003",
+    motherNidFull: "12345678903004",
     category: "B",
     ward: "ওয়ার্ড-০৩",
   },
@@ -168,6 +222,9 @@ const CONSUMER_SEED = [
     code: "C0019",
     name: "মতিউর রহমান",
     nidLast4: "3303",
+    nidFull: "12345678903303",
+    fatherNidFull: "12345678903005",
+    motherNidFull: "12345678903006",
     category: "C",
     ward: "ওয়ার্ড-০৩",
   },
@@ -175,6 +232,9 @@ const CONSUMER_SEED = [
     code: "C0020",
     name: "ডালিয়া বেগম",
     nidLast4: "3304",
+    nidFull: "12345678903304",
+    fatherNidFull: "12345678903007",
+    motherNidFull: "12345678903008",
     category: "A",
     ward: "ওয়ার্ড-০৩",
   },
@@ -182,6 +242,9 @@ const CONSUMER_SEED = [
     code: "C0021",
     name: "কামরুল হাসান",
     nidLast4: "3305",
+    nidFull: "12345678903305",
+    fatherNidFull: "12345678903009",
+    motherNidFull: "12345678903010",
     category: "B",
     ward: "ওয়ার্ড-০৩",
   },
@@ -189,6 +252,9 @@ const CONSUMER_SEED = [
     code: "C0022",
     name: "মাহফুজা খানম",
     nidLast4: "3306",
+    nidFull: "12345678903306",
+    fatherNidFull: "12345678903011",
+    motherNidFull: "12345678903012",
     category: "C",
     ward: "ওয়ার্ড-০৩",
   },
@@ -196,6 +262,9 @@ const CONSUMER_SEED = [
     code: "C0023",
     name: "বেলাল হোসেন",
     nidLast4: "3307",
+    nidFull: "12345678903307",
+    fatherNidFull: "12345678903013",
+    motherNidFull: "12345678903014",
     category: "A",
     ward: "ওয়ার্ড-০৩",
     status: "Inactive",
@@ -204,6 +273,9 @@ const CONSUMER_SEED = [
     code: "C0024",
     name: "রুকাইয়া সুলতানা",
     nidLast4: "3308",
+    nidFull: "12345678903308",
+    fatherNidFull: "12345678903015",
+    motherNidFull: "12345678903016",
     category: "B",
     ward: "ওয়ার্ড-০৩",
   },
@@ -346,6 +418,9 @@ const ALLOC = { A: 5, B: 4, C: 3 };
         qrToken,
         name: row.name,
         nidLast4: row.nidLast4,
+        nidFull: row.nidFull,
+        fatherNidFull: row.fatherNidFull,
+        motherNidFull: row.motherNidFull,
         status: row.status || "Active",
         category: row.category,
         familyId: family._id,
@@ -753,236 +828,3 @@ const ALLOC = { A: 5, B: 4, C: 3 };
   console.error(e);
   process.exit(1);
 });
-require('dotenv').config();
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const User = require('../models/User');
-const SystemSetting = require('../models/SystemSetting');
-
-async function seedDatabase() {
-  try {
-    console.log('🌱 Starting database seeding...\n');
-
-    // Connect to MongoDB
-    const mongoUri = process.env.MONGO_URI;
-    console.log('📡 Connecting to MongoDB...');
-    await mongoose.connect(mongoUri);
-    console.log('✅ Connected to MongoDB\n');
-
-    // Clear existing data (optional - comment out if you want to keep existing data)
-    console.log('🗑️  Clearing existing data...');
-    await User.deleteMany({});
-    await SystemSetting.deleteMany({});
-    console.log('✅ Existing data cleared\n');
-
-    // Hash password for all users
-    const defaultPassword = 'Admin@123';
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-
-    // Preset admin credentials
-    const adminPassword = 'adminadmin';
-    const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
-
-    // Create Admin User
-    console.log('👤 Creating Admin user...');
-    const admin = await User.create({
-      userType: 'Admin',
-      name: 'System Administrator',
-      email: 'admin_amarration@gmail.com',
-      phone: '01711000000',
-      passwordHash: hashedAdminPassword,
-      status: 'Active',
-      division: 'Dhaka',
-      district: 'Dhaka',
-      upazila: 'Dhaka Sadar',
-    });
-    console.log('✅ Admin created:', admin.email);
-
-    // Create Distributor Users
-    console.log('\n🏪 Creating Distributor users...');
-    const distributors = await User.insertMany([
-      {
-        userType: 'Distributor',
-        name: 'Kamal Hossain',
-        email: 'kamal@distributor.com',
-        phone: '01711111111',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '1',
-        officeAddress: 'Shop No. 5, Main Road, Mirpur-1',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        unionName: 'Mirpur',
-        ward: '1',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      },
-      {
-        userType: 'Distributor',
-        name: 'Rashida Begum',
-        email: 'rashida@distributor.com',
-        phone: '01722222222',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '2',
-        officeAddress: 'House No. 12, Block-C, Uttara',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Uttara',
-        unionName: 'Uttara',
-        ward: '2',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      }
-    ]);
-    console.log(`✅ Created ${distributors.length} distributors`);
-
-    // Create Field Users
-    console.log('\n👷 Creating Field users...');
-    const fieldUsers = await User.insertMany([
-      {
-        userType: 'FieldUser',
-        name: 'Rahim Ahmed',
-        email: 'rahim@field.com',
-        phone: '01733333333',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '1',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        unionName: 'Mirpur',
-        ward: '1',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      }
-    ]);
-    console.log(`✅ Created ${fieldUsers.length} field users`);
-
-    // Create Consumer Users
-    console.log('\n🏠 Creating Consumer users...');
-    const consumers = await User.insertMany([
-      {
-        userType: 'Consumer',
-        name: 'Fatema Khatun',
-        email: 'fatema@consumer.com',
-        phone: '01744444444',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS001',
-        nidLast4: '1234',
-        category: 'A',
-        qrToken: 'QR-CONS-001-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        ward: '1',
-      },
-      {
-        userType: 'Consumer',
-        name: 'Abdul Hamid',
-        email: 'hamid@consumer.com',
-        phone: '01755555555',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS002',
-        nidLast4: '5678',
-        category: 'B',
-        qrToken: 'QR-CONS-002-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        ward: '1',
-      },
-      {
-        userType: 'Consumer',
-        name: 'Amina Begum',
-        email: 'amina@consumer.com',
-        phone: '01766666666',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS003',
-        nidLast4: '9012',
-        category: 'C',
-        qrToken: 'QR-CONS-003-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Uttara',
-        ward: '2',
-      }
-    ]);
-    console.log(`✅ Created ${consumers.length} consumers`);
-
-    // Create System Settings
-    console.log('\n⚙️  Creating system settings...');
-    const settings = await SystemSetting.insertMany([
-      {
-        key: 'pricing',
-        value: {
-          rice: 30,
-          wheat: 25,
-          oil: 120,
-          sugar: 60
-        }
-      },
-      {
-        key: 'distribution_hours',
-        value: {
-          start: '09:00',
-          end: '17:00',
-          timezone: 'Asia/Dhaka'
-        }
-      },
-      {
-        key: 'monthly_quotas',
-        value: {
-          categoryA: { rice: 15, wheat: 10 },
-          categoryB: { rice: 10, wheat: 5 },
-          categoryC: { rice: 5, wheat: 3 }
-        }
-      }
-    ]);
-    console.log(`✅ Created ${settings.length} system settings`);
-
-    // Print summary
-    console.log('\n' + '='.repeat(60));
-    console.log('🎉 DATABASE SEEDING COMPLETED SUCCESSFULLY!');
-    console.log('='.repeat(60));
-    console.log('\n📋 Created Users:');
-    console.log(`   • 1 Admin`);
-    console.log(`   • ${distributors.length} Distributors`);
-    console.log(`   • ${fieldUsers.length} Field Users`);
-    console.log(`   • ${consumers.length} Consumers`);
-    console.log(`   • Total: ${1 + distributors.length + fieldUsers.length + consumers.length} users`);
-    
-    console.log('\n🔐 Default Login Credentials:');
-    console.log(`   Password for all users: ${defaultPassword}`);
-    console.log('\n   Admin Account:');
-    console.log(`   Email: ${admin.email}`);
-    console.log(`   Password: ${defaultPassword}`);
-    
-    console.log('\n   Distributor Accounts:');
-    distributors.forEach(d => {
-      console.log(`   Email: ${d.email} | Password: ${defaultPassword}`);
-    });
-
-    console.log('\n⚠️  IMPORTANT: Change these default passwords in production!');
-    console.log('='.repeat(60) + '\n');
-
-  } catch (error) {
-    console.error('❌ Error seeding database:');
-    console.error(error);
-    process.exit(1);
-  } finally {
-    await mongoose.connection.close();
-    console.log('✅ Database connection closed');
-    process.exit(0);
-  }
-}
-
-// Run the seed function
-seedDatabase();
