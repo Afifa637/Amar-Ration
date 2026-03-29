@@ -58,6 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final result = await ApiService.login(
         identifier: identifier,
         password: password,
+        userType: 'FieldUser', // This login screen is for FieldUser type
       );
 
       final token = result['data']?['token'] as String?;

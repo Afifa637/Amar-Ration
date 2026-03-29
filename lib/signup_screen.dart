@@ -502,7 +502,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
             const SizedBox(height: 12),
 
             const Text(
-              'ওয়ার্ড *',
+              'ওয়ার্ড নাম *',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,

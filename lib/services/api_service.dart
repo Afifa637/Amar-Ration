@@ -2,22 +2,28 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String _baseUrl = 'http://localhost:5000/api';
+  // For Android emulator: 10.0.2.2
+  // For real Android devices/iOS: use computer's IP address
+  static const String _baseUrl = 'http://10.0.2.2:5000/api';
 
   static Future<Map<String, dynamic>> login({
     required String identifier,
     required String password,
+    String? userType,
   }) async {
     final uri = Uri.parse('$_baseUrl/auth/login');
 
     final sanitizedIdentifier = identifier.trim();
-    final isPhone = RegExp(r'^01\d{9}$').hasMatch(sanitizedIdentifier);
 
     final body = jsonEncode({
-      if (!isPhone) 'email': sanitizedIdentifier,
-      if (isPhone) 'phone': sanitizedIdentifier,
+      'identifier': sanitizedIdentifier,
       'password': password,
+      if (userType != null) 'userType': userType,
     });
+
+    print('🔍 Login Request:');
+    print('URL: $uri');
+    print('Body: $body');
 
     final response = await http.post(
       uri,
@@ -25,12 +31,17 @@ class ApiService {
       body: body,
     );
 
+    print('📡 Response Status: ${response.statusCode}');
+    print('📡 Response Body: ${response.body}');
+
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
     if (response.statusCode == 200 && json['success'] == true) {
+      print('✅ Login successful');
       return json;
     }
 
+    print('❌ Login failed: ${json['message']}');
     throw ApiException(
       statusCode: response.statusCode,
       message: json['message'] ?? 'Login failed',
