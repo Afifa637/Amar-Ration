@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/api_service.dart';
 import 'login_screen.dart';
 import 'home_screen.dart';
 
@@ -16,6 +17,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
   late TextEditingController _phoneController;
   late TextEditingController _passwordController;
   late TextEditingController _confirmPasswordController;
+  late TextEditingController _wardNoController;
+  late TextEditingController _divisionController;
+  late TextEditingController _districtController;
+  late TextEditingController _upazilaController;
+  late TextEditingController _unionNameController;
+  late TextEditingController _wardController;
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -29,6 +36,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _phoneController = TextEditingController();
     _passwordController = TextEditingController();
     _confirmPasswordController = TextEditingController();
+    _wardNoController = TextEditingController();
+    _divisionController = TextEditingController();
+    _districtController = TextEditingController();
+    _upazilaController = TextEditingController();
+    _unionNameController = TextEditingController();
+    _wardController = TextEditingController();
   }
 
   @override
@@ -38,6 +51,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _wardNoController.dispose();
+    _divisionController.dispose();
+    _districtController.dispose();
+    _upazilaController.dispose();
+    _unionNameController.dispose();
+    _wardController.dispose();
     super.dispose();
   }
 
@@ -74,6 +93,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
       return false;
     }
 
+    if (_wardNoController.text.isEmpty ||
+        _divisionController.text.isEmpty ||
+        _districtController.text.isEmpty ||
+        _upazilaController.text.isEmpty ||
+        _unionNameController.text.isEmpty ||
+        _wardController.text.isEmpty) {
+      setState(() {
+        _errorMessage = 'সকল বিভাগীয় তথ্য পূরণ করুন';
+      });
+      return false;
+    }
+
     if (_passwordController.text.length < 8) {
       setState(() {
         _errorMessage = 'পাসওয়ার্ড কমপক্ষে ৮ অক্ষর হতে হবে';
@@ -105,16 +136,32 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
 
     try {
-      // TODO: Integrate with actual backend API
-      // For now, simulate successful signup
-      await Future.delayed(const Duration(seconds: 1));
+      final result = await ApiService.signup(
+        name: _nameController.text.trim(),
+        email: _emailController.text.trim().toLowerCase(),
+        phone: _phoneController.text.trim(),
+        password: _passwordController.text,
+        userType: 'FieldUser',
+        wardNo: _wardNoController.text.trim(),
+        division: _divisionController.text.trim(),
+        district: _districtController.text.trim(),
+        upazila: _upazilaController.text.trim(),
+        unionName: _unionNameController.text.trim(),
+        ward: _wardController.text.trim(),
+      );
 
-      // Store user data in SharedPreferences (mock)
+      final token = result['data']?['token'] as String?;
+      final user = result['data']?['user'] as Map<String, dynamic>?;
+
+      if (token == null || user == null) {
+        throw Exception('Invalid server response');
+      }
+
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('amar_ration_auth', 'mock_jwt_token_${DateTime.now().millisecondsSinceEpoch}');
-      await prefs.setString('user_name', _nameController.text);
-      await prefs.setString('user_email', _emailController.text);
-      await prefs.setString('user_phone', _phoneController.text);
+      await prefs.setString('amar_ration_auth', token);
+      await prefs.setString('user_name', user['name'] ?? _nameController.text);
+      await prefs.setString('user_email', user['email'] ?? _emailController.text);
+      await prefs.setString('user_phone', user['phone'] ?? _phoneController.text);
       await prefs.setString('login_time', DateTime.now().toString());
 
       if (mounted) {
@@ -136,7 +183,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'সাইন আপ ব্যর্থ। পুনরায় চেষ্টা করুন।';
+        if (e is ApiException) {
+          _errorMessage = e.message;
+        } else {
+          _errorMessage = 'সাইন আপ ব্যর্থ। পুনরায় চেষ্টা করুন।';
+        }
       });
     } finally {
       setState(() {
@@ -302,6 +353,169 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   fontFamily: 'Anek Bangla',
                   color: Color(0xFFAAAAAA),
                 ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Address Fields for FieldUser
+            const Text(
+              'ওয়ার্ড নম্বর *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _wardNoController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: '০১',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            const Text(
+              'বিভাগ *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _divisionController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: 'ঢাকা',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            const Text(
+              'জেলা *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _districtController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: 'ঢাকা',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            const Text(
+              'উপজেলা *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _upazilaController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: 'সাভার',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            const Text(
+              'ইউনিয়ন নাম *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _unionNameController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: 'তেঁতুলঝোড়া',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6.0),
+                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            const Text(
+              'ওয়ার্ড *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+                fontFamily: 'Anek Bangla',
+              ),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _wardController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                hintText: 'ওয়ার্ড-০১',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6.0),
                   borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
