@@ -23,6 +23,14 @@ exports.signup = async (req, res) => {
     const { userType, name, email, phone, password, ...additionalFields } =
       req.body;
 
+    console.log('🔍 Signup attempt:', { userType, name, email, phone });
+
+    // Normalize email and phone
+    const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
+    const normalizedPhone = phone ? String(phone).trim() : null;
+
+    console.log('🔍 Normalized:', { normalizedEmail, normalizedPhone });
+
     // Validation
     if (!userType || !name || !password) {
       return res.status(400).json({
@@ -48,7 +56,7 @@ exports.signup = async (req, res) => {
     }
 
     // Check if email or phone is provided
-    if (!email && !phone) {
+    if (!normalizedEmail && !normalizedPhone) {
       return res.status(400).json({
         success: false,
         message: "Either email or phone is required",
@@ -57,7 +65,10 @@ exports.signup = async (req, res) => {
 
     // Check if user already exists
     const existingUser = await User.findOne({
-      $or: [email ? { email } : null, phone ? { phone } : null].filter(Boolean),
+      $or: [
+        normalizedEmail ? { email: normalizedEmail } : null,
+        normalizedPhone ? { phone: normalizedPhone } : null,
+      ].filter(Boolean),
     });
 
     if (existingUser) {
@@ -93,8 +104,8 @@ exports.signup = async (req, res) => {
     const userData = {
       userType,
       name,
-      email,
-      phone,
+      email: normalizedEmail,
+      phone: normalizedPhone,
       passwordHash,
       status: "Active",
     };
@@ -113,7 +124,7 @@ exports.signup = async (req, res) => {
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
       userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Pending";
+      userData.authorityStatus = "Active"; // Allow immediate login for development
     } else if (userType === "FieldUser") {
       userData.wardNo = additionalFields.wardNo;
       userData.division = additionalFields.division;
@@ -121,11 +132,20 @@ exports.signup = async (req, res) => {
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
       userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Pending";
+      userData.authorityStatus = "Active"; // Allow immediate login for development
     }
 
     // Save user to database
     const user = await User.create(userData);
+
+    console.log('✅ User saved successfully:', { 
+      id: user._id, 
+      userType, 
+      name, 
+      email: normalizedEmail, 
+      phone: normalizedPhone,
+      authorityStatus: user.authorityStatus || user.status
+    });
 
     // Generate token
     const token = generateToken(user._id, user.userType);
@@ -187,6 +207,8 @@ exports.login = async (req, res) => {
   try {
     const { identifier, password, userType } = req.body; // identifier can be email, phone, or consumerCode
 
+    console.log('🔍 Login attempt:', { identifier, userType });
+
     // Validation
     if (!identifier || !password) {
       return res.status(400).json({
@@ -196,14 +218,24 @@ exports.login = async (req, res) => {
       });
     }
 
+    // Normalize identifier for comparison
+    const normalizedIdentifier = String(identifier).trim();
+    const isPhone = /^01\d{9}$/.test(normalizedIdentifier);
+    const normalizedEmail = isPhone ? null : normalizedIdentifier.toLowerCase();
+    const normalizedPhone = isPhone ? normalizedIdentifier : null;
+
+    console.log('🔍 Normalized:', { normalizedIdentifier, isPhone, normalizedEmail, normalizedPhone });
+
     // Find user by email, phone, or consumerCode
     const user = await User.findOne({
       $or: [
-        { email: identifier },
-        { phone: identifier },
-        { consumerCode: identifier },
-      ],
+        normalizedEmail ? { email: normalizedEmail } : null,
+        normalizedPhone ? { phone: normalizedPhone } : null,
+        { consumerCode: normalizedIdentifier },
+      ].filter(Boolean),
     });
+
+    console.log('🔍 User found:', user ? { id: user._id, email: user.email, phone: user.phone, userType: user.userType } : 'No user found');
 
     if (!user) {
       return res.status(401).json({
