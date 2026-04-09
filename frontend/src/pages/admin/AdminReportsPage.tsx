@@ -5,8 +5,32 @@ import {
   type DistributionReportRow,
 } from "../../services/api";
 
+function exportToCSV(filename: string, headers: string[], rows: string[][]) {
+  const bom = "\uFEFF";
+  const csvContent = [
+    headers.join(","),
+    ...rows.map((row) =>
+      row
+        .map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`)
+        .join(","),
+    ),
+  ].join("\n");
+
+  const blob = new Blob([bom + csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function AdminReportsPage() {
   const [rows, setRows] = useState<DistributionReportRow[]>([]);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -14,7 +38,12 @@ export default function AdminReportsPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await getDistributionReport({ page: 1, limit: 1000 });
+      const data = await getDistributionReport({
+        page: 1,
+        limit: 1000,
+        from: from || undefined,
+        to: to || undefined,
+      });
       setRows(data.rows || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "রিপোর্ট ডেটা লোড ব্যর্থ");
@@ -55,6 +84,38 @@ export default function AdminReportsPage() {
     });
   }, [rows]);
 
+  const resetFilters = async () => {
+    setFrom("");
+    setTo("");
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getDistributionReport({ page: 1, limit: 1000 });
+      setRows(data.rows || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "রিপোর্ট ডেটা লোড ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadReconciliationCsv = () => {
+    const headers = ["Ward", "ExpectedKg", "ActualKg", "VarianceKg", "Status"];
+    const lines = reconciliationRows.map((row) => [
+      row.ward,
+      row.expectedKg,
+      row.actualKg,
+      row.variance,
+      row.status,
+    ]);
+
+    exportToCSV(
+      `রিকনসিলিয়েশন_রিপোর্ট_${new Date().toISOString().slice(0, 10)}.csv`,
+      headers,
+      lines,
+    );
+  };
+
   return (
     <div className="space-y-3">
       <div className="bg-white border border-[#d7dde6] rounded px-3 py-2 text-[12px] text-[#4b5563]">
@@ -67,6 +128,38 @@ export default function AdminReportsPage() {
             {error}
           </div>
         )}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <button
+            onClick={() => void loadData()}
+            className="px-3 py-2 rounded bg-[#16679c] text-white text-[13px] hover:bg-[#0f557f]"
+          >
+            ফিল্টার প্রয়োগ
+          </button>
+          <button
+            onClick={() => void resetFilters()}
+            className="px-3 py-2 rounded bg-[#e5e7eb] text-[#111827] text-[13px] hover:bg-[#d1d5db]"
+          >
+            রিসেট
+          </button>
+          <button
+            onClick={downloadReconciliationCsv}
+            className="px-3 py-2 rounded bg-[#ecfdf3] border border-[#86efac] text-[#166534] text-[13px] hover:bg-[#dcfce7]"
+          >
+            CSV এক্সপোর্ট
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>

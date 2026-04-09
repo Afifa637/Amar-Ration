@@ -2,40 +2,18 @@ import { useEffect, useState } from "react";
 import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
-import Modal from "../../components/ui/Modal";
 import {
-  createBlacklistEntry,
   createOfflineQueue,
-  deactivateBlacklistEntry,
   getBlacklistEntries,
   getMonitoringSummary,
   getOfflineQueue,
   resolveOfflineQueueItem,
   syncAllOfflineQueue,
   syncOfflineQueueItem,
-  updateBlacklistEntry,
   type MonitoringBlacklistEntry,
   type MonitoringSummary,
   type OfflineQueueItem,
 } from "../../services/api";
-
-type BlacklistForm = {
-  targetType: "Consumer" | "Distributor";
-  targetRefId: string;
-  blockType: "Temporary" | "Permanent";
-  reason: string;
-  active: boolean;
-  expiresAt: string;
-};
-
-const emptyBlacklistForm: BlacklistForm = {
-  targetType: "Consumer",
-  targetRefId: "",
-  blockType: "Temporary",
-  reason: "",
-  active: true,
-  expiresAt: "",
-};
 
 export default function MonitoringPage() {
   const [summary, setSummary] = useState<MonitoringSummary | null>(null);
@@ -47,13 +25,6 @@ export default function MonitoringPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-
-  const [openReview, setOpenReview] = useState<MonitoringBlacklistEntry | null>(
-    null,
-  );
-  const [openCreate, setOpenCreate] = useState(false);
-  const [blacklistForm, setBlacklistForm] =
-    useState<BlacklistForm>(emptyBlacklistForm);
   const [offlinePayload, setOfflinePayload] = useState(
     '{"tokenCode":"T-TEST","consumerCode":"C0001"}',
   );
@@ -81,69 +52,6 @@ export default function MonitoringPage() {
   useEffect(() => {
     void loadData();
   }, []);
-
-  const onCreateBlacklist = async () => {
-    if (!blacklistForm.targetRefId.trim() || !blacklistForm.reason.trim()) {
-      setError("টার্গেট আইডি এবং কারণ আবশ্যক");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError("");
-
-      await createBlacklistEntry({
-        targetType: blacklistForm.targetType,
-        targetRefId: blacklistForm.targetRefId.trim(),
-        blockType: blacklistForm.blockType,
-        reason: blacklistForm.reason.trim(),
-        active: blacklistForm.active,
-        expiresAt: blacklistForm.expiresAt || undefined,
-      });
-
-      setMessage("নতুন ব্ল্যাকলিস্ট এন্ট্রি যুক্ত হয়েছে");
-      setOpenCreate(false);
-      setBlacklistForm(emptyBlacklistForm);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "ব্ল্যাকলিস্ট তৈরি ব্যর্থ");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onUpdateBlacklist = async () => {
-    if (!openReview) return;
-    try {
-      setLoading(true);
-      await updateBlacklistEntry(openReview._id, {
-        reason: openReview.reason,
-        blockType: openReview.blockType,
-        active: openReview.active,
-        expiresAt: openReview.expiresAt,
-      });
-      setMessage("ব্ল্যাকলিস্ট এন্ট্রি আপডেট হয়েছে");
-      setOpenReview(null);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "আপডেট ব্যর্থ");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onDeactivate = async (entryId: string) => {
-    try {
-      setLoading(true);
-      await deactivateBlacklistEntry(entryId);
-      setMessage("এন্ট্রি আনব্লক করা হয়েছে");
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "আনব্লক ব্যর্থ");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const onCreateOfflineQueue = async () => {
     try {
@@ -201,7 +109,6 @@ export default function MonitoringPage() {
         </div>
       )}
 
-      {/* ===== System Health Summary ===== */}
       <PortalSection title="সিস্টেম মনিটরিং সারাংশ">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="border p-3 bg-[#f0fdf4]">
@@ -234,49 +141,7 @@ export default function MonitoringPage() {
         </div>
       </PortalSection>
 
-      {/* ===== QR Expiry & Rotation ===== */}
-      <PortalSection
-        title="QR কোড এক্সপায়ারি ও রোটেশন"
-        right={
-          <Button variant="secondary" onClick={() => void loadData()}>
-            ♻️ রোটেশন/রিফ্রেশ
-          </Button>
-        }
-      >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="border p-3 bg-[#fbfdff]">
-            <div className="font-semibold">বর্তমান সাইকেল</div>
-            <div className="text-[12px]">মাসিক (৩০ দিন)</div>
-          </div>
-
-          <div className="border p-3 bg-[#fbfdff]">
-            <div className="font-semibold">পরবর্তী রোটেশন</div>
-            <div className="text-[12px] text-[#b45309]">৭ দিন পর</div>
-          </div>
-
-          <div className="border p-3 bg-[#fbfdff]">
-            <div className="font-semibold">মেয়াদোত্তীর্ণ QR</div>
-            <div className="text-[12px] text-red-600 font-semibold">
-              প্রযোজ্য নয়
-            </div>
-          </div>
-        </div>
-
-        <p className="mt-2 text-[12px] text-[#374151]">
-          QR কোড সময়সীমা অতিক্রম করলে স্বয়ংক্রিয়ভাবে Invalid হয়ে যাবে এবং পুনরায়
-          জেনারেশন প্রয়োজন হবে।
-        </p>
-      </PortalSection>
-
-      {/* ===== Blacklist Management ===== */}
-      <PortalSection
-        title="ব্ল্যাকলিস্ট মনিটরিং (Fraud Control)"
-        right={
-          <Button variant="danger" onClick={() => setOpenCreate(true)}>
-            🚫 নতুন ব্ল্যাকলিস্ট
-          </Button>
-        }
-      >
+      <PortalSection title="ব্ল্যাকলিস্ট (শুধু পাঠযোগ্য — অ্যাডমিন দ্বারা নিয়ন্ত্রিত)">
         <div className="border rounded overflow-hidden">
           <table className="w-full text-[12px]">
             <thead className="bg-[#f8fafc]">
@@ -303,19 +168,10 @@ export default function MonitoringPage() {
                       <Badge tone="green">নিষ্ক্রিয়</Badge>
                     )}
                   </td>
-                  <td className="border p-2">
-                    <div className="flex gap-1 justify-center">
-                      <Button variant="ghost" onClick={() => setOpenReview(b)}>
-                        👁️ পর্যালোচনা
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => void onDeactivate(b._id)}
-                        disabled={!b.active}
-                      >
-                        🔓 আনব্লক
-                      </Button>
-                    </div>
+                  <td className="border p-2 text-center">
+                    <span className="inline-flex items-center rounded bg-gray-100 px-2 py-1 text-[11px] text-gray-600">
+                      শুধুমাত্র অ্যাডমিন
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -332,14 +188,8 @@ export default function MonitoringPage() {
             </tbody>
           </table>
         </div>
-
-        <p className="mt-2 text-[12px] text-[#374151]">
-          ব্ল্যাকলিস্ট এন্ট্রি পরিবর্তন করলে তা অবিলম্বে Audit Log-এ সংরক্ষিত
-          হবে।
-        </p>
       </PortalSection>
 
-      {/* ===== Offline Sync Queue ===== */}
       <PortalSection
         title="অফলাইন বিতরণ সিঙ্ক কিউ"
         right={
@@ -480,152 +330,6 @@ export default function MonitoringPage() {
           </div>
         )}
       </PortalSection>
-
-      {/* ===== Review Modal ===== */}
-      <Modal
-        open={!!openReview}
-        title="ব্ল্যাকলিস্ট রিভিউ"
-        onClose={() => setOpenReview(null)}
-      >
-        {openReview && (
-          <div className="space-y-2 text-[13px]">
-            <div>
-              <strong>টাইপ:</strong> {openReview.targetType}
-            </div>
-            <div>
-              <strong>ID:</strong> {openReview.targetRefId}
-            </div>
-            <div>
-              <strong>কারণ:</strong>
-              <input
-                value={openReview.reason}
-                onChange={(e) =>
-                  setOpenReview({ ...openReview, reason: e.target.value })
-                }
-                className="mt-1 w-full border rounded px-3 py-2"
-              />
-            </div>
-            <div>
-              <strong>ব্লক টাইপ:</strong>
-              <select
-                value={openReview.blockType}
-                onChange={(e) =>
-                  setOpenReview({
-                    ...openReview,
-                    blockType: e.target.value as "Temporary" | "Permanent",
-                  })
-                }
-                className="mt-1 w-full border rounded px-3 py-2 bg-white"
-              >
-                <option value="Temporary">অস্থায়ী</option>
-                <option value="Permanent">স্থায়ী</option>
-              </select>
-            </div>
-
-            <div className="flex gap-2 justify-end mt-4">
-              <Button variant="secondary" onClick={() => setOpenReview(null)}>
-                বন্ধ
-              </Button>
-              <Button
-                onClick={() => void onUpdateBlacklist()}
-                disabled={loading}
-              >
-                সংরক্ষণ
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        open={openCreate}
-        title="নতুন ব্ল্যাকলিস্ট এন্ট্রি"
-        onClose={() => setOpenCreate(false)}
-      >
-        <div className="space-y-3 text-[13px]">
-          <div>
-            <div className="mb-1">টার্গেট টাইপ</div>
-            <select
-              value={blacklistForm.targetType}
-              onChange={(e) =>
-                setBlacklistForm((prev) => ({
-                  ...prev,
-                  targetType: e.target.value as "Consumer" | "Distributor",
-                }))
-              }
-              className="w-full border rounded px-3 py-2 bg-white"
-            >
-              <option value="Consumer">উপকারভোগী</option>
-              <option value="Distributor">ডিস্ট্রিবিউটর</option>
-            </select>
-          </div>
-          <div>
-            <div className="mb-1">টার্গেট আইডি</div>
-            <input
-              value={blacklistForm.targetRefId}
-              onChange={(e) =>
-                setBlacklistForm((prev) => ({
-                  ...prev,
-                  targetRefId: e.target.value,
-                }))
-              }
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
-          <div>
-            <div className="mb-1">কারণ</div>
-            <textarea
-              value={blacklistForm.reason}
-              onChange={(e) =>
-                setBlacklistForm((prev) => ({
-                  ...prev,
-                  reason: e.target.value,
-                }))
-              }
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
-          <div>
-            <div className="mb-1">ব্লক টাইপ</div>
-            <select
-              value={blacklistForm.blockType}
-              onChange={(e) =>
-                setBlacklistForm((prev) => ({
-                  ...prev,
-                  blockType: e.target.value as "Temporary" | "Permanent",
-                }))
-              }
-              className="w-full border rounded px-3 py-2 bg-white"
-            >
-              <option value="Temporary">অস্থায়ী</option>
-              <option value="Permanent">স্থায়ী</option>
-            </select>
-          </div>
-          <div>
-            <div className="mb-1">মেয়াদ শেষের তারিখ (ঐচ্ছিক)</div>
-            <input
-              type="date"
-              value={blacklistForm.expiresAt}
-              onChange={(e) =>
-                setBlacklistForm((prev) => ({
-                  ...prev,
-                  expiresAt: e.target.value,
-                }))
-              }
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOpenCreate(false)}>
-              বাতিল
-            </Button>
-            <Button onClick={() => void onCreateBlacklist()} disabled={loading}>
-              তৈরি করুন
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

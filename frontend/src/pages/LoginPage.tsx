@@ -16,9 +16,9 @@ export default function LoginPage() {
   const isAdminLogin = role === "central-admin";
 
   const [email, setEmail] = useState(
-    isAdminLogin ? "admin@amarration.gov.bd" : "",
+    isAdminLogin ? "admin@amar-ration.local" : "",
   );
-  const [password, setPassword] = useState(isAdminLogin ? "Admin@123" : "");
+  const [password, setPassword] = useState(isAdminLogin ? "admin123" : "");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -43,6 +43,10 @@ export default function LoginPage() {
       const result = await auth.login(email, password, role as UserRole);
 
       if (result.success) {
+        if (result.mustChangePassword) {
+          navigate("/force-password-change");
+          return;
+        }
         if (role === "central-admin") {
           navigate("/admin/dashboard");
         } else {
@@ -50,22 +54,20 @@ export default function LoginPage() {
         }
       } else if (result.reason === "pending-approval") {
         navigate("/pending-approval");
+      } else if (result.reason === "authority-expired") {
+        navigate("/pending-approval?code=AUTHORITY_EXPIRED");
       } else if (result.reason === "blocked") {
         setError(
           "আপনার অ্যাকাউন্টটি স্থগিত/বাতিল হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।",
         );
       } else {
-        setError("ইমেইল বা পাসওয়ার্ড ভুল");
+        setError(result.message || "ইমেইল বা পাসওয়ার্ড ভুল");
       }
     } catch {
       setError("লগইন করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।");
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleSignupRedirect = () => {
-    navigate(`/signup/${role}`);
   };
 
   return (
@@ -133,11 +135,11 @@ export default function LoginPage() {
             <div className="rounded-lg border border-white/20 bg-white/10 p-3 text-sm text-white/90">
               <div>
                 Fixed admin email:{" "}
-                <span className="font-semibold">admin@amarration.gov.bd</span>
+                <span className="font-semibold">admin@amar-ration.local</span>
               </div>
               <div>
                 Fixed admin password:{" "}
-                <span className="font-semibold">Admin@123</span>
+                <span className="font-semibold">admin123</span>
               </div>
             </div>
           )}
@@ -161,16 +163,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Signup Link - Hidden for admin */}
         {role !== "central-admin" && (
-          <div className="mt-4 text-center text-sm text-white/90">
-            নতুন ইউজার?{" "}
-            <button
-              onClick={handleSignupRedirect}
-              className="text-white hover:underline font-semibold"
-            >
-              সাইন আপ করুন
-            </button>
+          <div className="mt-4 text-center text-sm text-white/90 border border-white/20 rounded-lg p-2 bg-white/10">
+            ডিস্ট্রিবিউটর/ফিল্ড ইউজার অ্যাকাউন্ট শুধুমাত্র অ্যাডমিন ইস্যু করে।
           </div>
         )}
 

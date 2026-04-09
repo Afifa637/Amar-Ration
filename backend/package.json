@@ -9,19 +9,25 @@
     "seed": "node src/seed/seed.js",
     "indexes": "node src/setup/ensure-indexes.js",
     "db:verify": "node src/setup/verify-collections.js",
-    "db:create-enterprise": "node src/setup/create-missing-enterprise-collections.js"
+    "db:create-enterprise": "node src/setup/create-missing-enterprise-collections.js",
+    "db:prune": "node src/setup/prune-extra-collections.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.0",
     "morgan": "^1.10.0",
+    "nodemailer": "^6.10.1",
+    "qrcode": "^1.5.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/node": "^25.5.2",
     "nodemon": "^3.1.4"
   }
 }

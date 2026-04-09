@@ -12,9 +12,31 @@ const DistributionSession = require("../models/DistributionSession");
 const StockLedger = require("../models/StockLedger");
 const SystemSetting = require("../models/SystemSetting");
 const User = require("../models/User");
+const { normalizeWardNo, buildWardMatchQuery } = require("../utils/ward.utils");
+const {
+  normalizeDivision,
+  buildDivisionMatchQuery,
+} = require("../utils/division.utils");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function buildWardQuery(distributor) {
+  const query = {};
+
+  const divisionQuery = buildDivisionMatchQuery(distributor?.division);
+  if (divisionQuery) {
+    query.division = divisionQuery;
+  }
+
+  const wardInput = distributor?.wardNo || distributor?.ward;
+  const wardQuery = buildWardMatchQuery(wardInput);
+  if (wardQuery) {
+    Object.assign(query, wardQuery);
+  }
+
+  return query;
 }
 
 async function getDistributorProfileByUserId(userId) {
@@ -37,11 +59,12 @@ async function ensureDistributorProfile(reqUser) {
 
   const created = await Distributor.create({
     userId: user._id,
-    division: user.division,
+    wardNo: normalizeWardNo(user.wardNo || user.ward),
+    division: normalizeDivision(user.division),
     district: user.district,
     upazila: user.upazila,
     unionName: user.unionName,
-    ward: user.ward,
+    ward: normalizeWardNo(user.ward || user.wardNo),
     authorityStatus: user.authorityStatus || "Active",
     authorityFrom: user.authorityFrom || new Date(),
     authorityTo: user.authorityTo,
@@ -64,6 +87,8 @@ async function getDistributorDashboard(req, res) {
 
     const tokenIds = tokenDocs.map((t) => t._id);
 
+    const wardQuery = buildWardQuery(distributor);
+
     const [
       totalConsumers,
       activeConsumers,
@@ -72,9 +97,9 @@ async function getDistributorDashboard(req, res) {
       stockOutTodayAgg,
       mismatchCount,
     ] = await Promise.all([
-      Consumer.countDocuments({ createdByDistributor: distributor._id }),
+      Consumer.countDocuments(wardQuery),
       Consumer.countDocuments({
-        createdByDistributor: distributor._id,
+        ...wardQuery,
         status: "Active",
       }),
       OfflineQueue.countDocuments({
@@ -114,6 +139,7 @@ async function getDistributorDashboard(req, res) {
     res.json({
       distributor: {
         id: String(distributor._id),
+        wardNo: distributor.wardNo || "",
         division: distributor.division || "",
         district: distributor.district || "",
         upazila: distributor.upazila || "",
@@ -148,12 +174,21 @@ async function getBeneficiaries(req, res) {
 
     const { tab = "long", q = "", status, ward } = req.query;
 
-    const filter = {
-      createdByDistributor: distributor._id,
-    };
+    const filter = {};
+
+    Object.assign(filter, buildWardQuery(distributor));
 
     if (ward && ward !== "সব") {
-      filter.ward = ward;
+      const explicitWard = buildWardMatchQuery(ward);
+      if (explicitWard?.$or) {
+        if (filter.$or) {
+          filter.$and = filter.$and || [];
+          filter.$and.push({ $or: filter.$or }, { $or: explicitWard.$or });
+          delete filter.$or;
+        } else {
+          filter.$or = explicitWard.$or;
+        }
+      }
     }
 
     if (tab === "short") {

@@ -5,10 +5,28 @@ const AuditLog = require("../models/AuditLog");
  * Uses create([doc]) so it works properly with session.
  */
 async function writeAudit(
-  { actorUserId, actorType, action, entityType = null, entityId = null, severity = "Info", meta = {} },
-  session
+  {
+    actorUserId,
+    actorType,
+    action,
+    entityType = null,
+    entityId = null,
+    severity = "Info",
+    meta = {},
+  },
+  session,
 ) {
-  const doc = { actorUserId, actorType, action, entityType, entityId, severity, meta };
+  const normalizedActorType =
+    actorType === "Admin" ? "Central Admin" : actorType;
+  const doc = {
+    actorUserId,
+    actorType: normalizedActorType,
+    action,
+    entityType,
+    entityId,
+    severity,
+    meta,
+  };
   const opts = session ? { session } : undefined;
   await AuditLog.create([doc], opts);
 }

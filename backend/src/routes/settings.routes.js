@@ -18,7 +18,7 @@ router.get(
 router.put(
   "/",
   protect,
-  authorize("Distributor", "FieldUser"),
+  authorize("Admin", "Distributor", "FieldUser"),
   updateMySettings,
 );
 router.post(

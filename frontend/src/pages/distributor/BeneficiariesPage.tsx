@@ -3,6 +3,7 @@ import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
+import { useAuth } from "../../context/useAuth";
 import {
   createConsumer,
   deleteConsumer,
@@ -21,7 +22,6 @@ type FormState = {
   motherNidFull: string;
   category: ConsumerCategory;
   status: ConsumerStatus;
-  ward: string;
 };
 
 const emptyForm: FormState = {
@@ -31,13 +31,12 @@ const emptyForm: FormState = {
   motherNidFull: "",
   category: "A",
   status: "Inactive",
-  ward: "",
 };
 
 export default function BeneficiariesPage() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<"long" | "flags">("long");
   const [q, setQ] = useState("");
-  const [ward, setWard] = useState<string>("সব এলাকা");
   const [status, setStatus] = useState("সব");
   const [openAdd, setOpenAdd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -93,23 +92,14 @@ export default function BeneficiariesPage() {
         c.name.includes(q) ||
         c.nidLast4.includes(q);
 
-      const matchWard = ward === "সব এলাকা" || (c.ward ?? "") === ward;
       const matchStatus = status === "সব" || c.status === status;
       const flagged =
         (c.blacklistStatus && c.blacklistStatus !== "None") || c.familyFlag;
 
-      if (tab === "flags") return matchQ && matchWard && flagged;
-      return matchQ && matchWard && matchStatus;
+      if (tab === "flags") return matchQ && flagged;
+      return matchQ && matchStatus;
     });
-  }, [q, ward, status, tab, consumers]);
-
-  const wards = useMemo(() => {
-    const unique = new Set<string>();
-    consumers.forEach((c) => {
-      if (c.ward) unique.add(c.ward);
-    });
-    return ["সব এলাকা", ...Array.from(unique)];
-  }, [consumers]);
+  }, [q, status, tab, consumers]);
 
   const saveConsumer = async () => {
     const consumerNid = normalizeNid(form.nidFull);
@@ -138,7 +128,6 @@ export default function BeneficiariesPage() {
           motherNidFull: motherNid,
           category: form.category,
           status: form.status,
-          ward: form.ward || undefined,
         });
         setMessage("উপকারভোগীর তথ্য আপডেট হয়েছে");
       } else {
@@ -148,8 +137,7 @@ export default function BeneficiariesPage() {
           fatherNidFull: fatherNid,
           motherNidFull: motherNid,
           category: form.category,
-          status: form.status,
-          ward: form.ward || undefined,
+          status: "Inactive",
         });
         setMessage("নতুন উপকারভোগী যুক্ত হয়েছে");
       }
@@ -262,17 +250,6 @@ export default function BeneficiariesPage() {
             placeholder="সার্চ: ID / নাম / NID (শেষ ৪ ডিজিট)"
           />
           <select
-            value={ward}
-            onChange={(e) => setWard(e.target.value)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-          >
-            {wards.map((optionWard) => (
-              <option key={optionWard} value={optionWard}>
-                {optionWard}
-              </option>
-            ))}
-          </select>
-          <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
@@ -296,7 +273,6 @@ export default function BeneficiariesPage() {
               variant="secondary"
               onClick={() => {
                 setQ("");
-                setWard("সব এলাকা");
                 setStatus("সব");
               }}
             >
@@ -321,7 +297,9 @@ export default function BeneficiariesPage() {
                   <th className="border border-[#cfd6e0] p-2">ID</th>
                   <th className="border border-[#cfd6e0] p-2">নাম</th>
                   <th className="border border-[#cfd6e0] p-2">NID</th>
-                  <th className="border border-[#cfd6e0] p-2">ওয়ার্ড</th>
+                  <th className="border border-[#cfd6e0] p-2">
+                    বিভাগ / ওয়ার্ড
+                  </th>
                   <th className="border border-[#cfd6e0] p-2">স্ট্যাটাস</th>
                   <th className="border border-[#cfd6e0] p-2">
                     ফ্যামিলি ফ্ল্যাগ
@@ -340,7 +318,10 @@ export default function BeneficiariesPage() {
                       ****{c.nidLast4}
                     </td>
                     <td className="border border-[#cfd6e0] p-2 text-center">
-                      {c.ward || "—"}
+                      <div>{c.division || "—"}</div>
+                      <div className="text-[11px] text-[#6b7280]">
+                        {c.ward || "—"}
+                      </div>
                     </td>
                     <td className="border border-[#cfd6e0] p-2 text-center">
                       {c.status === "Active" && (
@@ -373,7 +354,6 @@ export default function BeneficiariesPage() {
                               motherNidFull: c.motherNidFull || "",
                               category: c.category,
                               status: c.status,
-                              ward: c.ward || "",
                             });
                             setOpenAdd(true);
                           }}
@@ -480,32 +460,46 @@ export default function BeneficiariesPage() {
             </select>
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">স্ট্যাটাস</div>
-            <select
-              value={form.status}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  status: e.target.value as ConsumerStatus,
-                }))
-              }
-              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-            >
-              <option value="Inactive">Inactive</option>
-              <option value="Active">Active</option>
-              <option value="Revoked">Revoked</option>
-            </select>
+            <div className="text-[12px] mb-1 font-medium">
+              ওয়ার্ড{" "}
+              <span className="text-gray-400">
+                (অ্যাডমিন নির্ধারিত — পরিবর্তনযোগ্য নয়)
+              </span>
+            </div>
+            <input
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-gray-100 cursor-not-allowed text-gray-500"
+              value={`${user?.division || "—"} • ${user?.ward || user?.wardNo || "—"}`}
+              readOnly
+            />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">ওয়ার্ড</div>
-            <input
-              value={form.ward}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, ward: e.target.value }))
-              }
-              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-              placeholder="যেমন: ওয়ার্ড-০১"
-            />
+            {editing ? (
+              <>
+                <div className="text-[12px] mb-1 font-medium">স্ট্যাটাস</div>
+                <select
+                  value={form.status}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      status: e.target.value as ConsumerStatus,
+                    }))
+                  }
+                  className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+                >
+                  <option value="Inactive">নিষ্ক্রিয়</option>
+                  <option value="Revoked">বাতিল</option>
+                </select>
+              </>
+            ) : (
+              <>
+                <div className="text-[12px] mb-1 font-medium">স্ট্যাটাস</div>
+                <input
+                  value="Inactive — অ্যাডমিন সক্রিয় করবেন"
+                  readOnly
+                  className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-gray-100 text-gray-500"
+                />
+              </>
+            )}
           </div>
         </div>
 

@@ -1,7 +1,23 @@
-function rationQtyByCategory(cat) {
-  if (cat === "A") return 5.0;
-  if (cat === "B") return 4.0;
-  return 3.0;
+const SystemSetting = require("../models/SystemSetting");
+
+async function getRationAllocation() {
+  const setting = await SystemSetting.findOne({
+    key: "distributor:global:settings",
+  })
+    .select("value")
+    .lean();
+
+  const alloc = setting?.value?.allocation || {};
+  return {
+    A: Number(alloc.A) || 5,
+    B: Number(alloc.B) || 4,
+    C: Number(alloc.C) || 3,
+  };
+}
+
+async function rationQtyByCategory(cat) {
+  const allocation = await getRationAllocation();
+  return allocation[cat] ?? 3;
 }
 
 function makeTokenCode() {

@@ -18,4 +18,14 @@ const NotificationSchema = new mongoose.Schema(
 
 NotificationSchema.index({ userId: 1, status: 1, createdAt: -1 });
 
+// Auto-delete READ notifications after 30 days
+NotificationSchema.index(
+  { updatedAt: 1 },
+  {
+    expireAfterSeconds: 30 * 24 * 60 * 60,
+    partialFilterExpression: { status: "Read" },
+    name: "ttl_read_notifications_30d",
+  },
+);
+
 module.exports = mongoose.model("Notification", NotificationSchema);

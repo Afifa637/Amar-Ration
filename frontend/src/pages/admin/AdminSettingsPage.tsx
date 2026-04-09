@@ -1,104 +1,343 @@
 import { useEffect, useState } from "react";
 import SectionCard from "../../components/SectionCard";
-import { getDistributorSettings } from "../../services/api";
+import Button from "../../components/ui/Button";
+import {
+  getDistributorSettings,
+  updateDistributorSettings,
+  type DistributorSettings,
+} from "../../services/api";
 
 export default function AdminSettingsPage() {
-  const [settings, setSettings] = useState<
-    Array<{ key: string; value: unknown }>
-  >([]);
+  const [settings, setSettings] = useState<DistributorSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getDistributorSettings();
+      if (!Array.isArray(data.settings)) {
+        setSettings(data.settings as DistributorSettings);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "সেটিংস লোড ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const data = await getDistributorSettings();
-        if (Array.isArray(data.settings)) {
-          setSettings(data.settings as Array<{ key: string; value: unknown }>);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "সেটিংস লোড ব্যর্থ");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     void load();
   }, []);
 
+  const save = async () => {
+    if (!settings) return;
+    try {
+      setLoading(true);
+      setError("");
+      await updateDistributorSettings(settings);
+      setMessage("অ্যাডমিন সেটিংস সংরক্ষণ হয়েছে");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "সংরক্ষণ ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!settings) {
+    return <div className="text-[12px] text-[#6b7280]">লোড হচ্ছে...</div>;
+  }
+
   return (
     <div className="space-y-3">
-      <div className="bg-white border border-[#d7dde6] rounded px-3 py-2 text-[12px] text-[#4b5563]">
-        অ্যাডমিন <span className="mx-1">›</span> সিস্টেম সেটিংস
-      </div>
+      {(error || message) && (
+        <div
+          className={`rounded border px-3 py-2 text-[12px] ${error ? "bg-[#fef2f2] border-[#fecaca] text-[#991b1b]" : "bg-[#ecfdf5] border-[#a7f3d0] text-[#065f46]"}`}
+        >
+          {error || message}
+        </div>
+      )}
 
-      <SectionCard title="কোর নীতিমালা সেটিংস">
-        {error && (
-          <div className="mb-3 text-[12px] bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] px-3 py-2 rounded">
-            {error}
-          </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-[#374151]">
-          <div className="border border-[#d7dde6] rounded p-4 bg-[#fafbfc]">
-            <div className="font-semibold text-[#1f2d3d] mb-2">অথেনটিকেশন</div>
-            <ul className="space-y-2">
-              <li>• অ্যাডমিন লগইন নির্ধারিত ইমেইল/পাসওয়ার্ড ব্যবহার করে</li>
-              <li>• ডিস্ট্রিবিউটর অ্যাক্টিভেশন অ্যাডমিন নিয়ন্ত্রিত</li>
-              <li>• রোল-ভিত্তিক রুট প্রোটেকশনের জন্য সেশন সংরক্ষণ</li>
-            </ul>
-          </div>
-
-          <div className="border border-[#d7dde6] rounded p-4 bg-[#fafbfc]">
-            <div className="font-semibold text-[#1f2d3d] mb-2">
-              QR ও টোকেন নীতি
+      <SectionCard title="নীতি ও প্রশাসনিক নিয়ন্ত্রণ (অ্যাডমিন)">
+        <div className="space-y-3 text-[13px]">
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">নীতি</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              অ্যাডমিন অনুমোদন ও কর্তৃত্বের মেয়াদ সংক্রান্ত নিয়ম
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <select
+                value={settings.policy.adminApprovalRequired ? "yes" : "no"}
+                onChange={(e) =>
+                  setSettings((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          policy: {
+                            ...prev.policy,
+                            adminApprovalRequired: e.target.value === "yes",
+                          },
+                        }
+                      : prev,
+                  )
+                }
+                className="w-full border rounded px-3 py-2 bg-white"
+              >
+                <option value="yes">প্রয়োজন</option>
+                <option value="no">প্রয়োজন নেই</option>
+              </select>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.policy.authorityMonths}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            policy: {
+                              ...prev.policy,
+                              authorityMonths: Math.max(
+                                1,
+                                Number(e.target.value) || 1,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">মাস</span>
+              </div>
             </div>
-            <ul className="space-y-2">
-              <li>• QR হতে পারে সক্রিয়/নিষ্ক্রিয়/বাতিল/মেয়াদোত্তীর্ণ</li>
-              <li>• বৈধ QR স্ক্যানের পরেই টোকেন ইস্যু</li>
-              <li>• ইন্টারনেট ফিরলে অফলাইন টোকেন সিঙ্ক হবে</li>
-            </ul>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">বিতরণ</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              ওজন যাচাই ও টোকেন নিয়ন্ত্রণ
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.distribution.weightThresholdKg}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            distribution: {
+                              ...prev.distribution,
+                              weightThresholdKg: Math.max(
+                                1,
+                                Number(e.target.value) || 1,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">কেজি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.distribution.tokenPerConsumerPerDay}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            distribution: {
+                              ...prev.distribution,
+                              tokenPerConsumerPerDay: Math.max(
+                                1,
+                                Number(e.target.value) || 1,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">টোকেন/দিন</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">QR কোড</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              QR মেয়াদ ও নবায়ন নিয়ম
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={settings.qr.expiryCycleDays}
+                onChange={(e) =>
+                  setSettings((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          qr: {
+                            ...prev.qr,
+                            expiryCycleDays: Math.max(
+                              1,
+                              Number(e.target.value) || 1,
+                            ),
+                          },
+                        }
+                      : prev,
+                  )
+                }
+                className="w-full border rounded px-3 py-2"
+              />
+              <span className="text-sm text-gray-500">দিন</span>
+            </div>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">রেশন বরাদ্দ</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              বিভাগ অনুযায়ী প্রতিটি পরিবারের দৈনিক বরাদ্দ
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {(["A", "B", "C"] as const).map((key) => (
+                <div key={key} className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={settings.allocation[key]}
+                    onChange={(e) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              allocation: {
+                                ...prev.allocation,
+                                [key]: Math.max(0, Number(e.target.value) || 0),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="w-full border rounded px-3 py-2"
+                  />
+                  <span className="text-sm text-gray-500">কেজি</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">জালিয়াতি প্রতিরোধ</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              স্বয়ংক্রিয় বাতিল ও ব্লকিং নিয়ম
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.fraud.autoBlacklistMismatchCount}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            fraud: {
+                              ...prev.fraud,
+                              autoBlacklistMismatchCount: Math.max(
+                                1,
+                                Number(e.target.value) || 1,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">বার</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.fraud.temporaryBlockDays}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            fraud: {
+                              ...prev.fraud,
+                              temporaryBlockDays: Math.max(
+                                1,
+                                Number(e.target.value) || 1,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">দিন</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">অডিট</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              লগ সংরক্ষণ ও অপরিবর্তনীয়তা নিশ্চিতকরণ
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={settings.audit.retentionYears}
+                onChange={(e) =>
+                  setSettings((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          audit: {
+                            ...prev.audit,
+                            retentionYears: Math.max(
+                              1,
+                              Number(e.target.value) || 1,
+                            ),
+                          },
+                        }
+                      : prev,
+                  )
+                }
+                className="w-full border rounded px-3 py-2"
+              />
+              <span className="text-sm text-gray-500">বছর</span>
+            </div>
           </div>
         </div>
-        {loading && (
-          <div className="text-[12px] text-[#6b7280] mt-2">লোড হচ্ছে...</div>
-        )}
       </SectionCard>
 
-      <SectionCard title="সিস্টেম সেটিংস (শুধু-পঠনযোগ্য)">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-[#f3f5f8] text-left">
-                <th className="p-2 border border-[#d7dde6]">কী</th>
-                <th className="p-2 border border-[#d7dde6]">মান</th>
-              </tr>
-            </thead>
-            <tbody>
-              {settings.map((item) => (
-                <tr key={item.key} className="odd:bg-white even:bg-[#fafbfc]">
-                  <td className="p-2 border border-[#d7dde6]">{item.key}</td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    {typeof item.value === "object"
-                      ? JSON.stringify(item.value)
-                      : String(item.value)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="ব্যাকএন্ড-নিয়ন্ত্রিত সুপারিশকৃত সেটিংস">
-        <ul className="space-y-2 text-sm text-[#374151]">
-          <li>• অ্যাডমিন ক্রেডেনশিয়াল সার্ভার এনভায়রনমেন্টে রাখুন।</li>
-          <li>• বিতরণ চক্র অনুযায়ী QR মেয়াদ কনফিগারেবল রাখুন।</li>
-          <li>• ব্ল্যাকলিস্ট সময়সীমা অস্থায়ী/স্থায়ী নীতিতে নির্ধারণ করুন।</li>
-          <li>• ব্যাকএন্ড সার্ভিস থেকে SMS/অ্যাপ নোটিফিকেশন দিন।</li>
-        </ul>
-      </SectionCard>
+      <div className="flex justify-end">
+        <Button onClick={() => void save()} disabled={loading}>
+          অ্যাডমিন সেটিংস সংরক্ষণ
+        </Button>
+      </div>
     </div>
   );
 }

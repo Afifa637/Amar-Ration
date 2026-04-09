@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const { protect, authorize } = require("../middleware/auth");
 const {
+  createDistributionSession,
+  startDistributionSession,
   scanAndIssueToken,
   completeDistribution,
   listTokens,
@@ -8,7 +10,22 @@ const {
   getDistributionRecords,
   getDistributionStats,
   getDistributionQuickInfo,
+  listDistributionSessions,
+  closeDistributionSession,
 } = require("../controllers/distribution.controller");
+
+router.post(
+  "/session/create",
+  protect,
+  authorize("Admin", "Distributor", "FieldUser"),
+  createDistributionSession,
+);
+router.post(
+  "/session/start",
+  protect,
+  authorize("Admin", "Distributor", "FieldUser"),
+  startDistributionSession,
+);
 
 router.post(
   "/scan",
@@ -51,6 +68,18 @@ router.get(
   protect,
   authorize("Admin", "Distributor", "FieldUser"),
   getDistributionQuickInfo,
+);
+router.get(
+  "/sessions",
+  protect,
+  authorize("Admin", "Distributor", "FieldUser"),
+  listDistributionSessions,
+);
+router.post(
+  "/session/close",
+  protect,
+  authorize("Admin", "Distributor", "FieldUser"),
+  closeDistributionSession,
 );
 
 module.exports = router;
