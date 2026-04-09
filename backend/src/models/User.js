@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { normalizeWardNo: _normWard } = require("../utils/ward.utils");
+const { normalizeDivision: _normDiv } = require("../utils/division.utils");
 
 const UserSchema = new mongoose.Schema(
   {
@@ -10,7 +12,11 @@ const UserSchema = new mongoose.Schema(
     name: { type: String, required: true },
     phone: { type: String, unique: true, sparse: true },
     email: { type: String, unique: true, sparse: true },
+    contactEmail: { type: String, sparse: true },
     passwordHash: { type: String, required: true },
+    passwordChangedAt: { type: Date },
+    tokenVersion: { type: Number, default: 0 },
+    mustChangePassword: { type: Boolean, default: false },
     status: {
       type: String,
       enum: ["Active", "Inactive", "Suspended"],
@@ -42,8 +48,39 @@ const UserSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-UserSchema.index({ email: 1 });
-UserSchema.index({ phone: 1 });
-UserSchema.index({ consumerCode: 1 });
+UserSchema.index(
+  { division: 1, wardNo: 1, userType: 1 },
+  {
+    unique: true,
+    sparse: false,
+    name: "unique_distributor_user_per_ward_per_division",
+    partialFilterExpression: { userType: "Distributor" },
+  },
+);
+
+UserSchema.pre("save", function (next) {
+  if (this.division) {
+    this.division = _normDiv(this.division) || this.division;
+  }
+  if (this.wardNo) {
+    this.wardNo = _normWard(this.wardNo) || this.wardNo;
+  }
+  if (this.ward) {
+    this.ward = _normWard(this.ward) || this.ward;
+  }
+  next();
+});
+
+UserSchema.pre(
+  ["findOneAndUpdate", "updateOne", "updateMany"],
+  function (next) {
+    const update = this.getUpdate();
+    const doc = update?.$set || update;
+    if (doc?.division) doc.division = _normDiv(doc.division) || doc.division;
+    if (doc?.wardNo) doc.wardNo = _normWard(doc.wardNo) || doc.wardNo;
+    if (doc?.ward) doc.ward = _normWard(doc.ward) || doc.ward;
+    next();
+  },
+);
 
 module.exports = mongoose.model("User", UserSchema);

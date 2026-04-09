@@ -1,35 +1,62 @@
-### Login Distributor
-POST http://localhost:5000/api/auth/login
+@baseUrl = http://localhost:5000/api
+
+### 1) Admin Login (seeded)
+# @name adminLogin
+POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "phone": "01800000000",
-  "password": "dist123"
+  "identifier": "admin@amar-ration.local",
+  "password": "admin123",
+  "userType": "Admin"
 }
 
-### Scan QR
-POST http://localhost:5000/api/distribution/scan
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+### 2) Distributor Login (seeded)
+# @name distributorLogin
+POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "qrPayload": "OMS:C0001:2026"
+  "identifier": "distributor@amar-ration.local",
+  "password": "dist123",
+  "userType": "Distributor"
 }
 
-### Complete Distribution
-POST http://localhost:5000/api/distribution/complete
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+### 3) FieldUser Login (seeded)
+# @name fieldLogin
+POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "tokenCode": "T-123456",
-  "actualKg": 5
+  "identifier": "field@amar-ration.local",
+  "password": "field123",
+  "userType": "FieldUser"
 }
 
-### Reports
-GET http://localhost:5000/api/reports/summary
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+### 4) Who am I (Admin)
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{adminLogin.response.body.data.token}}
 
-### Monitoring
-GET http://localhost:5000/api/monitoring/summary
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThjMjYzODFhMjQwNDFhZjk4MGUzODciLCJpYXQiOjE3NzA3OTM0NzEsImV4cCI6MTc3MDgwMDY3MX0.78rO_1wZjaM6z3sNv4J97QXSvkk6pHXvCIGQ5DiA_TU
+### 5) Admin Summary
+GET {{baseUrl}}/admin/summary
+Authorization: Bearer {{adminLogin.response.body.data.token}}
+
+### 6) Admin Distributors
+GET {{baseUrl}}/admin/distributors
+Authorization: Bearer {{adminLogin.response.body.data.token}}
+
+### 7) Distributor Dashboard
+GET {{baseUrl}}/distributor/dashboard
+Authorization: Bearer {{distributorLogin.response.body.data.token}}
+
+### 8) Distributor Monitoring Summary
+GET {{baseUrl}}/monitoring/summary
+Authorization: Bearer {{distributorLogin.response.body.data.token}}
+
+### 9) Notifications (unread)
+GET {{baseUrl}}/notifications?status=Unread
+Authorization: Bearer {{distributorLogin.response.body.data.token}}
+
+### 10) Field session status
+GET {{baseUrl}}/field/session-status
+Authorization: Bearer {{fieldLogin.response.body.data.token}}

@@ -19,12 +19,21 @@ const roleToUserType: Record<UserRole, string> = {
 
 export type AuthUser = {
   id: string;
+  _id?: string;
   name: string;
   email: string;
+  phone?: string;
+  userType?: "Admin" | "Distributor" | "FieldUser" | "Consumer";
   role: UserRole;
   wardNo?: string;
+  ward?: string;
+  unionName?: string;
+  upazila?: string;
+  district?: string;
+  division?: string;
   officeAddress?: string;
   authorityStatus?: "Pending" | "Active" | "Suspended" | "Revoked";
+  mustChangePassword?: boolean;
 };
 
 type AuthContextType = {
@@ -35,7 +44,16 @@ type AuthContextType = {
     email: string,
     password: string,
     role: UserRole,
-  ) => Promise<{ success: boolean; reason?: "pending-approval" | "blocked" }>;
+  ) => Promise<{
+    success: boolean;
+    mustChangePassword?: boolean;
+    reason?: "pending-approval" | "blocked" | "authority-expired";
+    message?: string;
+  }>;
+  updateSession: (payload: {
+    token?: string;
+    userPatch?: Partial<AuthUser>;
+  }) => void;
   logout: () => void;
   hasRole: (allowedRoles: UserRole[]) => boolean;
 };
@@ -94,7 +112,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     email: string,
     password: string,
     role: UserRole,
-  ): Promise<{ success: boolean; reason?: "pending-approval" | "blocked" }> => {
+  ): Promise<{
+    success: boolean;
+    mustChangePassword?: boolean;
+    reason?: "pending-approval" | "blocked" | "authority-expired";
+    message?: string;
+  }> => {
     try {
       // Map frontend role to backend userType
       const userType = roleToUserType[role];
@@ -107,17 +130,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
 
       if (response.data.success) {
-        const { token, user: backendUser } = response.data.data;
+        const {
+          token,
+          user: backendUser,
+          mustChangePassword,
+        } = response.data.data;
 
         // Map backend user to frontend user format
         const frontendUser: AuthUser = {
           id: backendUser._id,
+          _id: backendUser._id,
           name: backendUser.name,
           email: backendUser.email,
+          phone: backendUser.phone,
+          userType: backendUser.userType,
           role: userTypeToRole[backendUser.userType] || role,
           wardNo: backendUser.wardNo,
+          ward: backendUser.ward,
+          unionName: backendUser.unionName,
+          upazila: backendUser.upazila,
+          district: backendUser.district,
+          division: backendUser.division,
           officeAddress: backendUser.officeAddress,
           authorityStatus: backendUser.authorityStatus,
+          mustChangePassword: Boolean(mustChangePassword),
         };
 
         // Store in localStorage
@@ -132,7 +168,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(frontendUser);
         setIsAuthenticated(true);
 
-        return { success: true };
+        return {
+          success: true,
+          mustChangePassword: Boolean(mustChangePassword),
+        };
       }
 
       return { success: false };
@@ -148,10 +187,75 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (responseCode === "ACCESS_BLOCKED") {
         return { success: false, reason: "blocked" };
       }
+      if (responseCode === "AUTHORITY_EXPIRED") {
+        return { success: false, reason: "authority-expired" };
+      }
+
+      const statusCode =
+        typeof error === "object" && error && "response" in error
+          ? (error as { response?: { status?: number } })?.response?.status
+          : undefined;
+
+      const responseMessage =
+        typeof error === "object" && error && "response" in error
+          ? (error as { response?: { data?: { message?: string } } })?.response
+              ?.data?.message
+          : undefined;
+
+      if (statusCode === 429) {
+        return {
+          success: false,
+          message:
+            responseMessage ||
+            "অনেকবার চেষ্টা করা হয়েছে। ১৫ মিনিট পরে আবার চেষ্টা করুন।",
+        };
+      }
 
       const message = error instanceof Error ? error.message : "Login failed";
       console.error("Login failed:", message);
-      return { success: false };
+      return {
+        success: false,
+        message: responseMessage || "ইমেইল/পাসওয়ার্ড বা রোল সঠিক নয়",
+      };
+    }
+  };
+
+  const updateSession = ({
+    token,
+    userPatch,
+  }: {
+    token?: string;
+    userPatch?: Partial<AuthUser>;
+  }) => {
+    const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+    let parsedToken = "";
+
+    if (storedAuth) {
+      try {
+        const parsed = JSON.parse(storedAuth) as {
+          user?: AuthUser;
+          token?: string;
+        };
+        parsedToken = parsed?.token || "";
+      } catch {
+        // ignore malformed storage
+      }
+    }
+
+    const nextToken = token || parsedToken;
+    const nextUser = user ? { ...user, ...(userPatch || {}) } : null;
+
+    if (nextUser && nextToken) {
+      localStorage.setItem(
+        AUTH_STORAGE_KEY,
+        JSON.stringify({ user: nextUser, token: nextToken }),
+      );
+      api.defaults.headers.common.Authorization = `Bearer ${nextToken}`;
+    }
+
+    if (nextUser) {
+      setUser(nextUser);
+      setIsAuthenticated(true);
     }
   };
 
@@ -174,6 +278,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         isAuthenticated,
         isInitialized,
         login,
+        updateSession,
         logout,
         hasRole,
       }}

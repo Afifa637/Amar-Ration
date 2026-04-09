@@ -4,10 +4,15 @@ const {
   getAdminSummary,
   getAdminDistributors,
   updateDistributorStatus,
+  deleteDistributor,
+  createDistributor,
+  adminResetDistributorPassword,
   getAdminCardsSummary,
   getAdminDistributionMonitoring,
   getAdminConsumerReview,
+  getAdminAuditLogs,
   getAdminAuditDetail,
+  forceCloseSession,
 } = require("../controllers/admin.controller");
 const {
   listAuditReportRequests,
@@ -20,9 +25,17 @@ router.use(protect, authorize("Admin"));
 router.get("/summary", getAdminSummary);
 router.get("/distributors", getAdminDistributors);
 router.patch("/distributors/:userId/status", updateDistributorStatus);
+router.delete("/distributors/:userId", deleteDistributor);
+router.post("/distributors/create", createDistributor);
+router.patch(
+  "/distributors/:userId/reset-password",
+  adminResetDistributorPassword,
+);
 router.get("/cards/summary", getAdminCardsSummary);
 router.get("/distribution/monitoring", getAdminDistributionMonitoring);
+router.patch("/distribution/session/:sessionId/force-close", forceCloseSession);
 router.get("/consumers/review", getAdminConsumerReview);
+router.get("/audit", getAdminAuditLogs);
 router.get("/audit/:id/detail", getAdminAuditDetail);
 router.get("/audit/requests", listAuditReportRequests);
 router.post("/audit/requests", requestAuditReport);

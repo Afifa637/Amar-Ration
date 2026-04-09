@@ -48,6 +48,33 @@ export default function SignupPage() {
     );
   }
 
+  if (role === "distributor" || role === "field-distributor") {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat relative"
+        style={{ backgroundImage: "url('/assets/image/bg-2.jpg')" }}
+      >
+        <div className="absolute inset-0 bg-black/50"></div>
+        <div className="relative z-10 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
+          <div className="text-6xl mb-4">🔐</div>
+          <h2 className="text-2xl font-bold text-white mb-2">
+            স্বয়ংক্রিয় সাইনআপ বন্ধ
+          </h2>
+          <p className="text-white/80 mb-6">
+            ডিস্ট্রিবিউটর/ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অ্যাডমিন নির্ধারিত
+            ইমেইল ও পাসওয়ার্ড দিয়ে প্রদান করেন।
+          </p>
+          <button
+            onClick={() => navigate(`/login/${role}`)}
+            className="bg-[#16679c] text-white px-6 py-2.5 rounded-lg hover:bg-[#125a85] font-semibold"
+          >
+            লগইন পেজে যান
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const [formData, setFormData] = useState({
     name: "",
     email: "",

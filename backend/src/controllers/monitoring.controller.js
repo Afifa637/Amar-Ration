@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const OfflineQueue = require("../models/OfflineQueue");
 const AuditLog = require("../models/AuditLog");
@@ -5,6 +6,8 @@ const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const User = require("../models/User");
 const { writeAudit } = require("../services/audit.service");
+const { normalizeDivision } = require("../utils/division.utils");
+const { normalizeWardNo } = require("../utils/ward.utils");
 const {
   scanAndIssueToken,
   completeDistribution,
@@ -26,11 +29,12 @@ async function ensureDistributorProfile(reqUser) {
 
   distributor = await Distributor.create({
     userId: user._id,
-    division: user.division,
+    wardNo: normalizeWardNo(user.wardNo || user.ward),
+    division: normalizeDivision(user.division),
     district: user.district,
     upazila: user.upazila,
     unionName: user.unionName,
-    ward: user.ward,
+    ward: normalizeWardNo(user.ward || user.wardNo),
     authorityStatus: user.authorityStatus || "Active",
     authorityFrom: user.authorityFrom || new Date(),
     authorityTo: user.authorityTo,
@@ -46,6 +50,8 @@ function parsePageLimit(query) {
 }
 
 function getScopeFilter(distributor) {
+  // Scope is by distributorId — which is already bound to one (division, wardNo) pair
+  // Division+ward filtering is enforced at the distributor lookup level
   return distributor ? { distributorId: distributor._id } : {};
 }
 
@@ -83,15 +89,53 @@ async function syncTargetStatus(entry) {
   const status = applyBlacklistStatus(entry.blockType, entry.active);
 
   if (entry.targetType === "Consumer") {
-    await Consumer.findByIdAndUpdate(entry.targetRefId, {
-      blacklistStatus: status,
+    const ref = String(entry.targetRefId || "").trim();
+    const query = mongoose.Types.ObjectId.isValid(ref)
+      ? { _id: ref }
+      : { consumerCode: ref };
+
+    await Consumer.findOneAndUpdate(query, {
+      $set: { blacklistStatus: status },
     });
     return;
   }
 
   if (entry.targetType === "Distributor") {
-    await Distributor.findByIdAndUpdate(entry.targetRefId, {
-      authorityStatus: entry.active ? "Suspended" : "Active",
+    const ref = String(entry.targetRefId || "").trim();
+
+    let distributor = null;
+    if (mongoose.Types.ObjectId.isValid(ref)) {
+      distributor = await Distributor.findById(ref);
+      if (!distributor) {
+        distributor = await Distributor.findOne({ userId: ref });
+      }
+    } else {
+      distributor = await Distributor.findOne({ userId: ref });
+      if (!distributor) {
+        const user = await User.findOne({
+          $or: [{ email: ref }, { phone: ref }],
+        })
+          .select("_id")
+          .lean();
+        if (user?._id) {
+          distributor = await Distributor.findOne({ userId: user._id });
+        }
+      }
+    }
+
+    if (!distributor) return;
+
+    const nextAuthority = entry.active ? "Suspended" : "Active";
+
+    await Distributor.findByIdAndUpdate(distributor._id, {
+      $set: { authorityStatus: nextAuthority },
+    });
+
+    await User.findByIdAndUpdate(distributor.userId, {
+      $set: {
+        authorityStatus: nextAuthority,
+        status: nextAuthority === "Suspended" ? "Suspended" : "Active",
+      },
     });
   }
 }

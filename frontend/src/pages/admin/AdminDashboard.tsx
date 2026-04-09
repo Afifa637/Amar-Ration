@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
-import { getAdminSummary, type AdminSummary } from "../../services/api";
+import {
+  getAdminDistributors,
+  getAdminDistributionMonitoring,
+  getAdminSummary,
+  updateAdminDistributorStatus,
+  type AdminDistributorRow,
+  type AdminSummary,
+} from "../../services/api";
 
 function MetricCard({
   title,
@@ -28,27 +35,92 @@ function MetricCard({
 
 export default function AdminDashboard() {
   const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [allDistributorRows, setAllDistributorRows] = useState<
+    AdminDistributorRow[]
+  >([]);
+  const [pendingRows, setPendingRows] = useState<AdminDistributorRow[]>([]);
+  const [monitorRows, setMonitorRows] = useState<
+    Array<{
+      distributor?: string;
+      division?: string;
+      ward: string;
+      expectedKg: number;
+      actualKg: number;
+      status: "Matched" | "Mismatch";
+      action: string;
+    }>
+  >([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [summaryData, distributorsData, monitoringData] = await Promise.all(
+        [
+          getAdminSummary(),
+          getAdminDistributors(),
+          getAdminDistributionMonitoring(),
+        ],
+      );
+      setSummary(summaryData);
+      setAllDistributorRows(distributorsData.rows || []);
+      setPendingRows(
+        (distributorsData.rows || []).filter(
+          (row) => row.authorityStatus === "Pending",
+        ),
+      );
+      setMonitorRows(monitoringData.rows || []);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "ড্যাশবোর্ড ডেটা লোড ব্যর্থ",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 60000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const suspendedCount = useMemo(
+    () =>
+      allDistributorRows.filter((row) => row.authorityStatus === "Suspended")
+        .length,
+    [allDistributorRows],
+  );
+
+  const onReview = async (userId: string, approve: boolean) => {
+    try {
       setLoading(true);
       setError("");
-      try {
-        const data = await getAdminSummary();
-        setSummary(data);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "ড্যাশবোর্ড ডেটা লোড ব্যর্থ",
-        );
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void load();
-  }, []);
+      await updateAdminDistributorStatus(
+        userId,
+        approve ? "Active" : "Revoked",
+      );
+      setMessage(
+        approve
+          ? "ডিস্ট্রিবিউটর অনুমোদিত হয়েছে"
+          : "ডিস্ট্রিবিউটর প্রত্যাখ্যাত হয়েছে",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "অ্যাকশন ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const metrics = useMemo(() => {
     if (!summary) return [];
@@ -94,6 +166,16 @@ export default function AdminDashboard() {
 
   const alerts = summary?.alerts || [];
 
+  const expiringRows = useMemo(() => {
+    return allDistributorRows.filter((row) => {
+      if (!row.authorityTo) return false;
+      const daysLeft =
+        (new Date(row.authorityTo).getTime() - Date.now()) /
+        (1000 * 60 * 60 * 24);
+      return daysLeft >= 0 && daysLeft <= 30;
+    });
+  }, [allDistributorRows]);
+
   return (
     <div className="space-y-3">
       <div className="bg-white border border-[#d7dde6] rounded px-3 py-2">
@@ -119,6 +201,11 @@ export default function AdminDashboard() {
             {error}
           </div>
         )}
+        {message && (
+          <div className="mb-3 text-[12px] bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] px-3 py-2 rounded">
+            {message}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {metrics.map((item) => (
             <MetricCard key={item.title} {...item} />
@@ -126,6 +213,61 @@ export default function AdminDashboard() {
         </div>
         {loading && (
           <div className="text-[12px] text-[#6b7280] mt-2">লোড হচ্ছে...</div>
+        )}
+      </SectionCard>
+
+      {suspendedCount > 0 && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 text-[#991b1b]">
+          ⚠️ {suspendedCount} জন ডিস্ট্রিবিউটর বর্তমানে স্থগিত অবস্থায় রয়েছেন
+        </div>
+      )}
+
+      {expiringRows.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-300 rounded p-3 mb-3 text-[#92400e]">
+          ⏳ {expiringRows.length} জন ডিস্ট্রিবিউটরের কর্তৃত্বের মেয়াদ ৩০ দিনের
+          মধ্যে শেষ হবে।
+        </div>
+      )}
+
+      <SectionCard title="অপেক্ষমাণ ডিস্ট্রিবিউটর অনুমোদন">
+        {pendingRows.length === 0 ? (
+          <div className="text-sm text-green-700">
+            সকল ডিস্ট্রিবিউটর অনুমোদিত ✓
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pendingRows.map((row) => (
+              <div
+                key={row.userId}
+                className="border rounded p-3 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="text-sm">
+                  <div className="font-semibold">{row.name}</div>
+                  <div className="text-[#6b7280]">
+                    ওয়ার্ড: {row.ward || "—"} | ইমেইল: {row.email || "—"} |
+                    তারিখ:{" "}
+                    {row.createdAt
+                      ? new Date(row.createdAt).toLocaleDateString("bn-BD")
+                      : "—"}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-1 rounded bg-green-600 text-white text-[12px]"
+                    onClick={() => void onReview(row.userId, true)}
+                  >
+                    অনুমোদন করুন
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded bg-rose-600 text-white text-[12px]"
+                    onClick={() => void onReview(row.userId, false)}
+                  >
+                    প্রত্যাখ্যান করুন
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </SectionCard>
 
@@ -208,6 +350,55 @@ export default function AdminDashboard() {
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard title="আজকের বিতরণ মনিটরিং টেবিল">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-[#f3f5f8] text-left text-[#374151]">
+                <th className="p-2 border border-[#d7dde6]">ডিস্ট্রিবিউটর</th>
+                <th className="p-2 border border-[#d7dde6]">বিভাগ / ওয়ার্ড</th>
+                <th className="p-2 border border-[#d7dde6]">মজুদ (কেজি)</th>
+                <th className="p-2 border border-[#d7dde6]">বিতরণ (কেজি)</th>
+                <th className="p-2 border border-[#d7dde6]">সেশন অবস্থা</th>
+                <th className="p-2 border border-[#d7dde6]">অমিল সংখ্যা</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monitorRows.map((row, idx) => (
+                <tr
+                  key={`${row.ward}-${idx}`}
+                  className="odd:bg-white even:bg-[#fafbfc]"
+                >
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.distributor || "—"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    <div>{row.division || "—"}</div>
+                    <div className="text-[11px] text-[#6b7280]">
+                      Ward {row.ward || "—"}
+                    </div>
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.expectedKg.toFixed(1)}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.actualKg.toFixed(1)}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    <span className="inline-flex rounded px-2 py-0.5 text-[11px] bg-gray-100 text-gray-700">
+                      {row.status === "Mismatch" ? "Paused" : "Closed"}
+                    </span>
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.status === "Mismatch" ? 1 : 0}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
         <SectionCard title="ডিস্ট্রিবিউটর লাইফসাইকেল">

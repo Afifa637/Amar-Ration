@@ -3,10 +3,13 @@ import SectionCard from "../../components/SectionCard";
 import Modal from "../../components/ui/Modal";
 import Button from "../../components/ui/Button";
 import {
+  createBlacklistEntry,
+  deactivateBlacklistEntry,
   getAdminAuditDetail,
   getAdminAuditRequests,
   getAuditLogs,
   getBlacklistEntries,
+  type MonitoringBlacklistEntry,
   requestAuditReport,
   reviewAuditReportRequest,
   type AuditLogEntry,
@@ -18,6 +21,7 @@ export default function AdminAuditPage() {
   const [blacklistCount, setBlacklistCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<{
     log: AuditLogEntry;
     consumer?: {
@@ -39,13 +43,23 @@ export default function AdminAuditPage() {
     } | null;
   } | null>(null);
   const [requests, setRequests] = useState<AuditReportRequest[]>([]);
+  const [blacklist, setBlacklist] = useState<MonitoringBlacklistEntry[]>([]);
   const [note, setNote] = useState("");
   const [requesting, setRequesting] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<AuditReportRequest | null>(null);
+  const [openBlacklistModal, setOpenBlacklistModal] = useState(false);
+  const [blacklistForm, setBlacklistForm] = useState({
+    targetType: "Consumer" as "Consumer" | "Distributor",
+    targetRefId: "",
+    reason: "",
+    blockType: "Temporary" as "Temporary" | "Permanent",
+    durationDays: 7,
+  });
 
   const loadData = async () => {
     setLoading(true);
     setError("");
+    setMessage("");
     try {
       const [auditData, blacklistData, requestData] = await Promise.all([
         getAuditLogs({ page: 1, limit: 50, sortOrder: "desc" }),
@@ -54,6 +68,7 @@ export default function AdminAuditPage() {
       ]);
       setLogs(auditData.logs || []);
       setBlacklistCount(blacklistData.entries?.length || 0);
+      setBlacklist(blacklistData.entries || []);
       setRequests(requestData.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "অডিট ডেটা লোড ব্যর্থ");
@@ -136,6 +151,62 @@ export default function AdminAuditPage() {
     }
   };
 
+  const handleUnblock = async (entryId: string) => {
+    if (!window.confirm("এই ব্ল্যাকলিস্ট এন্ট্রি নিষ্ক্রিয় করতে চান?")) return;
+    try {
+      setLoading(true);
+      await deactivateBlacklistEntry(entryId);
+      setMessage("ব্ল্যাকলিস্ট এন্ট্রি নিষ্ক্রিয় করা হয়েছে");
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "আনব্লক ব্যর্থ হয়েছে");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateBlacklist = async () => {
+    if (!blacklistForm.targetRefId.trim() || !blacklistForm.reason.trim()) {
+      setError("টার্গেট আইডি এবং কারণ বাধ্যতামূলক");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const expiresAt =
+        blacklistForm.blockType === "Temporary"
+          ? new Date(
+              Date.now() + Number(blacklistForm.durationDays || 7) * 86400000,
+            ).toISOString()
+          : undefined;
+
+      await createBlacklistEntry({
+        targetType: blacklistForm.targetType,
+        targetRefId: blacklistForm.targetRefId.trim(),
+        reason: blacklistForm.reason.trim(),
+        blockType: blacklistForm.blockType,
+        active: true,
+        expiresAt,
+      });
+
+      setOpenBlacklistModal(false);
+      setBlacklistForm({
+        targetType: "Consumer",
+        targetRefId: "",
+        reason: "",
+        blockType: "Temporary",
+        durationDays: 7,
+      });
+      setMessage("ব্ল্যাকলিস্ট এন্ট্রি তৈরি হয়েছে");
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ব্ল্যাকলিস্ট তৈরি ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="bg-white border border-[#d7dde6] rounded px-3 py-2 text-[12px] text-[#4b5563]">
@@ -146,6 +217,11 @@ export default function AdminAuditPage() {
         {error && (
           <div className="mb-3 text-[12px] bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] px-3 py-2 rounded">
             {error}
+          </div>
+        )}
+        {message && (
+          <div className="mb-3 text-[12px] bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] px-3 py-2 rounded">
+            {message}
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -295,6 +371,83 @@ export default function AdminAuditPage() {
       </SectionCard>
 
       <SectionCard title="ব্ল্যাকলিস্ট নীতি">
+        <div className="mb-3 flex justify-end">
+          <Button onClick={() => setOpenBlacklistModal(true)}>
+            নতুন ব্ল্যাকলিস্ট
+          </Button>
+        </div>
+        <div className="overflow-x-auto mb-3">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-[#f3f5f8] text-left">
+                {[
+                  "টার্গেট টাইপ",
+                  "আইডি",
+                  "কারণ",
+                  "ব্লক টাইপ",
+                  "মেয়াদ শেষ",
+                  "স্ট্যাটাস",
+                  "অ্যাকশন",
+                ].map((head) => (
+                  <th key={head} className="p-2 border border-[#d7dde6]">
+                    {head}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {blacklist.map((entry) => (
+                <tr key={entry._id} className="odd:bg-white even:bg-[#fafbfc]">
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.targetType}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.targetRefId}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.reason}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.blockType}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.expiresAt
+                      ? new Date(entry.expiresAt).toLocaleDateString("bn-BD")
+                      : "—"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.active ? "সক্রিয়" : "নিষ্ক্রিয়"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {entry.active ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => void handleUnblock(entry._id)}
+                      >
+                        🔓 আনব্লক
+                      </Button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        className="text-[12px] px-2 py-1 rounded bg-gray-200 text-gray-500"
+                      >
+                        ✓ নিষ্ক্রিয়
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {blacklist.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-[#6b7280]">
+                    ব্ল্যাকলিস্ট ডেটা নেই
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
         <ul className="space-y-2 text-sm text-[#374151]">
           <li>• ফ্রড প্রমাণিত হলে সাময়িক ব্লক করা যাবে।</li>
           <li>• বারবার ব্যর্থতায় স্থায়ী ব্ল্যাকলিস্ট হতে পারে।</li>
@@ -427,6 +580,104 @@ export default function AdminAuditPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={openBlacklistModal}
+        title="নতুন ব্ল্যাকলিস্ট এন্ট্রি"
+        onClose={() => setOpenBlacklistModal(false)}
+      >
+        <div className="space-y-3 text-[13px]">
+          <div>
+            <div className="text-[12px] mb-1 font-medium">টার্গেট টাইপ</div>
+            <select
+              className="w-full border rounded px-3 py-2"
+              value={blacklistForm.targetType}
+              onChange={(e) =>
+                setBlacklistForm((prev) => ({
+                  ...prev,
+                  targetType: e.target.value as "Consumer" | "Distributor",
+                }))
+              }
+            >
+              <option value="Consumer">Consumer</option>
+              <option value="Distributor">Distributor</option>
+            </select>
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">টার্গেট আইডি</div>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={blacklistForm.targetRefId}
+              onChange={(e) =>
+                setBlacklistForm((prev) => ({
+                  ...prev,
+                  targetRefId: e.target.value,
+                }))
+              }
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">কারণ</div>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={blacklistForm.reason}
+              onChange={(e) =>
+                setBlacklistForm((prev) => ({
+                  ...prev,
+                  reason: e.target.value,
+                }))
+              }
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">ব্লক টাইপ</div>
+            <select
+              className="w-full border rounded px-3 py-2"
+              value={blacklistForm.blockType}
+              onChange={(e) =>
+                setBlacklistForm((prev) => ({
+                  ...prev,
+                  blockType: e.target.value as "Temporary" | "Permanent",
+                }))
+              }
+            >
+              <option value="Temporary">Temporary</option>
+              <option value="Permanent">Permanent</option>
+            </select>
+          </div>
+          {blacklistForm.blockType === "Temporary" && (
+            <div>
+              <div className="text-[12px] mb-1 font-medium">মেয়াদ (দিন)</div>
+              <input
+                type="number"
+                min={1}
+                className="w-full border rounded px-3 py-2"
+                value={blacklistForm.durationDays}
+                onChange={(e) =>
+                  setBlacklistForm((prev) => ({
+                    ...prev,
+                    durationDays: Math.max(1, Number(e.target.value) || 1),
+                  }))
+                }
+              />
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setOpenBlacklistModal(false)}
+            >
+              বাতিল
+            </Button>
+            <Button
+              onClick={() => void handleCreateBlacklist()}
+              disabled={loading}
+            >
+              তৈরি করুন
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

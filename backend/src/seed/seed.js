@@ -17,6 +17,15 @@ const SystemSetting = require("../models/SystemSetting");
 const AuditLog = require("../models/AuditLog");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const OfflineQueue = require("../models/OfflineQueue");
+const { normalizeWardNo } = require("../utils/ward.utils");
+const { normalizeDivision } = require("../utils/division.utils");
+
+if (process.env.NODE_ENV === "production") {
+  console.error(
+    "❌ FATAL: Seed cannot run in production. Set NODE_ENV=development.",
+  );
+  process.exit(1);
+}
 
 function sha256(s) {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -38,42 +47,42 @@ const CONSUMER_SEED = [
     name: "রহিম উদ্দিন",
     nidLast4: "1101",
     category: "A",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   {
     code: "C0002",
     name: "করিমা বেগম",
     nidLast4: "1102",
     category: "A",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   {
     code: "C0003",
     name: "সালমা আক্তার",
     nidLast4: "1103",
     category: "B",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   {
     code: "C0004",
     name: "জাহিদ হাসান",
     nidLast4: "1104",
     category: "B",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   {
     code: "C0005",
     name: "মোসা. আসমা",
     nidLast4: "1105",
     category: "C",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   {
     code: "C0006",
     name: "হাসিনা খাতুন",
     nidLast4: "1106",
     category: "A",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
     status: "Inactive",
   },
   {
@@ -81,7 +90,7 @@ const CONSUMER_SEED = [
     name: "নাসির উদ্দিন",
     nidLast4: "1107",
     category: "C",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
     status: "Revoked",
   },
   {
@@ -89,7 +98,7 @@ const CONSUMER_SEED = [
     name: "ফারজানা বেগম",
     nidLast4: "1108",
     category: "B",
-    ward: "ওয়ার্ড-০১",
+    ward: "01",
   },
   // Ward-02
   {
@@ -97,49 +106,49 @@ const CONSUMER_SEED = [
     name: "আবুল কালাম",
     nidLast4: "2201",
     category: "A",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0010",
     name: "মোছা. রহিমা",
     nidLast4: "2202",
     category: "B",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0011",
     name: "শাহজাহান মিয়া",
     nidLast4: "2203",
     category: "C",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0012",
     name: "জোছনা বেগম",
     nidLast4: "2204",
     category: "A",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0013",
     name: "রফিকুল ইসলাম",
     nidLast4: "2205",
     category: "B",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0014",
     name: "কুলসুম বেগম",
     nidLast4: "2206",
     category: "C",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   {
     code: "C0015",
     name: "মো. শহিদুল",
     nidLast4: "2207",
     category: "A",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
     status: "Inactive",
   },
   {
@@ -147,7 +156,7 @@ const CONSUMER_SEED = [
     name: "নুরজাহান বেগম",
     nidLast4: "2208",
     category: "B",
-    ward: "ওয়ার্ড-০২",
+    ward: "02",
   },
   // Ward-03
   {
@@ -155,49 +164,49 @@ const CONSUMER_SEED = [
     name: "আমিনুল হক",
     nidLast4: "3301",
     category: "A",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0018",
     name: "শিরিন আক্তার",
     nidLast4: "3302",
     category: "B",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0019",
     name: "মতিউর রহমান",
     nidLast4: "3303",
     category: "C",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0020",
     name: "ডালিয়া বেগম",
     nidLast4: "3304",
     category: "A",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0021",
     name: "কামরুল হাসান",
     nidLast4: "3305",
     category: "B",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0022",
     name: "মাহফুজা খানম",
     nidLast4: "3306",
     category: "C",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
   {
     code: "C0023",
     name: "বেলাল হোসেন",
     nidLast4: "3307",
     category: "A",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
     status: "Inactive",
   },
   {
@@ -205,15 +214,22 @@ const CONSUMER_SEED = [
     name: "রুকাইয়া সুলতানা",
     nidLast4: "3308",
     category: "B",
-    ward: "ওয়ার্ড-০৩",
+    ward: "03",
   },
 ];
 
-const LOCATION = {
-  division: "ঢাকা",
-  district: "ঢাকা",
-  upazila: "সাভার",
-  unionName: "তেঁতুলঝোড়া",
+const LOCATION_DHAKA = {
+  division: "Dhaka",
+  district: "Dhaka",
+  upazila: "Savar",
+  unionName: "Tetuljhora",
+};
+
+const LOCATION_KHULNA = {
+  division: "Khulna",
+  district: "Khulna",
+  upazila: "Khalishpur",
+  unionName: "Khalishpur Union",
 };
 
 // kg allocation per category
@@ -221,6 +237,28 @@ const ALLOC = { A: 5, B: 4, C: 3 };
 
 (async () => {
   try {
+    const mongoUri = process.env.MONGO_URI || "";
+    if (!mongoUri.includes("localhost") && !mongoUri.includes("127.0.0.1")) {
+      const readline = require("readline");
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      await new Promise((resolve) => {
+        rl.question(
+          `⚠️  WARNING: You are seeding a REMOTE database.\nURI: ${mongoUri.slice(0, 30)}...\nAll data will be DELETED. Type "yes" to continue: `,
+          (answer) => {
+            rl.close();
+            if (answer.trim().toLowerCase() !== "yes") {
+              console.log("Seed cancelled.");
+              process.exit(0);
+            }
+            resolve();
+          },
+        );
+      });
+    }
+
     await connectDB();
     console.log("➡️  Seed শুরু...");
 
@@ -256,19 +294,41 @@ const ALLOC = { A: 5, B: 4, C: 3 };
       email: "admin@amar-ration.local",
       passwordHash: adminPass,
       status: "Active",
+      tokenVersion: 0,
+      mustChangePassword: false,
     });
 
     const distributorUser = await User.create({
       userType: "Distributor",
       name: "ডিস্ট্রিবিউটর সাভার",
       phone: "01800000000",
-      email: "distributor@amar-ration.local",
+      email: "distributor.dhaka.ward01@amar-ration.local",
       passwordHash: distPass,
       status: "Active",
-      wardNo: "০১",
+      tokenVersion: 0,
+      mustChangePassword: false,
+      wardNo: "01",
       officeAddress: "তেঁতুলঝোড়া বাজার, সাভার",
-      ...LOCATION,
-      ward: "ওয়ার্ড-০১",
+      ...LOCATION_DHAKA,
+      ward: "01",
+      authorityStatus: "Active",
+      authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
+      authorityTo: new Date("2027-12-31T23:59:59.000Z"),
+    });
+
+    const distributorKhulnaUser = await User.create({
+      userType: "Distributor",
+      name: "ডিস্ট্রিবিউটর খুলনা-ওয়ার্ড০২",
+      phone: "01800000002",
+      email: "distributor.khulna.ward02@amar-ration.local",
+      passwordHash: distPass,
+      status: "Active",
+      tokenVersion: 0,
+      mustChangePassword: false,
+      wardNo: "02",
+      officeAddress: "খালিশপুর বাজার, খুলনা",
+      ...LOCATION_KHULNA,
+      ward: "02",
       authorityStatus: "Active",
       authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
       authorityTo: new Date("2027-12-31T23:59:59.000Z"),
@@ -281,17 +341,46 @@ const ALLOC = { A: 5, B: 4, C: 3 };
       email: "field@amar-ration.local",
       passwordHash: fieldPass,
       status: "Active",
-      wardNo: "০১",
-      ...LOCATION,
-      ward: "ওয়ার্ড-০১",
+      tokenVersion: 0,
+      mustChangePassword: false,
+      wardNo: "01",
+      ...LOCATION_DHAKA,
+      ward: "01",
+      authorityStatus: "Active",
+      authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
+    });
+
+    await User.create({
+      userType: "FieldUser",
+      name: "ফিল্ড অপারেটর-খুলনা",
+      phone: "01900000002",
+      email: "field.khulna.ward02@amar-ration.local",
+      passwordHash: fieldPass,
+      status: "Active",
+      tokenVersion: 0,
+      mustChangePassword: false,
+      wardNo: "02",
+      ...LOCATION_KHULNA,
+      ward: "02",
       authorityStatus: "Active",
       authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
     });
 
     const distributor = await Distributor.create({
       userId: distributorUser._id,
-      ...LOCATION,
-      ward: "ওয়ার্ড-০১",
+      ...LOCATION_DHAKA,
+      wardNo: "01",
+      ward: "01",
+      authorityStatus: "Active",
+      authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
+      authorityTo: new Date("2027-12-31T23:59:59.000Z"),
+    });
+
+    const distributorKhulna = await Distributor.create({
+      userId: distributorKhulnaUser._id,
+      ...LOCATION_KHULNA,
+      wardNo: "02",
+      ward: "02",
       authorityStatus: "Active",
       authorityFrom: new Date("2025-01-01T00:00:00.000Z"),
       authorityTo: new Date("2027-12-31T23:59:59.000Z"),
@@ -305,7 +394,14 @@ const ALLOC = { A: 5, B: 4, C: 3 };
     const day2 = dateKey(h(48));
 
     // ── Distribution Sessions ────────────────────────────────
-    const [sesToday, sesYday, sesDay2] = await DistributionSession.create([
+    const [
+      sesToday,
+      sesYday,
+      sesDay2,
+      sesTodayKhulna,
+      sesYdayKhulna,
+      sesDay2Khulna,
+    ] = await DistributionSession.create([
       {
         distributorId: distributor._id,
         dateKey: today,
@@ -326,6 +422,26 @@ const ALLOC = { A: 5, B: 4, C: 3 };
         openedAt: h(54),
         closedAt: h(48),
       },
+      {
+        distributorId: distributorKhulna._id,
+        dateKey: today,
+        status: "Open",
+        openedAt: h(6),
+      },
+      {
+        distributorId: distributorKhulna._id,
+        dateKey: yday,
+        status: "Closed",
+        openedAt: h(30),
+        closedAt: h(24),
+      },
+      {
+        distributorId: distributorKhulna._id,
+        dateKey: day2,
+        status: "Closed",
+        openedAt: h(54),
+        closedAt: h(48),
+      },
     ]);
 
     // ── Consumers, Families, QR, OMS ────────────────────────
@@ -333,6 +449,9 @@ const ALLOC = { A: 5, B: 4, C: 3 };
     for (let i = 0; i < CONSUMER_SEED.length; i++) {
       const row = CONSUMER_SEED[i];
       const qrToken = mkToken(row.code);
+      const wardNo = normalizeWardNo(row.ward);
+      const isKhulnaWard = wardNo === "02";
+      const rowLocation = isKhulnaWard ? LOCATION_KHULNA : LOCATION_DHAKA;
 
       const family = await Family.create({
         familyKey: sha256(`FAMILY-${row.code}`),
@@ -346,12 +465,20 @@ const ALLOC = { A: 5, B: 4, C: 3 };
         qrToken,
         name: row.name,
         nidLast4: row.nidLast4,
+        nidFull: `1990${row.nidLast4}${String(1000 + i).padStart(4, "0")}`,
+        fatherNidFull: `1960${String(2000 + i).padStart(4, "0")}${row.nidLast4}`,
+        motherNidFull: `1970${String(5000 + i).padStart(4, "0")}${row.nidLast4}`,
         status: row.status || "Active",
         category: row.category,
         familyId: family._id,
-        createdByDistributor: distributor._id,
-        ...LOCATION,
-        ward: row.ward,
+        createdByDistributor: isKhulnaWard
+          ? distributorKhulna._id
+          : distributor._id,
+        division: normalizeDivision(rowLocation.division),
+        district: rowLocation.district,
+        upazila: rowLocation.upazila,
+        unionName: rowLocation.unionName,
+        ward: normalizeWardNo(wardNo),
         blacklistStatus: "None",
       });
 
@@ -374,11 +501,11 @@ const ALLOC = { A: 5, B: 4, C: 3 };
 
     // ── Tokens ──────────────────────────────────────────────
     // Today: C0001-C0006 get tokens (C0001,C0002,C0009 Used; C0003 Issued; C0004 Cancelled)
-    const mkTkn = (code, c, ses, status, ago, usedAgo) =>
+    const mkTkn = (code, c, dist, ses, status, ago, usedAgo) =>
       Token.create({
         tokenCode: code,
         consumerId: c._id,
-        distributorId: distributor._id,
+        distributorId: dist._id,
         sessionId: ses._id,
         rationQtyKg: ALLOC[c.category],
         status,
@@ -389,22 +516,114 @@ const ALLOC = { A: 5, B: 4, C: 3 };
     const [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12] =
       await Promise.all([
         // Today's session
-        mkTkn("TKN-2026-0001", consumers[0], sesToday, "Used", 5, 3), // C0001 Used
-        mkTkn("TKN-2026-0002", consumers[1], sesToday, "Used", 5, 3.5), // C0002 Used (mismatch)
-        mkTkn("TKN-2026-0003", consumers[8], sesToday, "Used", 4.5, 3), // C0009 Used
-        mkTkn("TKN-2026-0004", consumers[2], sesToday, "Issued", 1), // C0003 Pending
-        mkTkn("TKN-2026-0005", consumers[3], sesToday, "Cancelled", 6), // C0004 Cancelled
-        mkTkn("TKN-2026-0006", consumers[9], sesToday, "Issued", 2), // C0010 Pending
+        mkTkn(
+          "TKN-2026-0001",
+          consumers[0],
+          distributor,
+          sesToday,
+          "Used",
+          5,
+          3,
+        ), // C0001 Used
+        mkTkn(
+          "TKN-2026-0002",
+          consumers[1],
+          distributor,
+          sesToday,
+          "Used",
+          5,
+          3.5,
+        ), // C0002 Used (mismatch)
+        mkTkn(
+          "TKN-2026-0003",
+          consumers[8],
+          distributorKhulna,
+          sesTodayKhulna,
+          "Used",
+          4.5,
+          3,
+        ), // C0009 Used
+        mkTkn(
+          "TKN-2026-0004",
+          consumers[2],
+          distributor,
+          sesToday,
+          "Issued",
+          1,
+        ), // C0003 Pending
+        mkTkn(
+          "TKN-2026-0005",
+          consumers[3],
+          distributor,
+          sesToday,
+          "Cancelled",
+          6,
+        ), // C0004 Cancelled
+        mkTkn(
+          "TKN-2026-0006",
+          consumers[9],
+          distributorKhulna,
+          sesTodayKhulna,
+          "Issued",
+          2,
+        ), // C0010 Pending
 
         // Yesterday's session
-        mkTkn("TKN-2026-0007", consumers[4], sesYday, "Used", 28, 27), // C0005
-        mkTkn("TKN-2026-0008", consumers[10], sesYday, "Used", 27, 26), // C0011
-        mkTkn("TKN-2026-0009", consumers[16], sesYday, "Used", 26, 25), // C0017
-        mkTkn("TKN-2026-0010", consumers[11], sesYday, "Cancelled", 29), // C0012 Cancelled
+        mkTkn(
+          "TKN-2026-0007",
+          consumers[4],
+          distributor,
+          sesYday,
+          "Used",
+          28,
+          27,
+        ), // C0005
+        mkTkn(
+          "TKN-2026-0008",
+          consumers[10],
+          distributorKhulna,
+          sesYdayKhulna,
+          "Used",
+          27,
+          26,
+        ), // C0011
+        mkTkn(
+          "TKN-2026-0009",
+          consumers[16],
+          distributor,
+          sesYday,
+          "Used",
+          26,
+          25,
+        ), // C0017
+        mkTkn(
+          "TKN-2026-0010",
+          consumers[11],
+          distributorKhulna,
+          sesYdayKhulna,
+          "Cancelled",
+          29,
+        ), // C0012 Cancelled
 
         // Day-2 session
-        mkTkn("TKN-2026-0011", consumers[12], sesDay2, "Used", 52, 51), // C0013
-        mkTkn("TKN-2026-0012", consumers[17], sesDay2, "Used", 50, 49), // C0018
+        mkTkn(
+          "TKN-2026-0011",
+          consumers[12],
+          distributorKhulna,
+          sesDay2Khulna,
+          "Used",
+          52,
+          51,
+        ), // C0013
+        mkTkn(
+          "TKN-2026-0012",
+          consumers[17],
+          distributor,
+          sesDay2,
+          "Used",
+          50,
+          49,
+        ), // C0018
       ]);
 
     // ── Distribution Records ─────────────────────────────────
@@ -498,7 +717,15 @@ const ALLOC = { A: 5, B: 4, C: 3 };
         ref: "TKN-2026-0002",
       },
       {
-        distributorId: distributor._id,
+        distributorId: distributorKhulna._id,
+        dateKey: today,
+        type: "IN",
+        item: "Rice",
+        qtyKg: 300,
+        ref: "BATCH-2026-T01-KHU",
+      },
+      {
+        distributorId: distributorKhulna._id,
         dateKey: today,
         type: "OUT",
         item: "Rice",
@@ -523,7 +750,15 @@ const ALLOC = { A: 5, B: 4, C: 3 };
         ref: "TKN-2026-0007",
       },
       {
-        distributorId: distributor._id,
+        distributorId: distributorKhulna._id,
+        dateKey: yday,
+        type: "IN",
+        item: "Rice",
+        qtyKg: 300,
+        ref: "BATCH-2026-T02-KHU",
+      },
+      {
+        distributorId: distributorKhulna._id,
         dateKey: yday,
         type: "OUT",
         item: "Rice",
@@ -540,20 +775,28 @@ const ALLOC = { A: 5, B: 4, C: 3 };
       },
       // Day-2
       {
+        distributorId: distributorKhulna._id,
+        dateKey: day2,
+        type: "IN",
+        item: "Rice",
+        qtyKg: 300,
+        ref: "BATCH-2026-T03-KHU",
+      },
+      {
+        distributorId: distributorKhulna._id,
+        dateKey: day2,
+        type: "OUT",
+        item: "Rice",
+        qtyKg: 4.0,
+        ref: "TKN-2026-0011",
+      },
+      {
         distributorId: distributor._id,
         dateKey: day2,
         type: "IN",
         item: "Rice",
         qtyKg: 300,
         ref: "BATCH-2026-T03",
-      },
-      {
-        distributorId: distributor._id,
-        dateKey: day2,
-        type: "OUT",
-        item: "Rice",
-        qtyKg: 4.0,
-        ref: "TKN-2026-0011",
       },
       {
         distributorId: distributor._id,
@@ -610,18 +853,18 @@ const ALLOC = { A: 5, B: 4, C: 3 };
     ]);
 
     // ── System Settings ──────────────────────────────────────
-    const distSettingsKey = `distributor:${String(distributorUser._id)}:settings`;
+    const globalSettingsKey = "distributor:global:settings";
     await SystemSetting.insertMany([
       { key: "weightThresholdKg", value: { maxDiff: 0.05 } },
       { key: "qrCycleDays", value: { days: 30 } },
       { key: "tokenLimitPerDay", value: { limit: 1 } },
       { key: "system:maintenanceMode", value: { enabled: false } },
       {
-        key: distSettingsKey,
+        key: globalSettingsKey,
         value: {
           policy: { authorityMonths: 12, adminApprovalRequired: true },
           distribution: {
-            weightThresholdKg: 0.05,
+            weightThresholdKg: 1,
             autoPauseOnMismatch: true,
             tokenPerConsumerPerDay: 1,
           },
@@ -731,14 +974,23 @@ const ALLOC = { A: 5, B: 4, C: 3 };
     // ── Summary ──────────────────────────────────────────────
     console.log("✅ Seed সম্পন্ন");
     console.log("─────────────────────────────────────────");
-    console.log("Admin login       : 01700000000 / admin123");
-    console.log("Distributor login : 01800000000 / dist123");
-    console.log("Field login       : 01900000000 / field123");
+    console.log(
+      "Admin login       : admin@amar-ration.local or 01700000000 / admin123",
+    );
+    console.log(
+      "Distributor login : distributor.dhaka.ward01@amar-ration.local or 01800000000 / dist123",
+    );
+    console.log(
+      "Khulna dist login : distributor.khulna.ward02@amar-ration.local or 01800000002 / dist123",
+    );
+    console.log(
+      "Field login       : field@amar-ration.local or 01900000000 / field123",
+    );
     console.log("─────────────────────────────────────────");
     console.log(`Consumers seeded  : ${CONSUMER_SEED.length} (3 wards)`);
     console.log(`Tokens seeded     : 12 across 3 sessions`);
     console.log(`Records seeded    : 8 (3 mismatches)`);
-    console.log(`Stock ledger      : ${11} entries`);
+    console.log(`Stock ledger      : ${14} entries`);
     console.log(`Audit logs        : 9 entries`);
     console.log("Sample QR token   :", consumers[0].qrToken);
     console.log(
@@ -753,236 +1005,3 @@ const ALLOC = { A: 5, B: 4, C: 3 };
   console.error(e);
   process.exit(1);
 });
-require('dotenv').config();
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const User = require('../models/User');
-const SystemSetting = require('../models/SystemSetting');
-
-async function seedDatabase() {
-  try {
-    console.log('🌱 Starting database seeding...\n');
-
-    // Connect to MongoDB
-    const mongoUri = process.env.MONGO_URI;
-    console.log('📡 Connecting to MongoDB...');
-    await mongoose.connect(mongoUri);
-    console.log('✅ Connected to MongoDB\n');
-
-    // Clear existing data (optional - comment out if you want to keep existing data)
-    console.log('🗑️  Clearing existing data...');
-    await User.deleteMany({});
-    await SystemSetting.deleteMany({});
-    console.log('✅ Existing data cleared\n');
-
-    // Hash password for all users
-    const defaultPassword = 'Admin@123';
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-
-    // Preset admin credentials
-    const adminPassword = 'adminadmin';
-    const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
-
-    // Create Admin User
-    console.log('👤 Creating Admin user...');
-    const admin = await User.create({
-      userType: 'Admin',
-      name: 'System Administrator',
-      email: 'admin_amarration@gmail.com',
-      phone: '01711000000',
-      passwordHash: hashedAdminPassword,
-      status: 'Active',
-      division: 'Dhaka',
-      district: 'Dhaka',
-      upazila: 'Dhaka Sadar',
-    });
-    console.log('✅ Admin created:', admin.email);
-
-    // Create Distributor Users
-    console.log('\n🏪 Creating Distributor users...');
-    const distributors = await User.insertMany([
-      {
-        userType: 'Distributor',
-        name: 'Kamal Hossain',
-        email: 'kamal@distributor.com',
-        phone: '01711111111',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '1',
-        officeAddress: 'Shop No. 5, Main Road, Mirpur-1',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        unionName: 'Mirpur',
-        ward: '1',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      },
-      {
-        userType: 'Distributor',
-        name: 'Rashida Begum',
-        email: 'rashida@distributor.com',
-        phone: '01722222222',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '2',
-        officeAddress: 'House No. 12, Block-C, Uttara',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Uttara',
-        unionName: 'Uttara',
-        ward: '2',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      }
-    ]);
-    console.log(`✅ Created ${distributors.length} distributors`);
-
-    // Create Field Users
-    console.log('\n👷 Creating Field users...');
-    const fieldUsers = await User.insertMany([
-      {
-        userType: 'FieldUser',
-        name: 'Rahim Ahmed',
-        email: 'rahim@field.com',
-        phone: '01733333333',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        wardNo: '1',
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        unionName: 'Mirpur',
-        ward: '1',
-        authorityStatus: 'Active',
-        authorityFrom: new Date('2024-01-01'),
-        authorityTo: new Date('2026-12-31'),
-      }
-    ]);
-    console.log(`✅ Created ${fieldUsers.length} field users`);
-
-    // Create Consumer Users
-    console.log('\n🏠 Creating Consumer users...');
-    const consumers = await User.insertMany([
-      {
-        userType: 'Consumer',
-        name: 'Fatema Khatun',
-        email: 'fatema@consumer.com',
-        phone: '01744444444',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS001',
-        nidLast4: '1234',
-        category: 'A',
-        qrToken: 'QR-CONS-001-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        ward: '1',
-      },
-      {
-        userType: 'Consumer',
-        name: 'Abdul Hamid',
-        email: 'hamid@consumer.com',
-        phone: '01755555555',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS002',
-        nidLast4: '5678',
-        category: 'B',
-        qrToken: 'QR-CONS-002-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Mirpur',
-        ward: '1',
-      },
-      {
-        userType: 'Consumer',
-        name: 'Amina Begum',
-        email: 'amina@consumer.com',
-        phone: '01766666666',
-        passwordHash: hashedPassword,
-        status: 'Active',
-        consumerCode: 'CONS003',
-        nidLast4: '9012',
-        category: 'C',
-        qrToken: 'QR-CONS-003-' + Date.now(),
-        division: 'Dhaka',
-        district: 'Dhaka',
-        upazila: 'Uttara',
-        ward: '2',
-      }
-    ]);
-    console.log(`✅ Created ${consumers.length} consumers`);
-
-    // Create System Settings
-    console.log('\n⚙️  Creating system settings...');
-    const settings = await SystemSetting.insertMany([
-      {
-        key: 'pricing',
-        value: {
-          rice: 30,
-          wheat: 25,
-          oil: 120,
-          sugar: 60
-        }
-      },
-      {
-        key: 'distribution_hours',
-        value: {
-          start: '09:00',
-          end: '17:00',
-          timezone: 'Asia/Dhaka'
-        }
-      },
-      {
-        key: 'monthly_quotas',
-        value: {
-          categoryA: { rice: 15, wheat: 10 },
-          categoryB: { rice: 10, wheat: 5 },
-          categoryC: { rice: 5, wheat: 3 }
-        }
-      }
-    ]);
-    console.log(`✅ Created ${settings.length} system settings`);
-
-    // Print summary
-    console.log('\n' + '='.repeat(60));
-    console.log('🎉 DATABASE SEEDING COMPLETED SUCCESSFULLY!');
-    console.log('='.repeat(60));
-    console.log('\n📋 Created Users:');
-    console.log(`   • 1 Admin`);
-    console.log(`   • ${distributors.length} Distributors`);
-    console.log(`   • ${fieldUsers.length} Field Users`);
-    console.log(`   • ${consumers.length} Consumers`);
-    console.log(`   • Total: ${1 + distributors.length + fieldUsers.length + consumers.length} users`);
-    
-    console.log('\n🔐 Default Login Credentials:');
-    console.log(`   Password for all users: ${defaultPassword}`);
-    console.log('\n   Admin Account:');
-    console.log(`   Email: ${admin.email}`);
-    console.log(`   Password: ${defaultPassword}`);
-    
-    console.log('\n   Distributor Accounts:');
-    distributors.forEach(d => {
-      console.log(`   Email: ${d.email} | Password: ${defaultPassword}`);
-    });
-
-    console.log('\n⚠️  IMPORTANT: Change these default passwords in production!');
-    console.log('='.repeat(60) + '\n');
-
-  } catch (error) {
-    console.error('❌ Error seeding database:');
-    console.error(error);
-    process.exit(1);
-  } finally {
-    await mongoose.connection.close();
-    console.log('✅ Database connection closed');
-    process.exit(0);
-  }
-}
-
-// Run the seed function
-seedDatabase();
