@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const QRCodeImage = require("qrcode");
 const Consumer = require("../models/Consumer");
 const Family = require("../models/Family");
 const OMSCard = require("../models/OMSCard");
@@ -6,11 +7,26 @@ const QRCode = require("../models/QRCode");
 const SystemSetting = require("../models/SystemSetting");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
+const {
+  normalizeNid,
+  decryptNid,
+  hashNid,
+} = require("../services/nid-security.service");
 const { writeAudit } = require("../services/audit.service");
 const {
   notifyAdmins,
   notifyUser,
 } = require("../services/notification.service");
+const {
+  normalizeWardNo,
+  buildWardMatchQuery,
+  isSameWard,
+} = require("../utils/ward.utils");
+const {
+  normalizeDivision,
+  isSameDivision,
+  buildDivisionMatchQuery,
+} = require("../utils/division.utils");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -28,17 +44,51 @@ async function ensureDistributorProfile(reqUser) {
 
   distributor = await Distributor.create({
     userId: user._id,
-    division: user.division,
+    wardNo: normalizeWardNo(user.wardNo || user.ward),
+    division: normalizeDivision(user.division),
     district: user.district,
     upazila: user.upazila,
     unionName: user.unionName,
-    ward: user.ward,
+    ward: normalizeWardNo(user.ward || user.wardNo),
     authorityStatus: user.authorityStatus || "Active",
     authorityFrom: user.authorityFrom || new Date(),
     authorityTo: user.authorityTo,
   });
 
   return distributor;
+}
+
+function buildDistributorScopeQuery(distributor) {
+  const query = {};
+
+  const divisionQuery = buildDivisionMatchQuery(distributor?.division);
+  if (divisionQuery) {
+    query.division = divisionQuery;
+  }
+
+  const wardQuery = buildWardMatchQuery(
+    distributor?.wardNo || distributor?.ward,
+  );
+  if (wardQuery) {
+    Object.assign(query, wardQuery);
+  }
+
+  return query;
+}
+
+function canAccessConsumerByScope(distributor, consumer) {
+  const distributorDivision = normalizeDivision(distributor?.division);
+  if (
+    distributorDivision &&
+    !isSameDivision(distributorDivision, consumer?.division)
+  ) {
+    return false;
+  }
+
+  return isSameWard(
+    distributor?.wardNo || distributor?.ward,
+    consumer?.ward || consumer?.wardNo,
+  );
 }
 
 // Generate unique consumer code
@@ -61,10 +111,6 @@ const generateQRToken = () => {
 
 const NID_LENGTHS = new Set([10, 13, 17]);
 
-function normalizeNid(value) {
-  return String(value || "").replace(/\D/g, "");
-}
-
 function isValidNid(value) {
   return NID_LENGTHS.has(value.length);
 }
@@ -73,8 +119,37 @@ function getLast4(value) {
   return value.slice(-4);
 }
 
+function withDecryptedNids(consumer) {
+  if (!consumer) return consumer;
+  return {
+    ...consumer,
+    nidFull: decryptNid(consumer.nidFull),
+    fatherNidFull: decryptNid(consumer.fatherNidFull),
+    motherNidFull: decryptNid(consumer.motherNidFull),
+  };
+}
+
 function sha256(s) {
   return crypto.createHash("sha256").update(s).digest("hex");
+}
+
+async function buildQrImageDataUrl(payload) {
+  if (!payload) return null;
+  try {
+    return await QRCodeImage.toDataURL(String(payload), {
+      errorCorrectionLevel: "M",
+      width: 220,
+      margin: 1,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function parsePageLimit(query) {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(300, Math.max(1, Number(query.limit) || 20));
+  return { page, limit };
 }
 
 async function getQrExpiryDays(userId) {
@@ -99,9 +174,9 @@ async function resolveFamilyByNids(
 
   const matchQuery = {
     $or: [
-      { nidFull: { $in: nidSet } },
-      { fatherNidFull: { $in: nidSet } },
-      { motherNidFull: { $in: nidSet } },
+      { nidHash: { $in: nidSet.map((x) => hashNid(x)) } },
+      { fatherNidHash: { $in: nidSet.map((x) => hashNid(x)) } },
+      { motherNidHash: { $in: nidSet.map((x) => hashNid(x)) } },
     ],
   };
 
@@ -211,6 +286,13 @@ exports.addConsumer = async (req, res) => {
       });
     }
 
+    if (req.user.userType !== "Admin" && status === "Active") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin approval required to activate consumer",
+      });
+    }
+
     // Generate unique consumer code and QR token
     const consumerCode = await generateConsumerCode();
     const qrToken = generateQRToken();
@@ -226,11 +308,11 @@ exports.addConsumer = async (req, res) => {
       motherNidFull: normalizedMother,
       category,
       status: status || "Inactive",
-      division: division || req.user.division,
-      district: district || req.user.district,
-      upazila: upazila || req.user.upazila,
-      unionName: unionName || req.user.unionName,
-      ward: ward || req.user.ward,
+      division: normalizeDivision(division || distributor.division),
+      district: district || distributor.district,
+      upazila: upazila || distributor.upazila,
+      unionName: unionName || distributor.unionName,
+      ward: normalizeWardNo(ward || distributor.wardNo || distributor.ward),
       createdByDistributor: distributor._id,
     });
 
@@ -287,9 +369,9 @@ exports.addConsumer = async (req, res) => {
         severity: "Warning",
         meta: {
           matchedConsumerIds: familyResult.matchedIds,
-          nidFull: normalizedNid,
-          fatherNidFull: normalizedFather,
-          motherNidFull: normalizedMother,
+          nidLast4: getLast4(normalizedNid),
+          fatherNidLast4: getLast4(normalizedFather),
+          motherNidLast4: getLast4(normalizedMother),
         },
       });
 
@@ -316,9 +398,9 @@ exports.addConsumer = async (req, res) => {
           qrToken: consumer.qrToken,
           name: consumer.name,
           nidLast4: consumer.nidLast4,
-          nidFull: consumer.nidFull,
-          fatherNidFull: consumer.fatherNidFull,
-          motherNidFull: consumer.motherNidFull,
+          nidFull: decryptNid(consumer.nidFull),
+          fatherNidFull: decryptNid(consumer.fatherNidFull),
+          motherNidFull: decryptNid(consumer.motherNidFull),
           category: consumer.category,
           status: consumer.status,
           division: consumer.division,
@@ -344,7 +426,16 @@ exports.addConsumer = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.getConsumers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, category, status } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      category,
+      status,
+      division,
+      ward,
+      wardNo,
+    } = req.query;
 
     // Build query
     let query = {};
@@ -361,16 +452,42 @@ exports.getConsumers = async (req, res) => {
     }
 
     if (distributor) {
-      query.createdByDistributor = distributor._id;
+      Object.assign(query, buildDistributorScopeQuery(distributor));
+    }
+
+    if (division) {
+      query.division =
+        buildDivisionMatchQuery(division) || normalizeDivision(division);
+    }
+
+    const wardInput = wardNo || ward;
+    if (wardInput) {
+      const wardQuery = buildWardMatchQuery(wardInput);
+      if (wardQuery?.$or) {
+        if (query.$or) {
+          query.$and = query.$and || [];
+          query.$and.push({ $or: query.$or }, { $or: wardQuery.$or });
+          delete query.$or;
+        } else {
+          query.$or = wardQuery.$or;
+        }
+      }
     }
 
     // Add search filter
     if (search) {
-      query.$or = [
+      const searchOr = [
         { name: { $regex: search, $options: "i" } },
         { consumerCode: { $regex: search, $options: "i" } },
         { nidLast4: { $regex: search, $options: "i" } },
       ];
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
     }
 
     // Add category filter
@@ -396,7 +513,7 @@ exports.getConsumers = async (req, res) => {
       .lean();
 
     const consumersWithFlag = consumers.map((consumer) => ({
-      ...consumer,
+      ...withDecryptedNids(consumer),
       familyFlag: Boolean(consumer.familyId?.flaggedDuplicate),
     }));
 
@@ -436,9 +553,27 @@ exports.getConsumerById = async (req, res) => {
       });
     }
 
+    if (req.user.userType !== "Admin") {
+      const distributor = await ensureDistributorProfile(req.user);
+      if (!distributor) {
+        return res.status(403).json({
+          success: false,
+          message: "Distributor profile not found",
+        });
+      }
+
+      if (!canAccessConsumerByScope(distributor, consumer)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. This consumer does not belong to your division/ward.",
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
-      data: { consumer },
+      data: { consumer: withDecryptedNids(consumer.toObject()) },
     });
   } catch (error) {
     console.error("Get consumer error:", error);
@@ -466,6 +601,24 @@ exports.updateConsumer = async (req, res) => {
       });
     }
 
+    if (req.user.userType !== "Admin") {
+      const distributor = await ensureDistributorProfile(req.user);
+      if (!distributor) {
+        return res.status(403).json({
+          success: false,
+          message: "Distributor profile not found",
+        });
+      }
+
+      if (!canAccessConsumerByScope(distributor, consumer)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. This consumer does not belong to your division/ward.",
+        });
+      }
+    }
+
     const shouldRevalidateNids =
       Boolean(nidFull || fatherNidFull || motherNidFull) ||
       !consumer.nidFull ||
@@ -473,12 +626,14 @@ exports.updateConsumer = async (req, res) => {
       !consumer.motherNidFull;
 
     if (shouldRevalidateNids) {
-      const normalizedNid = normalizeNid(nidFull ?? consumer.nidFull);
+      const normalizedNid = normalizeNid(
+        nidFull ?? decryptNid(consumer.nidFull),
+      );
       const normalizedFather = normalizeNid(
-        fatherNidFull ?? consumer.fatherNidFull,
+        fatherNidFull ?? decryptNid(consumer.fatherNidFull),
       );
       const normalizedMother = normalizeNid(
-        motherNidFull ?? consumer.motherNidFull,
+        motherNidFull ?? decryptNid(consumer.motherNidFull),
       );
 
       if (!normalizedNid || !normalizedFather || !normalizedMother) {
@@ -533,9 +688,9 @@ exports.updateConsumer = async (req, res) => {
 
     const familyResult = await resolveFamilyByNids(
       {
-        nidFull: consumer.nidFull,
-        fatherNidFull: consumer.fatherNidFull,
-        motherNidFull: consumer.motherNidFull,
+        nidFull: normalizeNid(decryptNid(consumer.nidFull)),
+        fatherNidFull: normalizeNid(decryptNid(consumer.fatherNidFull)),
+        motherNidFull: normalizeNid(decryptNid(consumer.motherNidFull)),
       },
       consumer._id,
     );
@@ -634,9 +789,9 @@ exports.updateConsumer = async (req, res) => {
         severity: "Warning",
         meta: {
           matchedConsumerIds: familyResult.matchedIds,
-          nidFull: consumer.nidFull,
-          fatherNidFull: consumer.fatherNidFull,
-          motherNidFull: consumer.motherNidFull,
+          nidLast4: consumer.nidLast4,
+          fatherNidLast4: getLast4(decryptNid(consumer.fatherNidFull)),
+          motherNidLast4: getLast4(decryptNid(consumer.motherNidFull)),
         },
       });
 
@@ -656,7 +811,7 @@ exports.updateConsumer = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Consumer updated successfully",
-      data: { consumer },
+      data: { consumer: withDecryptedNids(consumer.toObject()) },
     });
   } catch (error) {
     console.error("Update consumer error:", error);
@@ -690,10 +845,7 @@ exports.deleteConsumer = async (req, res) => {
         });
       }
 
-      if (
-        !consumer.createdByDistributor ||
-        String(consumer.createdByDistributor) !== String(distributor._id)
-      ) {
+      if (!canAccessConsumerByScope(distributor, consumer)) {
         return res.status(403).json({
           success: false,
           message: "Not authorized to delete this consumer",
@@ -735,7 +887,7 @@ exports.getConsumerStats = async (req, res) => {
     }
 
     if (distributor) {
-      query.createdByDistributor = distributor._id;
+      Object.assign(query, buildDistributorScopeQuery(distributor));
     }
 
     const stats = {
@@ -757,6 +909,306 @@ exports.getConsumerStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error while fetching statistics",
+    });
+  }
+};
+
+// @route   GET /api/consumers/cards
+// @desc    List consumer card + QR status (admin/distributor)
+// @access  Private
+exports.listConsumerCards = async (req, res) => {
+  try {
+    const { search, cardStatus, qrStatus } = req.query;
+    const withImage = String(req.query.withImage || "false") === "true";
+    const { page, limit } = parsePageLimit(req.query);
+
+    const distributor =
+      req.user.userType === "Admin"
+        ? null
+        : await ensureDistributorProfile(req.user);
+
+    if (req.user.userType !== "Admin" && !distributor) {
+      return res.status(403).json({
+        success: false,
+        message: "Distributor profile not found",
+      });
+    }
+
+    const query = {};
+    if (distributor) {
+      Object.assign(query, buildDistributorScopeQuery(distributor));
+    }
+
+    if (search) {
+      const searchOr = [
+        { name: { $regex: search, $options: "i" } },
+        { consumerCode: { $regex: search, $options: "i" } },
+        { nidLast4: { $regex: search, $options: "i" } },
+      ];
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
+    }
+
+    const total = await Consumer.countDocuments(query);
+
+    const consumers = await Consumer.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    const consumerIds = consumers.map((c) => c._id);
+    const cards = await OMSCard.find({ consumerId: { $in: consumerIds } })
+      .populate("qrCodeId")
+      .lean();
+
+    const cardMap = new Map(
+      cards.map((card) => [String(card.consumerId), card]),
+    );
+
+    const baseRows = consumers.map((consumer) => {
+      const card = cardMap.get(String(consumer._id));
+      const qr =
+        card?.qrCodeId && typeof card.qrCodeId === "object"
+          ? card.qrCodeId
+          : null;
+
+      return {
+        consumerId: String(consumer._id),
+        consumerCode: consumer.consumerCode,
+        name: consumer.name,
+        category: consumer.category,
+        ward: consumer.ward,
+        unionName: consumer.unionName,
+        upazila: consumer.upazila,
+        cardId: card?._id ? String(card._id) : null,
+        cardStatus: card?.cardStatus || "Inactive",
+        qrCodeId: qr?._id ? String(qr._id) : null,
+        qrStatus: qr?.status || "Invalid",
+        validFrom: qr?.validFrom || null,
+        validTo: qr?.validTo || null,
+        qrPayload: qr?.payload || consumer.qrToken || "",
+        createdAt: consumer.createdAt,
+      };
+    });
+
+    const filteredRows = baseRows.filter((row) => {
+      const cardMatch = cardStatus ? row.cardStatus === cardStatus : true;
+      const qrMatch = qrStatus ? row.qrStatus === qrStatus : true;
+      return cardMatch && qrMatch;
+    });
+
+    const rows = withImage
+      ? await Promise.all(
+          filteredRows.map(async (row) => ({
+            ...row,
+            qrImageDataUrl: await buildQrImageDataUrl(row.qrPayload),
+          })),
+        )
+      : filteredRows;
+
+    return res.json({
+      success: true,
+      data: {
+        rows,
+        pagination: {
+          total,
+          page,
+          pages: Math.ceil(total / limit),
+          limit,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("listConsumerCards error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   GET /api/consumers/:id/card
+// @desc    Get single consumer card with QR image
+// @access  Private
+exports.getConsumerCard = async (req, res) => {
+  try {
+    const distributor =
+      req.user.userType === "Admin"
+        ? null
+        : await ensureDistributorProfile(req.user);
+
+    if (req.user.userType !== "Admin" && !distributor) {
+      return res.status(403).json({
+        success: false,
+        message: "Distributor profile not found",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id).lean();
+    if (!consumer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Consumer not found" });
+    }
+
+    if (distributor && !canAccessConsumerByScope(distributor, consumer)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed to access this card",
+      });
+    }
+
+    const card = await OMSCard.findOne({ consumerId: consumer._id })
+      .populate("qrCodeId")
+      .lean();
+
+    if (!card) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Card not found" });
+    }
+
+    const qr =
+      card.qrCodeId && typeof card.qrCodeId === "object" ? card.qrCodeId : null;
+    const qrPayload = qr?.payload || consumer.qrToken || "";
+    const qrImageDataUrl = await buildQrImageDataUrl(qrPayload);
+
+    return res.json({
+      success: true,
+      data: {
+        card: {
+          consumerId: String(consumer._id),
+          consumerCode: consumer.consumerCode,
+          name: consumer.name,
+          category: consumer.category,
+          ward: consumer.ward,
+          unionName: consumer.unionName,
+          upazila: consumer.upazila,
+          cardId: String(card._id),
+          cardStatus: card.cardStatus,
+          qrCodeId: qr?._id ? String(qr._id) : null,
+          qrStatus: qr?.status || "Invalid",
+          validFrom: qr?.validFrom || null,
+          validTo: qr?.validTo || null,
+          qrPayload,
+          qrImageDataUrl,
+          issuedAt: card.createdAt,
+          updatedAt: card.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("getConsumerCard error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   POST /api/consumers/:id/card/reissue
+// @desc    Reissue consumer QR card (admin only)
+// @access  Private (Admin)
+exports.reissueConsumerCard = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin can reissue cards",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id).lean();
+    if (!consumer) {
+      return res.status(404).json({
+        success: false,
+        message: "Consumer not found",
+      });
+    }
+
+    const card = await OMSCard.findOne({ consumerId: consumer._id });
+    if (!card) {
+      return res.status(404).json({
+        success: false,
+        message: "OMS card not found for this consumer",
+      });
+    }
+
+    const previousQrId = card.qrCodeId ? String(card.qrCodeId) : null;
+    if (card.qrCodeId) {
+      await QRCode.findByIdAndUpdate(card.qrCodeId, { status: "Revoked" });
+    }
+
+    const createdByDistributor = consumer.createdByDistributor
+      ? await Distributor.findById(consumer.createdByDistributor)
+          .select("userId")
+          .lean()
+      : null;
+
+    const qrDays = await getQrExpiryDays(
+      createdByDistributor?.userId || req.user.userId,
+    );
+
+    const newQrToken = generateQRToken();
+    const now = new Date();
+    const validTo = new Date(now.getTime() + qrDays * 86400000);
+
+    const newQr = await QRCode.create({
+      payload: newQrToken,
+      payloadHash: sha256(newQrToken),
+      validFrom: now,
+      validTo,
+      status: consumer.status === "Active" ? "Valid" : "Invalid",
+    });
+
+    card.qrCodeId = newQr._id;
+    card.cardStatus = consumer.status === "Active" ? "Active" : "Inactive";
+    await card.save();
+
+    await Consumer.findByIdAndUpdate(consumer._id, { qrToken: newQrToken });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "CONSUMER_QR_REISSUED",
+      entityType: "Consumer",
+      entityId: String(consumer._id),
+      severity: "Info",
+      meta: {
+        consumerCode: consumer.consumerCode,
+        previousQrId,
+        newQrId: String(newQr._id),
+        validTo,
+      },
+    });
+
+    if (createdByDistributor?.userId) {
+      await notifyUser(createdByDistributor.userId, {
+        title: "Consumer QR reissued",
+        message: `QR reissued for ${consumer.consumerCode}.`,
+        meta: {
+          consumerId: String(consumer._id),
+          consumerCode: consumer.consumerCode,
+        },
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Consumer card reissued successfully",
+      data: {
+        consumerId: String(consumer._id),
+        consumerCode: consumer.consumerCode,
+        qrCodeId: String(newQr._id),
+        qrToken: newQrToken,
+        validTo,
+      },
+    });
+  } catch (error) {
+    console.error("reissueConsumerCard error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while reissuing card",
     });
   }
 };

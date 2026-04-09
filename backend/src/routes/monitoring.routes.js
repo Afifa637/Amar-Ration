@@ -25,22 +25,24 @@ router.get(
   authorize("Admin", "Distributor", "FieldUser"),
   listBlacklist,
 );
-router.post(
-  "/blacklist",
-  protect,
-  authorize("Admin", "Distributor", "FieldUser"),
-  createBlacklistEntry,
-);
-router.put(
+router.post("/blacklist", protect, authorize("Admin"), createBlacklistEntry);
+router.put("/blacklist/:id", protect, authorize("Admin"), updateBlacklistEntry);
+router.patch(
   "/blacklist/:id",
   protect,
-  authorize("Admin", "Distributor", "FieldUser"),
+  authorize("Admin"),
   updateBlacklistEntry,
 );
 router.post(
   "/blacklist/:id/deactivate",
   protect,
-  authorize("Admin", "Distributor", "FieldUser"),
+  authorize("Admin"),
+  deactivateBlacklistEntry,
+);
+router.patch(
+  "/blacklist/:id/deactivate",
+  protect,
+  authorize("Admin"),
   deactivateBlacklistEntry,
 );
 router.get(

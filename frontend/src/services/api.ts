@@ -1,4 +1,8 @@
-import axios from "axios";
+import axios, {
+  type AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 
 const API_BASE_URL = "http://localhost:5000/api";
 export const AUTH_STORAGE_KEY = "amar_ration_auth";
@@ -10,7 +14,7 @@ const api = axios.create({
   },
 });
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const stored = localStorage.getItem(AUTH_STORAGE_KEY);
   if (stored) {
     try {
@@ -28,9 +32,15 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
+  (response: AxiosResponse) => response,
+  (error: AxiosError) => {
     const status = error?.response?.status;
+    const apiMessage =
+      (error?.response?.data as { message?: string } | undefined)?.message ||
+      "";
+    if (apiMessage) {
+      error.message = apiMessage;
+    }
     const requestUrl: string = error?.config?.url || "";
     const isAuthCall =
       requestUrl.includes("/auth/login") || requestUrl.includes("/auth/signup");
@@ -82,6 +92,10 @@ export type TokenStatus = "Issued" | "Used" | "Cancelled" | "Expired";
 export type DistributionToken = {
   _id: string;
   tokenCode: string;
+  qrPayload?: string;
+  qrImageDataUrl?: string;
+  sessionDateKey?: string;
+  omsQrPayload?: string;
   consumerId:
     | string
     | {
@@ -116,6 +130,18 @@ export type DistributionRecord = {
   actualKg: number;
   mismatch: boolean;
   createdAt: string;
+};
+
+export type DistributionSession = {
+  _id: string;
+  distributorId: string;
+  dateKey: string;
+  status: "Planned" | "Open" | "Paused" | "Closed";
+  scheduledStartAt?: string;
+  openedAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type PaginationData = {
@@ -188,9 +214,14 @@ export type AdminDistributorRow = {
   name: string;
   phone?: string;
   email?: string;
+  contactEmail?: string;
+  wardNo?: string;
+  division?: string;
   ward?: string;
   officeAddress?: string;
   authorityStatus: "Active" | "Suspended" | "Revoked" | "Pending";
+  authorityFrom?: string | null;
+  authorityTo?: string | null;
   createdAt?: string;
   auditRequired?: boolean;
   auditRequestStatus?: string | null;
@@ -210,6 +241,8 @@ export type AdminCardsSummary = {
 };
 
 export type AdminDistributionMonitorRow = {
+  distributor?: string;
+  division?: string;
   ward: string;
   expectedKg: number;
   actualKg: number;
@@ -221,6 +254,7 @@ export type AdminConsumerReviewRow = {
   id: string;
   consumerCode: string;
   name: string;
+  ward?: string;
   nidLast4: string;
   status: ConsumerStatus;
   blacklistStatus?: "None" | "Temp" | "Permanent";
@@ -267,6 +301,64 @@ export type SidebarQuickInfo = {
   mismatchCount: number;
   offlinePending: number;
   systemStatus: string;
+};
+
+export type StockLedgerEntry = {
+  _id: string;
+  distributorId?: string;
+  dateKey: string;
+  type: "IN" | "OUT" | "ADJUST";
+  item?: string;
+  qtyKg: number;
+  ref?: string;
+  createdAt: string;
+};
+
+export type StockSummaryResponse = {
+  dateKey: string;
+  distributorId: string | null;
+  summary: {
+    stockInKg: number;
+    stockOutKg: number;
+    adjustKg: number;
+    balanceKg: number;
+  };
+  entries: StockLedgerEntry[];
+};
+
+export type NotificationItem = {
+  _id: string;
+  userId: string;
+  channel: "App";
+  title: string;
+  message: string;
+  status: "Unread" | "Read";
+  meta?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ConsumerCardRow = {
+  consumerId: string;
+  consumerCode: string;
+  name: string;
+  category: ConsumerCategory;
+  ward?: string;
+  unionName?: string;
+  upazila?: string;
+  cardId: string | null;
+  cardStatus: "Active" | "Inactive" | "Revoked";
+  qrCodeId: string | null;
+  qrStatus: "Valid" | "Revoked" | "Expired" | "Invalid";
+  validFrom?: string | null;
+  validTo?: string | null;
+  qrPayload: string;
+  qrImageDataUrl?: string | null;
+  createdAt: string;
+};
+
+export type ConsumerCardDetail = ConsumerCardRow & {
+  issuedAt?: string;
+  updatedAt?: string;
 };
 
 export type DistributionReportRow = {
@@ -380,7 +472,6 @@ export async function createConsumer(payload: {
   motherNidFull: string;
   category: ConsumerCategory;
   status?: ConsumerStatus;
-  ward?: string;
 }) {
   const response = await api.post<{ data: { consumer: Consumer } }>(
     "/consumers",
@@ -398,7 +489,6 @@ export async function updateConsumer(
     motherNidFull?: string;
     category?: ConsumerCategory;
     status?: ConsumerStatus;
-    ward?: string;
   },
 ) {
   const response = await api.put<{ data: { consumer: Consumer } }>(
@@ -429,12 +519,52 @@ export async function getConsumerStats() {
   return response.data.data.stats;
 }
 
+export async function getConsumerCards(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  cardStatus?: "Active" | "Inactive" | "Revoked";
+  qrStatus?: "Valid" | "Revoked" | "Expired" | "Invalid";
+  withImage?: boolean;
+}) {
+  const response = await api.get<{
+    data: { rows: ConsumerCardRow[]; pagination: PaginationData };
+  }>("/consumers/cards", { params });
+  return response.data.data;
+}
+
+export async function getConsumerById(consumerId: string) {
+  const response = await api.get<{ data: { consumer: Consumer } }>(
+    `/consumers/${consumerId}`,
+  );
+  return response.data.data.consumer;
+}
+
+export async function getConsumerCard(consumerId: string) {
+  const response = await api.get<{ data: { card: ConsumerCardDetail } }>(
+    `/consumers/${consumerId}/card`,
+  );
+  return response.data.data.card;
+}
+
 export async function issueToken(qrPayload: string) {
-  const response = await api.post<{ data: { token: DistributionToken } }>(
+  const response = await api.post<{
+    data: {
+      token: DistributionToken;
+      tokenQrPayload?: string;
+      sessionDateKey?: string;
+      omsQrPayload?: string;
+    };
+  }>(
     "/distribution/scan",
     { qrPayload },
   );
-  return unwrap<{ token: DistributionToken }>(response);
+  return unwrap<{
+    token: DistributionToken;
+    tokenQrPayload?: string;
+    sessionDateKey?: string;
+    omsQrPayload?: string;
+  }>(response);
 }
 
 export async function completeDistribution(tokenCode: string, actualKg: number) {
@@ -448,11 +578,26 @@ export async function completeDistribution(tokenCode: string, actualKg: number) 
   return unwrap<{ mismatch: boolean }>(response);
 }
 
+export async function completeDistributionByTokenQr(
+  tokenQrPayload: string,
+  actualKg: number,
+) {
+  const response = await api.post<{ data: { mismatch: boolean } }>(
+    "/distribution/complete",
+    {
+      tokenQrPayload,
+      actualKg,
+    },
+  );
+  return unwrap<{ mismatch: boolean }>(response);
+}
+
 export async function getDistributionTokens(params?: {
   page?: number;
   limit?: number;
   search?: string;
   status?: TokenStatus;
+  withImage?: boolean;
 }) {
   const response = await api.get<{
     data: { tokens: DistributionToken[]; pagination: Pagination };
@@ -508,6 +653,94 @@ export async function getDistributionQuickInfo() {
   return response.data.data;
 }
 
+export async function getDistributionSessions(params?: {
+  page?: number;
+  limit?: number;
+  status?: "Planned" | "Open" | "Paused" | "Closed";
+  dateKey?: string;
+  distributorId?: string;
+}) {
+  const response = await api.get<{
+    data: { sessions: DistributionSession[]; pagination: Pagination };
+  }>("/distribution/sessions", { params });
+  return response.data.data;
+}
+
+export async function createDistributionSession(payload: {
+  distributorId?: string;
+  dateKey?: string;
+  scheduledStartAt?: string;
+}) {
+  const response = await api.post<{
+    data: {
+      session: DistributionSession;
+    };
+  }>("/distribution/session/create", payload);
+  return response.data.data;
+}
+
+export async function startDistributionSession(payload?: {
+  sessionId?: string;
+  distributorId?: string;
+  dateKey?: string;
+}) {
+  const response = await api.post<{
+    data: {
+      session: DistributionSession;
+    };
+  }>("/distribution/session/start", payload || {});
+  return response.data.data;
+}
+
+export async function closeDistributionSession(payload: {
+  sessionId?: string;
+  distributorId?: string;
+  dateKey?: string;
+  note?: string;
+}) {
+  const response = await api.post<{
+    data: {
+      session: DistributionSession;
+      reconciliation: {
+        issuedTokens: number;
+        usedTokens: number;
+        pendingTokens: number;
+        expectedUsedKg: number;
+        expectedIssuedKg: number;
+        stockOutKg: number;
+        mismatch: boolean;
+        mismatchKg: number;
+      };
+    };
+  }>("/distribution/session/close", payload);
+  return response.data.data;
+}
+
+export async function recordStockIn(payload: {
+  distributorId?: string;
+  qtyKg: number;
+  item?: string;
+  ref?: string;
+  dateKey?: string;
+}) {
+  const response = await api.post<{ data: { entry: StockLedgerEntry } }>(
+    "/stock/in",
+    payload,
+  );
+  return response.data.data;
+}
+
+export async function getStockSummary(params?: {
+  distributorId?: string;
+  dateKey?: string;
+}) {
+  const response = await api.get<{ data: StockSummaryResponse }>(
+    "/stock/summary",
+    { params },
+  );
+  return response.data.data;
+}
+
 export async function getAdminSummary() {
   const response = await api.get<{ data: AdminSummary }>("/admin/summary");
   return response.data.data;
@@ -530,6 +763,46 @@ export async function updateAdminDistributorStatus(
   return response.data.data;
 }
 
+export async function deleteAdminDistributor(userId: string) {
+  const response = await api.delete<{
+    success: boolean;
+    message: string;
+    data?: Record<string, number>;
+  }>(`/admin/distributors/${userId}`);
+  return response.data;
+}
+
+export async function createAdminDistributor(payload: {
+  name: string;
+  email: string;
+  phone?: string;
+  wardNo: string;
+  ward: string;
+  division?: string;
+  district?: string;
+  upazila?: string;
+  unionName?: string;
+  officeAddress?: string;
+  authorityMonths?: number;
+}) {
+  const response = await api.post<{ data: { user: Record<string, unknown> } }>(
+    "/admin/distributors/create",
+    payload,
+  );
+  return response.data.data;
+}
+
+export async function adminResetDistributorPassword(
+  userId: string,
+  newPassword: string,
+) {
+  const response = await api.patch<{
+    success: boolean;
+    message: string;
+  }>(`/admin/distributors/${userId}/reset-password`, { newPassword });
+  return response.data;
+}
+
 export async function getAdminCardsSummary() {
   const response = await api.get<{ data: AdminCardsSummary }>(
     "/admin/cards/summary",
@@ -544,11 +817,34 @@ export async function getAdminDistributionMonitoring() {
   return response.data.data;
 }
 
+export async function forceCloseAdminDistributionSession(
+  sessionId: string,
+  reason?: string,
+) {
+  const response = await api.patch<{
+    data: { session: DistributionSession };
+  }>(`/admin/distribution/session/${sessionId}/force-close`, { reason });
+  return response.data.data;
+}
+
 export async function getAdminConsumerReview(params?: { limit?: number }) {
   const response = await api.get<{ data: { rows: AdminConsumerReviewRow[] } }>(
     "/admin/consumers/review",
     { params },
   );
+  return response.data.data;
+}
+
+export async function reissueConsumerCard(consumerId: string) {
+  const response = await api.post<{
+    data: {
+      consumerId: string;
+      consumerCode: string;
+      qrCodeId: string;
+      qrToken: string;
+      validTo: string;
+    };
+  }>(`/consumers/${consumerId}/card/reissue`);
   return response.data.data;
 }
 
@@ -559,6 +855,20 @@ export async function getAdminAuditDetail(auditId: string) {
       consumer?: Consumer;
     };
   }>(`/admin/audit/${auditId}/detail`);
+  return response.data.data;
+}
+
+export async function getAdminAuditLogs(params?: {
+  page?: number;
+  limit?: number;
+  severity?: AuditSeverity;
+  action?: string;
+  from?: string;
+  to?: string;
+}) {
+  const response = await api.get<{
+    data: { logs: AuditLogEntry[]; pagination: PaginationData };
+  }>("/admin/audit", { params });
   return response.data.data;
 }
 
@@ -708,7 +1018,7 @@ export async function updateBlacklistEntry(
 }
 
 export async function deactivateBlacklistEntry(entryId: string) {
-  const response = await api.patch<{
+  const response = await api.post<{
     data: { entry: MonitoringBlacklistEntry };
   }>(`/monitoring/blacklist/${entryId}/deactivate`);
   return unwrap<{ entry: MonitoringBlacklistEntry }>(response);
@@ -816,11 +1126,71 @@ export async function changeMyPassword(payload: {
   currentPassword: string;
   newPassword: string;
 }) {
-  const response = await api.put<{ data: { updated: boolean } }>(
+  const response = await api.put<{
+    data: { updated?: boolean; token?: string };
+  }>(
     "/settings/password",
     payload,
   );
   return response.data.data;
+}
+
+export async function getNotifications(params?: {
+  page?: number;
+  limit?: number;
+  status?: "Unread" | "Read";
+}) {
+  const response = await api.get<{
+    data: { items: NotificationItem[]; pagination: PaginationData };
+  }>("/notifications", { params });
+  return response.data.data;
+}
+
+export async function getUnreadNotificationCount() {
+  const response = await api.get<{ data: { unreadCount: number } }>(
+    "/notifications/unread-count",
+  );
+  return response.data.data.unreadCount;
+}
+
+export async function markNotificationAsRead(notificationId: string) {
+  const response = await api.patch<{ data: { item: NotificationItem } }>(
+    `/notifications/${notificationId}/read`,
+  );
+  return response.data.data;
+}
+
+export async function markAllNotificationsAsRead() {
+  const response = await api.patch<{ data: { updated: number } }>(
+    "/notifications/read-all",
+  );
+  return response.data.data;
+}
+
+export async function deleteNotification(notificationId: string) {
+  const response = await api.delete<{
+    success: boolean;
+    message: string;
+  }>(`/notifications/${notificationId}`);
+  return response.data;
+}
+
+export async function clearAllNotifications() {
+  const response = await api.delete<{
+    success: boolean;
+    message: string;
+    data: { deleted: number };
+  }>("/notifications/clear-all");
+  return response.data;
+}
+
+export async function clearReadNotifications() {
+  const response = await api.delete<{
+    success: boolean;
+    message: string;
+    data: { deleted: number };
+  }>("/notifications/clear-read");
+  return response.data;
 }
 
 export default api;

@@ -7,6 +7,7 @@ import EntrancePage from "./pages/EntrancePage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import PendingApprovalPage from "./pages/PendingApprovalPage";
+import ForcePasswordChangePage from "./pages/distributor/ForcePasswordChangePage";
 import DistributorDashboard from "./pages/distributor/DistributorDashboard";
 import BeneficiariesPage from "./pages/distributor/BeneficiariesPage";
 import CardsTokensPage from "./pages/distributor/CardsTokensPage";
@@ -33,6 +34,20 @@ export default function App() {
         <Route path="/login/:role" element={<LoginPage />} />
         <Route path="/signup/:role" element={<SignupPage />} />
         <Route path="/pending-approval" element={<PendingApprovalPage />} />
+        <Route
+          path="/force-password-change"
+          element={
+            <ProtectedRoute
+              allowedRoles={[
+                "central-admin",
+                "distributor",
+                "field-distributor",
+              ]}
+            >
+              <ForcePasswordChangePage />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           element={

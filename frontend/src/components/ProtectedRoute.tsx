@@ -53,6 +53,13 @@ export default function ProtectedRoute({
   }
 
   if (
+    auth.user.mustChangePassword &&
+    location.pathname !== "/force-password-change"
+  ) {
+    return <Navigate to="/force-password-change" replace />;
+  }
+
+  if (
     auth.user.role !== "central-admin" &&
     auth.user.authorityStatus !== "Active"
   ) {

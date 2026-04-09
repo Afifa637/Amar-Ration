@@ -1,88 +1,24 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
 
-const workingCollections = [
+const requiredCollections = [
   "users",
   "distributors",
-  "families",
   "consumers",
-  "qrcodes",
+  "families",
   "omscards",
+  "qrcodes",
   "tokens",
   "distributionsessions",
   "distributionrecords",
   "stockledgers",
-  "systemsettings",
   "auditlogs",
+  "auditreportrequests",
   "blacklistentries",
   "offlinequeues",
-];
-
-const enterpriseTargetCollections = [
-  "users",
-  "roles",
-  "permissions",
-  "role_permissions",
-  "user_roles",
-  "refresh_tokens",
-  "login_sessions",
-
-  "distributor_applications",
-  "distributors",
-  "distributor_assignments",
-  "distributor_status_history",
-  "distributor_devices",
-  "distributor_audit_flags",
-  "distributor_performance_daily",
-
-  "divisions",
-  "districts",
-  "upazilas",
-  "unions",
-  "wards",
-  "dealer_points",
-
-  "families",
-  "family_members",
-  "consumers",
-  "consumer_long_list",
-  "verification_cases",
-  "verification_visits",
-  "consumer_status_history",
-
-  "oms_cards",
-  "qr_codes",
-  "qr_rotation_batches",
-  "qr_scan_events",
-  "card_revocation_requests",
-
-  "distribution_sessions",
-  "short_list_entries",
-  "tokens",
-  "token_batches",
-  "distribution_records",
-  "distribution_slots",
-  "distribution_pauses",
-  "resource_reconciliations",
-
-  "stock_items",
-  "stock_lots",
-  "warehouses",
-  "stock_balances",
-  "stock_ledger",
-  "allocation_rules",
-
-  "iot_devices",
-  "weight_readings",
-  "weight_mismatch_events",
-
-  "fraud_flags",
-  "blacklist_entries",
-  "audit_logs",
   "notifications",
-  "sms_outbox",
-  "offline_queue",
-  "system_settings",
+  "smsoutboxes",
+  "systemsettings",
 ];
 
 function printSection(title, expected, existingSet) {
@@ -116,20 +52,22 @@ function printSection(title, expected, existingSet) {
     const names = infos.map((c) => c.name).sort();
     const nameSet = new Set(names);
 
+    const extras = names.filter((name) => !requiredCollections.includes(name));
+
     console.log(`Connected host: ${host}`);
     console.log(`Database name : ${dbName}`);
     console.log(`Collections   : ${names.length}`);
 
-    printSection(
-      "Current App Working Collections",
-      workingCollections,
-      nameSet,
-    );
-    printSection(
-      "Enterprise 35+ Target Collections",
-      enterpriseTargetCollections,
-      nameSet,
-    );
+    printSection("ARREADME required collections", requiredCollections, nameSet);
+
+    console.log("\n=== Extra Collections (candidate for cleanup) ===");
+    if (!extras.length) {
+      console.log("✅ None");
+    } else {
+      for (const name of extras) {
+        console.log(`- ${name}`);
+      }
+    }
 
     console.log("\n=== Existing Collection Names ===");
     for (const name of names) {

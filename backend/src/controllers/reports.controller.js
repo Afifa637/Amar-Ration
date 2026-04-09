@@ -3,6 +3,11 @@ const DistributionRecord = require("../models/DistributionRecord");
 const Distributor = require("../models/Distributor");
 const User = require("../models/User");
 const AuditLog = require("../models/AuditLog");
+const {
+  normalizeDivision,
+  isSameDivision,
+} = require("../utils/division.utils");
+const { normalizeWardNo } = require("../utils/ward.utils");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -20,11 +25,12 @@ async function ensureDistributorProfile(reqUser) {
 
   distributor = await Distributor.create({
     userId: user._id,
-    division: user.division,
+    wardNo: normalizeWardNo(user.wardNo || user.ward),
+    division: normalizeDivision(user.division),
     district: user.district,
     upazila: user.upazila,
     unionName: user.unionName,
-    ward: user.ward,
+    ward: normalizeWardNo(user.ward || user.wardNo),
     authorityStatus: user.authorityStatus || "Active",
     authorityFrom: user.authorityFrom || new Date(),
     authorityTo: user.authorityTo,
@@ -95,6 +101,9 @@ async function distributionReport(req, res) {
       search,
       mismatch,
       status,
+      division,
+      ward,
+      wardNo,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
@@ -111,7 +120,7 @@ async function distributionReport(req, res) {
     }
 
     const tokenDocs = await Token.find(tokenQuery)
-      .populate("consumerId", "consumerCode name ward category")
+      .populate("consumerId", "consumerCode name ward division category")
       .select("_id tokenCode status rationQtyKg consumerId createdAt")
       .lean();
 
@@ -158,11 +167,30 @@ async function distributionReport(req, res) {
           mismatch: record.mismatch,
           consumerCode: consumer?.consumerCode || "",
           consumerName: consumer?.name || "",
+          division: consumer?.division || "",
           ward: consumer?.ward || "",
           category: consumer?.category || "",
         };
       })
       .filter(Boolean);
+
+    const requestedDivision = String(division || "").trim();
+    const requestedWard = normalizeWardNo(wardNo || ward);
+
+    const scopedRows = enriched.filter((row) => {
+      if (
+        requestedDivision &&
+        !isSameDivision(requestedDivision, row.division)
+      ) {
+        return false;
+      }
+
+      if (requestedWard) {
+        return normalizeWardNo(row.ward) === requestedWard;
+      }
+
+      return true;
+    });
 
     const sortableFields = new Set([
       "createdAt",
@@ -175,7 +203,7 @@ async function distributionReport(req, res) {
 
     if (sortableFields.has(String(sortBy))) {
       const direction = sortOrder === "asc" ? 1 : -1;
-      enriched.sort((a, b) => {
+      scopedRows.sort((a, b) => {
         const left = a[sortBy];
         const right = b[sortBy];
 
@@ -186,11 +214,11 @@ async function distributionReport(req, res) {
       });
     }
 
-    const total = enriched.length;
+    const total = scopedRows.length;
     const start = (page - 1) * limit;
-    const rows = enriched.slice(start, start + limit);
+    const rows = scopedRows.slice(start, start + limit);
 
-    const totals = enriched.reduce(
+    const totals = scopedRows.reduce(
       (acc, row) => {
         acc.expectedKg += Number(row.expectedKg || 0);
         acc.actualKg += Number(row.actualKg || 0);

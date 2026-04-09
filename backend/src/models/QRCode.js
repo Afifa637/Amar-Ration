@@ -15,7 +15,6 @@ const QRCodeSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-QRCodeSchema.index({ payloadHash: 1 });
 QRCodeSchema.index({ status: 1, validTo: 1 });
 
 module.exports = mongoose.model("QRCode", QRCodeSchema);

@@ -2,17 +2,236 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const User = require("../models/User");
+const Distributor = require("../models/Distributor");
+const { writeAudit } = require("../services/audit.service");
+const { notifyAdmins } = require("../services/notification.service");
+const {
+  sendDistributorPasswordChangeAlertEmail,
+} = require("../services/email.service");
+const { normalizeDivision } = require("../utils/division.utils");
+const { normalizeWardNo } = require("../utils/ward.utils");
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // Generate JWT Token
-const generateToken = (userId, userType) => {
-  return jwt.sign({ userId, userType }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "2h",
-  });
+const generateToken = (userId, userType, tokenVersion) => {
+  const jti = crypto.randomBytes(16).toString("hex");
+  return jwt.sign(
+    { userId, userType, tokenVersion, jti },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: process.env.JWT_EXPIRES_IN || "2h",
+    },
+  );
 };
 
 // Generate unique QR token for consumer
 const generateQRToken = () => {
   return crypto.randomBytes(32).toString("hex");
+};
+
+function renderAckHtml(title, message, tone = "#065f46") {
+  return `
+    <html>
+      <head><meta charset="utf-8" /><title>${title}</title></head>
+      <body style="font-family: Arial, Helvetica, sans-serif; background:#f8fafc; padding:24px;">
+        <div style="max-width:680px; margin:0 auto; background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:20px;">
+          <h2 style="margin-top:0; color:${tone};">${title}</h2>
+          <p style="font-size:14px; color:#111827;">${message}</p>
+          <p style="font-size:12px; color:#6b7280;">You can safely close this page.</p>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+function getBackendPublicBaseUrl() {
+  return String(
+    process.env.BACKEND_PUBLIC_URL || "http://localhost:5000",
+  ).replace(/\/$/, "");
+}
+
+function makePasswordChangeAckToken({ user, changedByUserId, changedByType }) {
+  const changedAt = user?.passwordChangedAt
+    ? new Date(user.passwordChangedAt).getTime()
+    : Date.now();
+
+  return jwt.sign(
+    {
+      purpose: "PASSWORD_CHANGE_ACK",
+      userId: String(user._id),
+      changedAt,
+      changedByUserId: changedByUserId ? String(changedByUserId) : null,
+      changedByType: changedByType || "System",
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+}
+
+// @route   GET /api/auth/password-change/ack?action=yes|not-me&token=...
+// @desc    Acknowledge distributor password change from email link
+// @access  Public
+exports.acknowledgePasswordChange = async (req, res) => {
+  try {
+    const action = String(req.query.action || "")
+      .trim()
+      .toLowerCase();
+    const token = String(req.query.token || "").trim();
+
+    if (!token || !["yes", "not-me"].includes(action)) {
+      return res
+        .status(400)
+        .send(
+          renderAckHtml(
+            "Invalid request",
+            "The password-change verification link is invalid.",
+            "#b91c1c",
+          ),
+        );
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return res
+        .status(400)
+        .send(
+          renderAckHtml(
+            "Link expired",
+            "This verification link is expired or invalid.",
+            "#b91c1c",
+          ),
+        );
+    }
+
+    if (decoded?.purpose !== "PASSWORD_CHANGE_ACK" || !decoded?.userId) {
+      return res
+        .status(400)
+        .send(
+          renderAckHtml(
+            "Invalid token",
+            "Unsupported token payload.",
+            "#b91c1c",
+          ),
+        );
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res
+        .status(404)
+        .send(
+          renderAckHtml(
+            "User not found",
+            "Account no longer exists.",
+            "#b91c1c",
+          ),
+        );
+    }
+
+    const tokenChangedAt = Number(decoded.changedAt || 0);
+    const actualChangedAt = user.passwordChangedAt
+      ? new Date(user.passwordChangedAt).getTime()
+      : 0;
+
+    if (!actualChangedAt || tokenChangedAt !== actualChangedAt) {
+      return res
+        .status(400)
+        .send(
+          renderAckHtml(
+            "Outdated link",
+            "This link is no longer valid for the latest password change event.",
+            "#b91c1c",
+          ),
+        );
+    }
+
+    if (action === "yes") {
+      await writeAudit({
+        actorUserId: user._id,
+        actorType: "Distributor",
+        action: "PASSWORD_CHANGE_ACKNOWLEDGED",
+        entityType: "User",
+        entityId: String(user._id),
+        severity: "Info",
+        meta: {
+          changedByType: decoded.changedByType || "System",
+          changedByUserId: decoded.changedByUserId || null,
+          acknowledgedAt: new Date(),
+        },
+      });
+
+      return res
+        .status(200)
+        .send(
+          renderAckHtml(
+            "Confirmed",
+            "Thanks. We recorded that this password change was done by you.",
+            "#065f46",
+          ),
+        );
+    }
+
+    if (["Distributor", "FieldUser"].includes(user.userType)) {
+      user.authorityStatus = "Suspended";
+      user.status = "Suspended";
+    } else {
+      user.status = "Inactive";
+    }
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    await Distributor.findOneAndUpdate(
+      { userId: user._id },
+      { $set: { authorityStatus: "Suspended" } },
+    );
+
+    await writeAudit({
+      actorUserId: user._id,
+      actorType: "Distributor",
+      action: "PASSWORD_CHANGE_REPORTED_NOT_ME",
+      entityType: "User",
+      entityId: String(user._id),
+      severity: "Critical",
+      meta: {
+        loginEmail: user.email || null,
+        changedByType: decoded.changedByType || "System",
+        changedByUserId: decoded.changedByUserId || null,
+        reportedAt: new Date(),
+      },
+    });
+
+    await notifyAdmins({
+      title: "🚨 Password breach report",
+      message: `${user.name || "Distributor"} reported password change as NOT ME. Account auto-suspended.`,
+      meta: {
+        distributorUserId: String(user._id),
+        email: user.email || null,
+        phone: user.phone || null,
+      },
+    });
+
+    return res
+      .status(200)
+      .send(
+        renderAckHtml(
+          "Account secured",
+          "Your account has been suspended and admin has been notified immediately.",
+          "#b91c1c",
+        ),
+      );
+  } catch (error) {
+    console.error("acknowledgePasswordChange error:", error);
+    return res
+      .status(500)
+      .send(
+        renderAckHtml("Server error", "Please contact support.", "#b91c1c"),
+      );
+  }
 };
 
 // @route   POST /api/auth/signup
@@ -40,10 +259,10 @@ exports.signup = async (req, res) => {
     }
 
     // Admin account is preset — cannot be created via signup
-    if (userType === "Admin") {
+    if (["Admin"].includes(userType)) {
       return res.status(403).json({
         success: false,
-        message: "Admin signup is not allowed. Admin account is preconfigured.",
+        message: "Admin accounts are not created via this API.",
       });
     }
 
@@ -52,6 +271,14 @@ exports.signup = async (req, res) => {
         success: false,
         message:
           "Invalid user type. Must be Distributor, FieldUser, or Consumer",
+      });
+    }
+
+    if (userType === "Distributor" || userType === "FieldUser") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Distributor/FieldUser self-signup is disabled. Use admin-assigned email and password.",
       });
     }
 
@@ -117,22 +344,28 @@ exports.signup = async (req, res) => {
       userData.nidLast4 = additionalFields.nidLast4;
       userData.category = additionalFields.category || "A";
     } else if (userType === "Distributor") {
-      userData.wardNo = additionalFields.wardNo;
+      const normalizedWard = normalizeWardNo(
+        additionalFields.wardNo || additionalFields.ward,
+      );
+      userData.wardNo = normalizedWard || additionalFields.wardNo;
       userData.officeAddress = additionalFields.officeAddress;
-      userData.division = additionalFields.division;
+      userData.division = normalizeDivision(additionalFields.division);
       userData.district = additionalFields.district;
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
-      userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Active"; // Allow immediate login for development
+      userData.ward = normalizedWard || additionalFields.ward;
+      userData.authorityStatus = "Pending";
     } else if (userType === "FieldUser") {
-      userData.wardNo = additionalFields.wardNo;
-      userData.division = additionalFields.division;
+      const normalizedWard = normalizeWardNo(
+        additionalFields.wardNo || additionalFields.ward,
+      );
+      userData.wardNo = normalizedWard || additionalFields.wardNo;
+      userData.division = normalizeDivision(additionalFields.division);
       userData.district = additionalFields.district;
       userData.upazila = additionalFields.upazila;
       userData.unionName = additionalFields.unionName;
-      userData.ward = additionalFields.ward;
-      userData.authorityStatus = "Active"; // Allow immediate login for development
+      userData.ward = normalizedWard || additionalFields.ward;
+      userData.authorityStatus = "Pending";
     }
 
     // Save user to database
@@ -148,7 +381,11 @@ exports.signup = async (req, res) => {
     });
 
     // Generate token
-    const token = generateToken(user._id, user.userType);
+    const token = generateToken(
+      user._id,
+      user.userType,
+      user.tokenVersion || 0,
+    );
 
     // Prepare response (exclude password)
     const userResponse = {
@@ -195,7 +432,6 @@ exports.signup = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error registering user",
-      error: error.message,
     });
   }
 };
@@ -206,11 +442,12 @@ exports.signup = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { identifier, password, userType } = req.body; // identifier can be email, phone, or consumerCode
+    const normalizedIdentifier = String(identifier || "").trim();
 
     console.log('🔍 Login attempt:', { identifier, userType });
 
     // Validation
-    if (!identifier || !password) {
+    if (!normalizedIdentifier || !password) {
       return res.status(400).json({
         success: false,
         message:
@@ -227,12 +464,13 @@ exports.login = async (req, res) => {
     console.log('🔍 Normalized:', { normalizedIdentifier, isPhone, normalizedEmail, normalizedPhone });
 
     // Find user by email, phone, or consumerCode
+    const safeIdentifier = escapeRegex(normalizedIdentifier);
     const user = await User.findOne({
       $or: [
-        normalizedEmail ? { email: normalizedEmail } : null,
-        normalizedPhone ? { phone: normalizedPhone } : null,
+        { email: { $regex: `^${safeIdentifier}$`, $options: "i" } },
+        { phone: normalizedIdentifier },
         { consumerCode: normalizedIdentifier },
-      ].filter(Boolean),
+      ],
     });
 
     console.log('🔍 User found:', user ? { id: user._id, email: user.email, phone: user.phone, userType: user.userType } : 'No user found');
@@ -285,6 +523,20 @@ exports.login = async (req, res) => {
           code: authority === "Pending" ? "PENDING_APPROVAL" : "ACCESS_BLOCKED",
         });
       }
+
+      // Authority expiry check for Distributor/FieldUser
+      if (user.authorityTo && new Date() > new Date(user.authorityTo)) {
+        // Auto-update status so admin sees it as expired
+        await User.findByIdAndUpdate(user._id, {
+          $set: { authorityStatus: "Pending" },
+        });
+        return res.status(403).json({
+          success: false,
+          message:
+            "আপনার বিতরণ কর্তৃত্বের মেয়াদ শেষ হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।",
+          code: "AUTHORITY_EXPIRED",
+        });
+      }
     }
 
     // Update last login
@@ -292,7 +544,11 @@ exports.login = async (req, res) => {
     await user.save();
 
     // Generate token
-    const token = generateToken(user._id, user.userType);
+    const token = generateToken(
+      user._id,
+      user.userType,
+      user.tokenVersion || 0,
+    );
 
     // Prepare response
     const userResponse = {
@@ -335,6 +591,7 @@ exports.login = async (req, res) => {
       data: {
         user: userResponse,
         token,
+        mustChangePassword: user.mustChangePassword || false,
       },
     });
   } catch (error) {
@@ -342,7 +599,6 @@ exports.login = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error logging in",
-      error: error.message,
     });
   }
 };
@@ -370,7 +626,6 @@ exports.getMe = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user profile",
-      error: error.message,
     });
   }
 };
@@ -386,6 +641,20 @@ exports.changePassword = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Current password and new password are required",
+      });
+    }
+
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 8 characters",
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be different from current password",
       });
     }
 
@@ -413,18 +682,47 @@ exports.changePassword = async (req, res) => {
 
     // Hash new password
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordChangedAt = new Date();
+    user.mustChangePassword = false;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+
+    if (["Distributor", "FieldUser"].includes(user.userType) && user.email) {
+      const ackToken = makePasswordChangeAckToken({
+        user,
+        changedByUserId: req.user.userId,
+        changedByType: "Distributor",
+      });
+
+      const publicBase = getBackendPublicBaseUrl();
+      const yesUrl = `${publicBase}/api/auth/password-change/ack?action=yes&token=${encodeURIComponent(ackToken)}`;
+      const notMeUrl = `${publicBase}/api/auth/password-change/ack?action=not-me&token=${encodeURIComponent(ackToken)}`;
+
+      await sendDistributorPasswordChangeAlertEmail({
+        to: user.email,
+        name: user.name,
+        loginEmail: user.email,
+        changedBy: "Your account",
+        changedAt: new Date(user.passwordChangedAt).toLocaleString("en-GB"),
+        yesUrl,
+        notMeUrl,
+      });
+    }
+
+    const newToken = generateToken(user._id, user.userType, user.tokenVersion);
 
     res.status(200).json({
       success: true,
-      message: "Password changed successfully",
+      message: "পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে",
+      data: {
+        token: newToken,
+      },
     });
   } catch (error) {
     console.error("Change password error:", error);
     res.status(500).json({
       success: false,
       message: "Error changing password",
-      error: error.message,
     });
   }
 };

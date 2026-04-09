@@ -1,8 +1,14 @@
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const SystemSetting = require("../models/SystemSetting");
 const Distributor = require("../models/Distributor");
 const User = require("../models/User");
 const { writeAudit } = require("../services/audit.service");
+const {
+  sendDistributorPasswordChangeAlertEmail,
+} = require("../services/email.service");
+const GLOBAL_SETTINGS_KEY = "distributor:global:settings";
 
 const DEFAULT_DISTRIBUTOR_SETTINGS = {
   policy: {
@@ -10,7 +16,7 @@ const DEFAULT_DISTRIBUTOR_SETTINGS = {
     adminApprovalRequired: true,
   },
   distribution: {
-    weightThresholdKg: 0.05,
+    weightThresholdKg: 1,
     autoPauseOnMismatch: true,
     tokenPerConsumerPerDay: 1,
   },
@@ -41,6 +47,41 @@ const DEFAULT_DISTRIBUTOR_SETTINGS = {
     immutable: true,
   },
 };
+
+function generateToken(userId, userType, tokenVersion) {
+  const jti = crypto.randomBytes(16).toString("hex");
+  return jwt.sign(
+    { userId, userType, tokenVersion, jti },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: process.env.JWT_EXPIRES_IN || "2h",
+    },
+  );
+}
+
+function getBackendPublicBaseUrl() {
+  return String(
+    process.env.BACKEND_PUBLIC_URL || "http://localhost:5000",
+  ).replace(/\/$/, "");
+}
+
+function makePasswordChangeAckToken({ user, changedByUserId, changedByType }) {
+  const changedAt = user?.passwordChangedAt
+    ? new Date(user.passwordChangedAt).getTime()
+    : Date.now();
+
+  return jwt.sign(
+    {
+      purpose: "PASSWORD_CHANGE_ACK",
+      userId: String(user._id),
+      changedAt,
+      changedByUserId: changedByUserId ? String(changedByUserId) : null,
+      changedByType: changedByType || "System",
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+}
 
 function mergeWithDefaults(value) {
   const source = value && typeof value === "object" ? value : {};
@@ -89,6 +130,7 @@ async function ensureDistributorProfile(reqUser) {
 
   distributor = await Distributor.create({
     userId: user._id,
+    wardNo: user.wardNo,
     division: user.division,
     district: user.district,
     upazila: user.upazila,
@@ -106,19 +148,34 @@ function getDistributorSettingsKey(userId) {
   return `distributor:${String(userId)}:settings`;
 }
 
+async function getGlobalSettings() {
+  const setting = await SystemSetting.findOne({
+    key: GLOBAL_SETTINGS_KEY,
+  }).lean();
+  if (!setting) {
+    const created = await SystemSetting.create({
+      key: GLOBAL_SETTINGS_KEY,
+      value: DEFAULT_DISTRIBUTOR_SETTINGS,
+    });
+    return mergeWithDefaults(created.value);
+  }
+  return mergeWithDefaults(setting.value);
+}
+
 function sanitizeIncomingSettings(payload) {
   const merged = mergeWithDefaults(payload);
 
   merged.distribution.weightThresholdKg = Number(
     merged.distribution.weightThresholdKg,
   );
-  if (
-    !Number.isFinite(merged.distribution.weightThresholdKg) ||
-    merged.distribution.weightThresholdKg < 0
-  ) {
+  if (!Number.isFinite(merged.distribution.weightThresholdKg)) {
     merged.distribution.weightThresholdKg =
       DEFAULT_DISTRIBUTOR_SETTINGS.distribution.weightThresholdKg;
   }
+  merged.distribution.weightThresholdKg = Math.max(
+    1,
+    Number(merged.distribution.weightThresholdKg) || 1,
+  );
 
   merged.distribution.tokenPerConsumerPerDay = Math.max(
     1,
@@ -152,6 +209,44 @@ function sanitizeIncomingSettings(payload) {
   return merged;
 }
 
+function mergeDistributorWithGlobal(distributorValue, globalValue) {
+  const scoped = mergeWithDefaults(distributorValue);
+  const global = mergeWithDefaults(globalValue);
+
+  return {
+    ...scoped,
+    policy: { ...global.policy },
+    fraud: { ...global.fraud },
+    distribution: {
+      ...scoped.distribution,
+      weightThresholdKg: global.distribution.weightThresholdKg,
+      tokenPerConsumerPerDay: global.distribution.tokenPerConsumerPerDay,
+      autoPauseOnMismatch: global.distribution.autoPauseOnMismatch,
+    },
+    allocation: { ...global.allocation },
+    qr: { ...global.qr },
+    audit: { ...global.audit },
+  };
+}
+
+function pickDistributorEditableSettings(incoming, currentMerged) {
+  const next = mergeWithDefaults(currentMerged);
+
+  if (incoming?.offline) {
+    next.offline.enabled = incoming.offline.enabled !== false;
+    if (typeof incoming.offline.conflictPolicy === "string") {
+      next.offline.conflictPolicy = incoming.offline.conflictPolicy;
+    }
+  }
+
+  if (incoming?.notifications) {
+    next.notifications.sms = incoming.notifications.sms !== false;
+    next.notifications.app = incoming.notifications.app !== false;
+  }
+
+  return next;
+}
+
 async function getMySettings(req, res) {
   try {
     const distributor = await ensureDistributorProfile(req.user);
@@ -162,17 +257,18 @@ async function getMySettings(req, res) {
     }
 
     if (req.user.userType === "Admin") {
-      const adminSettings = await SystemSetting.find({
-        key: { $regex: /^system:/ },
-      }).lean();
+      const global = await getGlobalSettings();
       return res.json({
         success: true,
-        data: { isAdmin: true, settings: adminSettings },
+        data: { isAdmin: true, settings: global },
       });
     }
 
     const key = getDistributorSettingsKey(req.user.userId);
-    const setting = await SystemSetting.findOne({ key }).lean();
+    const [setting, global] = await Promise.all([
+      SystemSetting.findOne({ key }).lean(),
+      getGlobalSettings(),
+    ]);
     const user = await User.findById(req.user.userId)
       .select(
         "name email phone wardNo officeAddress division district upazila unionName ward",
@@ -183,7 +279,7 @@ async function getMySettings(req, res) {
       success: true,
       data: {
         isAdmin: false,
-        settings: mergeWithDefaults(setting?.value),
+        settings: mergeDistributorWithGlobal(setting?.value, global),
         profile: user,
       },
     });
@@ -195,6 +291,35 @@ async function getMySettings(req, res) {
 
 async function updateMySettings(req, res) {
   try {
+    const incoming =
+      req.body && typeof req.body === "object"
+        ? req.body.settings || req.body
+        : {};
+
+    if (req.user.userType === "Admin") {
+      const global = sanitizeIncomingSettings(incoming);
+      const updated = await SystemSetting.findOneAndUpdate(
+        { key: GLOBAL_SETTINGS_KEY },
+        { $set: { value: global } },
+        { new: true, upsert: true },
+      ).lean();
+
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType: "Central Admin",
+        action: "GLOBAL_SETTINGS_UPDATED",
+        entityType: "SystemSetting",
+        entityId: String(updated._id),
+        severity: "Info",
+      });
+
+      return res.json({
+        success: true,
+        message: "Global settings updated",
+        data: { settings: mergeWithDefaults(updated.value) },
+      });
+    }
+
     const distributor = await ensureDistributorProfile(req.user);
     if (!distributor) {
       return res
@@ -203,15 +328,16 @@ async function updateMySettings(req, res) {
     }
 
     const key = getDistributorSettingsKey(req.user.userId);
-    const current = await SystemSetting.findOne({ key }).lean();
-    const incoming =
-      req.body && typeof req.body === "object"
-        ? req.body.settings || req.body
-        : {};
+    const [current, global] = await Promise.all([
+      SystemSetting.findOne({ key }).lean(),
+      getGlobalSettings(),
+    ]);
 
+    const mergedCurrent = mergeDistributorWithGlobal(current?.value, global);
+    const picked = pickDistributorEditableSettings(incoming, mergedCurrent);
     const nextValue = sanitizeIncomingSettings({
       ...(current?.value || {}),
-      ...(incoming || {}),
+      ...picked,
     });
 
     const updated = await SystemSetting.findOneAndUpdate(
@@ -232,7 +358,7 @@ async function updateMySettings(req, res) {
     res.json({
       success: true,
       message: "Settings updated",
-      data: { settings: updated.value },
+      data: { settings: mergeDistributorWithGlobal(updated.value, global) },
     });
   } catch (error) {
     console.error("updateMySettings error:", error);
@@ -278,17 +404,8 @@ async function resetMySettings(req, res) {
 
 async function updateMyProfile(req, res) {
   try {
-    const allowedFields = [
-      "name",
-      "phone",
-      "wardNo",
-      "officeAddress",
-      "division",
-      "district",
-      "upazila",
-      "unionName",
-      "ward",
-    ];
+    const allowedFields =
+      req.user.userType === "Admin" ? ["name", "phone"] : ["name", "phone"];
 
     const updates = {};
     for (const key of allowedFields) {
@@ -313,19 +430,21 @@ async function updateMyProfile(req, res) {
         .json({ success: false, message: "User not found" });
     }
 
-    await Distributor.findOneAndUpdate(
-      { userId: req.user.userId },
-      {
-        $set: {
-          division: user.division,
-          district: user.district,
-          upazila: user.upazila,
-          unionName: user.unionName,
-          ward: user.ward,
+    if (req.user.userType === "Admin") {
+      await Distributor.findOneAndUpdate(
+        { userId: req.user.userId },
+        {
+          $set: {
+            division: user.division,
+            district: user.district,
+            upazila: user.upazila,
+            unionName: user.unionName,
+            ward: user.ward,
+          },
         },
-      },
-      { new: true },
-    );
+        { new: true },
+      );
+    }
 
     await writeAudit({
       actorUserId: req.user.userId,
@@ -354,10 +473,17 @@ async function changeMyPassword(req, res) {
       });
     }
 
-    if (String(newPassword).length < 6) {
+    if (String(newPassword).length < 8) {
       return res.status(400).json({
         success: false,
-        message: "newPassword must be at least 6 characters",
+        message: "newPassword must be at least 8 characters",
+      });
+    }
+
+    if (String(currentPassword) === String(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be different from current password",
       });
     }
 
@@ -376,7 +502,34 @@ async function changeMyPassword(req, res) {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordChangedAt = new Date();
+    user.mustChangePassword = false;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+
+    const token = generateToken(user._id, user.userType, user.tokenVersion);
+
+    if (["Distributor", "FieldUser"].includes(user.userType) && user.email) {
+      const ackToken = makePasswordChangeAckToken({
+        user,
+        changedByUserId: req.user.userId,
+        changedByType: "Distributor",
+      });
+
+      const publicBase = getBackendPublicBaseUrl();
+      const yesUrl = `${publicBase}/api/auth/password-change/ack?action=yes&token=${encodeURIComponent(ackToken)}`;
+      const notMeUrl = `${publicBase}/api/auth/password-change/ack?action=not-me&token=${encodeURIComponent(ackToken)}`;
+
+      await sendDistributorPasswordChangeAlertEmail({
+        to: user.email,
+        name: user.name,
+        loginEmail: user.email,
+        changedBy: "Your account",
+        changedAt: new Date(user.passwordChangedAt).toLocaleString("en-GB"),
+        yesUrl,
+        notMeUrl,
+      });
+    }
 
     await writeAudit({
       actorUserId: req.user.userId,
@@ -387,7 +540,11 @@ async function changeMyPassword(req, res) {
       severity: "Warning",
     });
 
-    res.json({ success: true, message: "Password changed successfully" });
+    res.json({
+      success: true,
+      message: "Password changed successfully",
+      data: { token },
+    });
   } catch (error) {
     console.error("changeMyPassword error:", error);
     res.status(500).json({ success: false, message: "Server error" });
