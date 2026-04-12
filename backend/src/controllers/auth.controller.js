@@ -456,7 +456,6 @@ exports.login = async (req, res) => {
     }
 
     // Normalize identifier for comparison
-    const normalizedIdentifier = String(identifier).trim();
     const isPhone = /^01\d{9}$/.test(normalizedIdentifier);
     const normalizedEmail = isPhone ? null : normalizedIdentifier.toLowerCase();
     const normalizedPhone = isPhone ? normalizedIdentifier : null;
