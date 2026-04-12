@@ -9,6 +9,11 @@ const {
   sendDistributorPasswordChangeAlertEmail,
 } = require("../services/email.service");
 const GLOBAL_SETTINGS_KEY = "distributor:global:settings";
+const DEFAULT_PRODUCT_TARGETS = {
+  p1Kg: 1,
+  p2Kg: 1,
+  p3Kg: 1,
+};
 
 const DEFAULT_DISTRIBUTOR_SETTINGS = {
   policy: {
@@ -29,6 +34,9 @@ const DEFAULT_DISTRIBUTOR_SETTINGS = {
     A: 5,
     B: 4,
     C: 3,
+  },
+  productTargets: {
+    ...DEFAULT_PRODUCT_TARGETS,
   },
   fraud: {
     autoBlacklistMismatchCount: 3,
@@ -100,6 +108,10 @@ function mergeWithDefaults(value) {
     allocation: {
       ...DEFAULT_DISTRIBUTOR_SETTINGS.allocation,
       ...(source.allocation || {}),
+    },
+    productTargets: {
+      ...DEFAULT_PRODUCT_TARGETS,
+      ...(source.productTargets || {}),
     },
     fraud: { ...DEFAULT_DISTRIBUTOR_SETTINGS.fraud, ...(source.fraud || {}) },
     offline: {
@@ -206,6 +218,19 @@ function sanitizeIncomingSettings(payload) {
   merged.allocation.B = Math.max(0, Number(merged.allocation.B) || 0);
   merged.allocation.C = Math.max(0, Number(merged.allocation.C) || 0);
 
+  merged.productTargets.p1Kg = Math.max(
+    0.01,
+    Number(merged.productTargets.p1Kg) || DEFAULT_PRODUCT_TARGETS.p1Kg,
+  );
+  merged.productTargets.p2Kg = Math.max(
+    0.01,
+    Number(merged.productTargets.p2Kg) || DEFAULT_PRODUCT_TARGETS.p2Kg,
+  );
+  merged.productTargets.p3Kg = Math.max(
+    0.01,
+    Number(merged.productTargets.p3Kg) || DEFAULT_PRODUCT_TARGETS.p3Kg,
+  );
+
   return merged;
 }
 
@@ -224,6 +249,7 @@ function mergeDistributorWithGlobal(distributorValue, globalValue) {
       autoPauseOnMismatch: global.distribution.autoPauseOnMismatch,
     },
     allocation: { ...global.allocation },
+    productTargets: { ...global.productTargets },
     qr: { ...global.qr },
     audit: { ...global.audit },
   };

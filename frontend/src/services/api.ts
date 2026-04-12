@@ -406,6 +406,11 @@ export type DistributorSettings = {
     B: number;
     C: number;
   };
+  productTargets: {
+    p1Kg: number;
+    p2Kg: number;
+    p3Kg: number;
+  };
   fraud: {
     autoBlacklistMismatchCount: number;
     temporaryBlockDays: number;

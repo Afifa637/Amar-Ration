@@ -241,6 +241,50 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">স্মার্ট স্কেল পণ্য ওজন</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              Smart ওজন যন্ত্রের P1, P2, P3 সিলেকশনের জন্য ডিফল্ট টার্গেট
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {([
+                ["p1Kg", "P1 / Rice"],
+                ["p2Kg", "P2 / Lentil"],
+                ["p3Kg", "P3 / Onion"],
+              ] as const).map(([key, label]) => (
+                <div key={key} className="space-y-1">
+                  <div className="text-sm font-medium text-gray-700">{label}</div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0.01}
+                      step="0.01"
+                      value={settings.productTargets[key]}
+                      onChange={(e) =>
+                        setSettings((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                productTargets: {
+                                  ...prev.productTargets,
+                                  [key]: Math.max(
+                                    0.01,
+                                    Number(e.target.value) || 0.01,
+                                  ),
+                                },
+                              }
+                            : prev,
+                        )
+                      }
+                      className="w-full border rounded px-3 py-2"
+                    />
+                    <span className="text-sm text-gray-500">কেজি</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border rounded p-3 bg-[#fbfdff]">
             <div className="font-semibold">জালিয়াতি প্রতিরোধ</div>
             <p className="text-sm text-gray-400 mt-0.5 mb-3">
               স্বয়ংক্রিয় বাতিল ও ব্লকিং নিয়ম

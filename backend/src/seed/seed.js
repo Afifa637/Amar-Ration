@@ -946,6 +946,7 @@ const ALLOC = { A: 5, B: 4, C: 3 };
             revokeBehavior: "StrictReject",
           },
           allocation: { A: 5, B: 4, C: 3 },
+          productTargets: { p1Kg: 1, p2Kg: 1, p3Kg: 1 },
           fraud: { autoBlacklistMismatchCount: 3, temporaryBlockDays: 7 },
           offline: { enabled: true, conflictPolicy: "ServerWins" },
           notifications: { sms: true, app: true },

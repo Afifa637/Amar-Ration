@@ -30,6 +30,20 @@ function parseAutoPause(value) {
   return true;
 }
 
+function parseProductTargets(settingsValue) {
+  const defaults = { p1Kg: 1, p2Kg: 1, p3Kg: 1 };
+  const source =
+    settingsValue && typeof settingsValue === "object"
+      ? settingsValue.productTargets
+      : null;
+
+  return {
+    p1Kg: Math.max(0.01, Number(source?.p1Kg) || defaults.p1Kg),
+    p2Kg: Math.max(0.01, Number(source?.p2Kg) || defaults.p2Kg),
+    p3Kg: Math.max(0.01, Number(source?.p3Kg) || defaults.p3Kg),
+  };
+}
+
 async function resolveDistributionSettings(session) {
   const [weightSetting, settingsDoc] = await Promise.all([
     SystemSetting.findOne({ key: "weightThresholdKg" }).session(session).lean(),
@@ -247,7 +261,27 @@ async function getWeightThreshold(req, res) {
   }
 }
 
+// GET /api/iot/product-targets
+async function getProductTargets(req, res) {
+  try {
+    const settingsDoc = await SystemSetting.findOne({
+      key: "distributor:global:settings",
+    }).lean();
+
+    return res.json({
+      success: true,
+      data: {
+        productTargets: parseProductTargets(settingsDoc?.value),
+      },
+    });
+  } catch (error) {
+    console.error("getProductTargets error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   handleWeightReading,
   getWeightThreshold,
+  getProductTargets,
 };
