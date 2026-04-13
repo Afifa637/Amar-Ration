@@ -5,6 +5,7 @@ import Button from "../../components/ui/Button";
 import {
   createBlacklistEntry,
   deactivateBlacklistEntry,
+  downloadAdminAuditRequestFile,
   getAdminAuditDetail,
   getAdminAuditRequests,
   getAuditLogs,
@@ -148,6 +149,26 @@ export default function AdminAuditPage() {
       setError(err instanceof Error ? err.message : "রিভিউ ব্যর্থ");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadAttachment = async (
+    requestId: string,
+    fileId: string,
+    fileName: string,
+  ) => {
+    try {
+      const blob = await downloadAdminAuditRequestFile(requestId, fileId);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName || `audit-${fileId}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ফাইল ডাউনলোড ব্যর্থ");
     }
   };
 
@@ -345,6 +366,9 @@ export default function AdminAuditPage() {
                     {new Date(item.createdAt).toLocaleString()}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
+                    {item.attachments?.length || 0}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
                     {item.reportText ? (
                       <Button
                         variant="secondary"
@@ -360,7 +384,7 @@ export default function AdminAuditPage() {
               ))}
               {requests.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-[#6b7280]">
+                  <td colSpan={6} className="p-4 text-center text-[#6b7280]">
                     কোনো রিকোয়েস্ট নেই
                   </td>
                 </tr>
@@ -555,6 +579,40 @@ export default function AdminAuditPage() {
             </div>
             <div className="border rounded p-3 bg-[#f8fafc] whitespace-pre-wrap">
               {reviewing.reportText || "রিপোর্ট নেই"}
+            </div>
+            <div className="space-y-2">
+              <div className="font-medium">সংযুক্ত ফাইল</div>
+              {reviewing.attachments && reviewing.attachments.length > 0 ? (
+                <div className="space-y-1">
+                  {reviewing.attachments.map((file) => (
+                    <div
+                      key={file._id}
+                      className="flex items-center justify-between rounded border px-3 py-2 bg-white"
+                    >
+                      <div className="text-[12px] text-[#374151]">
+                        {file.originalName} (
+                        {Math.max(1, Math.round(file.size / 1024))} KB)
+                      </div>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          void downloadAttachment(
+                            reviewing._id,
+                            file._id,
+                            file.originalName,
+                          )
+                        }
+                      >
+                        ডাউনলোড
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[12px] text-[#6b7280]">
+                  কোনো সংযুক্ত ফাইল নেই
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <Button

@@ -14,7 +14,11 @@ const PORT = process.env.PORT || 5000;
 (async () => {
   await connectDB();
 
-  [process.env.RECEIPTS_DIR, process.env.PHOTOS_DIR].forEach((dir) => {
+  [
+    process.env.RECEIPTS_DIR,
+    process.env.PHOTOS_DIR,
+    process.env.AUDIT_REPORT_UPLOADS_DIR,
+  ].forEach((dir) => {
     if (!dir) return;
     fs.mkdirSync(path.resolve(process.cwd(), dir), { recursive: true });
   });

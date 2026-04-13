@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
   deleteConsumerCard,
@@ -17,6 +17,8 @@ import Badge from "../../components/ui/Badge";
 export default function AdminCardsPage() {
   const [summary, setSummary] = useState<AdminCardsSummary | null>(null);
   const [cards, setCards] = useState<ConsumerCardRow[]>([]);
+  const [division, setDivision] = useState("");
+  const [ward, setWard] = useState("");
   const [search, setSearch] = useState("");
   const [cardStatus, setCardStatus] = useState<
     "সব" | "Active" | "Inactive" | "Revoked"
@@ -29,13 +31,29 @@ export default function AdminCardsPage() {
     null,
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      if (ward.trim() && !division.trim()) {
+        setError("ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ দিন");
+        setCards([]);
+        setSummary(null);
+        return;
+      }
+
+      const params = {
+        division: division.trim() || undefined,
+        ward: ward.trim() || undefined,
+      };
+
       const [summaryData, cardData] = await Promise.all([
-        getAdminCardsSummary(),
-        getConsumerCards({ limit: 300 }),
+        getAdminCardsSummary(params),
+        getConsumerCards({
+          limit: 300,
+          division: params.division,
+          ward: params.ward,
+        }),
       ]);
       setSummary(summaryData);
       setCards(cardData.rows || []);
@@ -44,11 +62,30 @@ export default function AdminCardsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [division, ward]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  const divisionOptions = useMemo(() => {
+    return Array.from(
+      new Set(cards.map((card) => card.division || "").filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, "bn"));
+  }, [cards]);
+
+  const wardOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        cards
+          .filter((card) =>
+            division ? (card.division || "") === division : true,
+          )
+          .map((card) => card.ward || "")
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b, "bn"));
+  }, [cards, division]);
 
   const filteredCards = useMemo(() => {
     return cards.filter((card) => {
@@ -56,7 +93,8 @@ export default function AdminCardsPage() {
         !search.trim() ||
         card.consumerCode.toLowerCase().includes(search.toLowerCase()) ||
         card.name.toLowerCase().includes(search.toLowerCase()) ||
-        (card.ward || "").toLowerCase().includes(search.toLowerCase());
+        (card.ward || "").toLowerCase().includes(search.toLowerCase()) ||
+        (card.division || "").toLowerCase().includes(search.toLowerCase());
 
       const matchStatus = cardStatus === "সব" || card.cardStatus === cardStatus;
 
@@ -211,12 +249,39 @@ export default function AdminCardsPage() {
       </SectionCard>
 
       <SectionCard title="কার্ড তালিকা ও প্রিন্ট ভিউ">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
+          <select
+            value={division}
+            onChange={(e) => {
+              setDivision(e.target.value);
+              setWard("");
+            }}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব বিভাগ</option>
+            {divisionOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <select
+            value={ward}
+            onChange={(e) => setWard(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব ওয়ার্ড</option>
+            {wardOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="সার্চ: consumer code / নাম / ওয়ার্ড"
+            placeholder="সার্চ: consumer code / নাম / বিভাগ / ওয়ার্ড"
           />
           <select
             value={cardStatus}
@@ -241,6 +306,8 @@ export default function AdminCardsPage() {
               onClick={() => {
                 setSearch("");
                 setCardStatus("সব");
+                setDivision("");
+                setWard("");
               }}
             >
               রিসেট
@@ -255,6 +322,7 @@ export default function AdminCardsPage() {
                 {[
                   "কোড",
                   "নাম",
+                  "বিভাগ",
                   "ওয়ার্ড",
                   "কার্ড",
                   "QR",
@@ -277,6 +345,9 @@ export default function AdminCardsPage() {
                     {card.consumerCode}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">{card.name}</td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {card.division || "—"}
+                  </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {card.ward || "—"}
                   </td>
@@ -337,7 +408,7 @@ export default function AdminCardsPage() {
               ))}
               {filteredCards.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-3 text-center text-[#6b7280]">
+                  <td colSpan={8} className="p-3 text-center text-[#6b7280]">
                     {loading ? "লোড হচ্ছে..." : "কোনো কার্ড ডেটা নেই"}
                   </td>
                 </tr>

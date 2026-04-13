@@ -940,7 +940,7 @@ exports.getConsumerStats = async (req, res) => {
 // @access  Private
 exports.listConsumerCards = async (req, res) => {
   try {
-    const { search, cardStatus, qrStatus } = req.query;
+    const { search, cardStatus, qrStatus, division, ward, wardNo } = req.query;
     const withImage = String(req.query.withImage || "false") === "true";
     const { page, limit } = parsePageLimit(req.query);
 
@@ -959,6 +959,24 @@ exports.listConsumerCards = async (req, res) => {
     const query = {};
     if (distributor) {
       Object.assign(query, buildDistributorScopeQuery(distributor));
+    } else {
+      const requestedDivision = normalizeDivision(division);
+      const requestedWard = normalizeWardNo(wardNo || ward);
+
+      if (requestedWard && !requestedDivision) {
+        return res.status(400).json({
+          success: false,
+          message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      if (requestedDivision) {
+        query.division = requestedDivision;
+      }
+      if (requestedWard) {
+        query.ward = requestedWard;
+      }
     }
 
     if (search) {
@@ -1005,6 +1023,7 @@ exports.listConsumerCards = async (req, res) => {
         consumerCode: consumer.consumerCode,
         name: consumer.name,
         category: consumer.category,
+        division: consumer.division,
         ward: consumer.ward,
         unionName: consumer.unionName,
         upazila: consumer.upazila,
@@ -1106,6 +1125,7 @@ exports.getConsumerCard = async (req, res) => {
           consumerCode: consumer.consumerCode,
           name: consumer.name,
           category: consumer.category,
+          division: consumer.division,
           ward: consumer.ward,
           unionName: consumer.unionName,
           upazila: consumer.upazila,

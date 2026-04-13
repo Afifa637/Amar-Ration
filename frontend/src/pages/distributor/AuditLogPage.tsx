@@ -4,6 +4,7 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
 import {
+  downloadDistributorAuditRequestFile,
   exportAuditLogsCsv,
   getAuditLogs,
   getDistributorAuditRequests,
@@ -45,6 +46,7 @@ export default function AuditLogPage() {
     null,
   );
   const [reportText, setReportText] = useState("");
+  const [reportFiles, setReportFiles] = useState<File[]>([]);
 
   const loadData = async (targetPage = page) => {
     setLoading(true);
@@ -115,15 +117,36 @@ export default function AuditLogPage() {
     if (!activeRequest) return;
     try {
       setLoading(true);
-      await submitAuditReport(activeRequest._id, reportText);
+      await submitAuditReport(activeRequest._id, reportText, reportFiles);
       setMessage("অডিট রিপোর্ট জমা হয়েছে");
       setActiveRequest(null);
       setReportText("");
+      setReportFiles([]);
       await loadData(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "রিপোর্ট জমা ব্যর্থ");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onDownloadAttachment = async (
+    requestId: string,
+    fileId: string,
+    fileName: string,
+  ) => {
+    try {
+      const blob = await downloadDistributorAuditRequestFile(requestId, fileId);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName || `attachment-${fileId}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ফাইল ডাউনলোড ব্যর্থ");
     }
   };
 
@@ -330,9 +353,21 @@ export default function AuditLogPage() {
                           onClick={() => {
                             setActiveRequest(req);
                             setReportText("");
+                            setReportFiles([]);
                           }}
                         >
                           রিপোর্ট জমা দিন
+                        </Button>
+                      ) : req.attachments && req.attachments.length > 0 ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setActiveRequest(req);
+                            setReportText(req.reportText || "");
+                            setReportFiles([]);
+                          }}
+                        >
+                          জমা রিপোর্ট দেখুন
                         </Button>
                       ) : (
                         "জমা হয়েছে"
@@ -362,6 +397,59 @@ export default function AuditLogPage() {
             rows={5}
             placeholder="অডিট রিপোর্ট লিখুন"
           />
+
+          <div className="space-y-2">
+            <div className="text-[12px] text-[#6b7280]">
+              সহায়ক ডকুমেন্ট (সর্বোচ্চ ৫টি, প্রতিটি ১০MB)
+            </div>
+            <input
+              type="file"
+              multiple
+              onChange={(e) =>
+                setReportFiles(Array.from(e.target.files || []).slice(0, 5))
+              }
+              className="w-full border rounded px-3 py-2 text-[12px] bg-white"
+            />
+            {reportFiles.length > 0 && (
+              <div className="rounded border bg-[#f8fafc] p-2 text-[12px] space-y-1">
+                {reportFiles.map((file, idx) => (
+                  <div key={`${file.name}-${idx}`}>
+                    {file.name} ({Math.max(1, Math.round(file.size / 1024))} KB)
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeRequest?.attachments &&
+              activeRequest.attachments.length > 0 && (
+                <div className="rounded border bg-white p-2 space-y-1">
+                  <div className="text-[12px] font-medium">
+                    আগে জমা দেওয়া ফাইল
+                  </div>
+                  {activeRequest.attachments.map((file) => (
+                    <div
+                      key={file._id}
+                      className="flex items-center justify-between text-[12px]"
+                    >
+                      <span>{file.originalName}</span>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          void onDownloadAttachment(
+                            activeRequest._id,
+                            file._id,
+                            file.originalName,
+                          )
+                        }
+                      >
+                        ডাউনলোড
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
+
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setActiveRequest(null)}>
               বন্ধ

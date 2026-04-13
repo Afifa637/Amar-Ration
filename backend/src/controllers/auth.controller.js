@@ -2,7 +2,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const speakeasy = require("speakeasy");
-const QRCodeGen = require("qrcode");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
 const RefreshToken = require("../models/RefreshToken");
@@ -310,8 +309,42 @@ exports.acknowledgePasswordChange = async (req, res) => {
 };
 
 // @route   GET /api/auth/2fa/setup
-// @desc    Generate TOTP secret + QR for admin
+// @desc    Generate/reuse manual TOTP secret for admin
 // @access  Private (Admin)
+exports.get2FAStatus = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const admin = await User.findById(req.user.userId).select(
+      "twoFactorEnabled +twoFactorTempSecret +twoFactorTempSecretCreatedAt",
+    );
+
+    if (!admin) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const pendingSecret = decryptTwoFASecret(admin.twoFactorTempSecret);
+    const setupPending = !admin.twoFactorEnabled && !!pendingSecret;
+
+    return res.json({
+      success: true,
+      data: {
+        enabled: !!admin.twoFactorEnabled,
+        setupPending,
+        pendingSince: admin.twoFactorTempSecretCreatedAt || null,
+        secret: setupPending ? pendingSecret : null,
+      },
+    });
+  } catch (error) {
+    console.error("get2FAStatus error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 exports.setup2FA = async (req, res) => {
   try {
     if (req.user.userType !== "Admin") {
@@ -354,25 +387,12 @@ exports.setup2FA = async (req, res) => {
       });
     }
 
-    const otpauth = speakeasy.otpauthURL({
-      secret: tempSecret,
-      label: `AmarRation (${req.user.userId})`,
-      issuer: "Smart OMS",
-      encoding: "base32",
-    });
-
-    const qrDataUrl = await QRCodeGen.toDataURL(otpauth, {
-      errorCorrectionLevel: "M",
-      width: 256,
-    });
-
     return res.json({
       success: true,
       data: {
         secret: tempSecret,
-        qrDataUrl,
         message:
-          "Scan this QR with Google Authenticator/Authy and verify to enable 2FA. Pending setup secret is reused until verified or reset.",
+          "Use manual secret in your authenticator app and verify to enable 2FA. This secret is reused and does not change unless you explicitly request a reset.",
       },
     });
   } catch (error) {
@@ -491,11 +511,29 @@ exports.reset2FASetup = async (req, res) => {
       });
     }
 
+    const confirmText = String(req.body?.confirmText || "").trim();
+    if (confirmText !== "CHANGE_2FA_SECRET") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Secret reset is blocked. Send confirmText=CHANGE_2FA_SECRET to request a new secret.",
+      });
+    }
+
     await User.findByIdAndUpdate(req.user.userId, {
       $set: {
         twoFactorTempSecret: null,
         twoFactorTempSecretCreatedAt: null,
       },
+    });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "2FA_SETUP_SECRET_RESET",
+      entityType: "User",
+      entityId: String(req.user.userId),
+      severity: "Warning",
     });
 
     return exports.setup2FA(req, res);

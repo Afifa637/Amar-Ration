@@ -15,6 +15,16 @@ const AuditReportRequestSchema = new mongoose.Schema(
     auditLogId: { type: mongoose.Schema.Types.ObjectId, ref: "AuditLog" },
     note: { type: String },
     reportText: { type: String },
+    attachments: [
+      {
+        originalName: { type: String, required: true },
+        storedName: { type: String, required: true },
+        mimeType: { type: String, required: true },
+        size: { type: Number, required: true },
+        relativePath: { type: String, required: true },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
     dueAt: { type: Date },
     overdueNotified: { type: Boolean, default: false },
     decision: {

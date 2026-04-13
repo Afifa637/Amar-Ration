@@ -83,6 +83,13 @@ export default function AdminDistributionPage() {
     setLoading(true);
     setError("");
     try {
+      if (monitorWard.trim() && !monitorDivision.trim()) {
+        setError("ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ দিন");
+        setGroups([]);
+        setHistoryPages(1);
+        return;
+      }
+
       const [summaryData, monitoringData, distributorsData] = await Promise.all(
         [
           getAdminSummary(),
