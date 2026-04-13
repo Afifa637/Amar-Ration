@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import Button from "../../components/ui/Button";
 import {
+  disableAdmin2FA,
   getDistributorSettings,
+  resetAdmin2FASetup,
+  setupAdmin2FA,
   updateDistributorSettings,
+  verifyAdmin2FA,
   type DistributorSettings,
 } from "../../services/api";
 
@@ -12,6 +16,11 @@ export default function AdminSettingsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [twoFASecret, setTwoFASecret] = useState("");
+  const [twoFAQrDataUrl, setTwoFAQrDataUrl] = useState("");
+  const [twoFAToken, setTwoFAToken] = useState("");
+  const [disablePassword, setDisablePassword] = useState("");
+  const [disableToken, setDisableToken] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -46,6 +55,90 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const onSetup2FA = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
+      const data = await setupAdmin2FA();
+      setTwoFASecret(data.secret || "");
+      setTwoFAQrDataUrl(data.qrDataUrl || "");
+      setMessage("২FA setup শুরু হয়েছে। অ্যাপ দিয়ে QR স্ক্যান করে কোড দিন।");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "2FA setup ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onVerify2FA = async () => {
+    if (!twoFAToken.trim()) {
+      setError("২FA কোড দিন");
+      return;
+    }
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
+      const result = await verifyAdmin2FA(twoFAToken.trim());
+      const backupCodes = result?.data?.backupCodes || [];
+      setMessage(
+        backupCodes.length
+          ? `2FA সক্রিয় হয়েছে। Backup codes: ${backupCodes.join(" , ")}`
+          : "2FA সক্রিয় হয়েছে",
+      );
+      setTwoFAToken("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "2FA verify ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onResetSetup2FA = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
+      const data = await resetAdmin2FASetup();
+      setTwoFASecret(data.secret || "");
+      setTwoFAQrDataUrl(data.qrDataUrl || "");
+      setTwoFAToken("");
+      setMessage(
+        "Pending 2FA setup secret reset হয়েছে। নতুন QR স্ক্যান করুন।",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "2FA setup reset ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onDisable2FA = async () => {
+    if (!disablePassword || !disableToken) {
+      setError("2FA বন্ধ করতে পাসওয়ার্ড ও TOTP কোড দিন");
+      return;
+    }
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
+      await disableAdmin2FA({
+        password: disablePassword,
+        totpToken: disableToken,
+      });
+      setDisablePassword("");
+      setDisableToken("");
+      setTwoFASecret("");
+      setTwoFAQrDataUrl("");
+      setMessage("2FA বন্ধ করা হয়েছে");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "2FA disable ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!settings) {
     return <div className="text-[12px] text-[#6b7280]">লোড হচ্ছে...</div>;
   }
@@ -62,6 +155,81 @@ export default function AdminSettingsPage() {
 
       <SectionCard title="নীতি ও প্রশাসনিক নিয়ন্ত্রণ (অ্যাডমিন)">
         <div className="space-y-3 text-[13px]">
+          <div className="border rounded p-3 bg-[#fbfdff]">
+            <div className="font-semibold">Admin 2FA Security</div>
+            <p className="text-sm text-gray-400 mt-0.5 mb-3">
+              অ্যাডমিন লগইনে TOTP 2FA চালু/বন্ধ করুন
+            </p>
+
+            <div className="flex flex-wrap gap-2 mb-3">
+              <Button onClick={() => void onSetup2FA()} disabled={loading}>
+                2FA Setup শুরু
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void onResetSetup2FA()}
+                disabled={loading}
+              >
+                Pending Setup Reset
+              </Button>
+            </div>
+
+            {twoFAQrDataUrl && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start mb-3">
+                <div className="border rounded p-2 bg-white inline-flex items-center justify-center">
+                  <img
+                    src={twoFAQrDataUrl}
+                    alt="2FA QR"
+                    className="w-44 h-44"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="text-[12px] text-gray-600 break-all">
+                    Secret: <span className="font-mono">{twoFASecret}</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={twoFAToken}
+                    onChange={(e) =>
+                      setTwoFAToken(e.target.value.replace(/\s/g, ""))
+                    }
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="TOTP কোড দিন"
+                  />
+                  <Button onClick={() => void onVerify2FA()} disabled={loading}>
+                    2FA Verify করে চালু করুন
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="border-t pt-3 mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+              <input
+                type="password"
+                value={disablePassword}
+                onChange={(e) => setDisablePassword(e.target.value)}
+                className="w-full border rounded px-3 py-2"
+                placeholder="Current password"
+              />
+              <input
+                type="text"
+                value={disableToken}
+                onChange={(e) =>
+                  setDisableToken(e.target.value.replace(/\s/g, ""))
+                }
+                className="w-full border rounded px-3 py-2"
+                placeholder="Current TOTP"
+              />
+              <Button
+                variant="danger"
+                onClick={() => void onDisable2FA()}
+                disabled={loading}
+              >
+                2FA Disable
+              </Button>
+            </div>
+          </div>
+
           <div className="border rounded p-3 bg-[#fbfdff]">
             <div className="font-semibold">নীতি</div>
             <p className="text-sm text-gray-400 mt-0.5 mb-3">
@@ -146,6 +314,36 @@ export default function AdminSettingsPage() {
                   className="w-full border rounded px-3 py-2"
                 />
                 <span className="text-sm text-gray-500">কেজি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={Math.round(
+                    Number(
+                      settings.distribution.weightThresholdPercent || 0.05,
+                    ) * 100,
+                  )}
+                  onChange={(e) =>
+                    setSettings((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            distribution: {
+                              ...prev.distribution,
+                              weightThresholdPercent: Math.max(
+                                0.01,
+                                (Number(e.target.value) || 5) / 100,
+                              ),
+                            },
+                          }
+                        : prev,
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2"
+                />
+                <span className="text-sm text-gray-500">%</span>
               </div>
               <div className="flex items-center gap-2">
                 <input

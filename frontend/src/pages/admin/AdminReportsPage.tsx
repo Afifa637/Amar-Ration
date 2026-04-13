@@ -1,36 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
+  exportDistributionReport,
   getDistributionReport,
   type DistributionReportRow,
 } from "../../services/api";
 
-function exportToCSV(filename: string, headers: string[], rows: string[][]) {
-  const bom = "\uFEFF";
-  const csvContent = [
-    headers.join(","),
-    ...rows.map((row) =>
-      row
-        .map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`)
-        .join(","),
-    ),
-  ].join("\n");
-
-  const blob = new Blob([bom + csvContent], {
-    type: "text/csv;charset=utf-8;",
+async function fetchReportRows(
+  from?: string,
+  to?: string,
+  division?: string,
+  ward?: string,
+) {
+  const data = await getDistributionReport({
+    page: 1,
+    limit: 1000,
+    from: from || undefined,
+    to: to || undefined,
+    division: division || undefined,
+    ward: ward || undefined,
   });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+
+  return data.rows || [];
 }
 
 export default function AdminReportsPage() {
   const [rows, setRows] = useState<DistributionReportRow[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [division, setDivision] = useState("");
+  const [ward, setWard] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,13 +37,7 @@ export default function AdminReportsPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await getDistributionReport({
-        page: 1,
-        limit: 1000,
-        from: from || undefined,
-        to: to || undefined,
-      });
-      setRows(data.rows || []);
+      setRows(await fetchReportRows(from, to, division, ward));
     } catch (err) {
       setError(err instanceof Error ? err.message : "রিপোর্ট ডেটা লোড ব্যর্থ");
     } finally {
@@ -53,7 +46,20 @@ export default function AdminReportsPage() {
   };
 
   useEffect(() => {
-    void loadData();
+    setLoading(true);
+    setError("");
+    fetchReportRows(undefined, undefined, undefined, undefined)
+      .then((data) => {
+        setRows(data);
+      })
+      .catch((err: unknown) => {
+        setError(
+          err instanceof Error ? err.message : "রিপোর্ট ডেটা লোড ব্যর্থ",
+        );
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   const reconciliationRows = useMemo(() => {
@@ -63,7 +69,7 @@ export default function AdminReportsPage() {
     >();
 
     rows.forEach((row) => {
-      const key = row.ward || "অজানা";
+      const key = `${row.division || "অজানা"}::${row.ward || "অজানা"}`;
       const prev = map.get(key) || { expectedKg: 0, actualKg: 0, mismatch: 0 };
       prev.expectedKg += Number(row.expectedKg || 0);
       prev.actualKg += Number(row.actualKg || 0);
@@ -71,15 +77,16 @@ export default function AdminReportsPage() {
       map.set(key, prev);
     });
 
-    return Array.from(map.entries()).map(([ward, data]) => {
+    return Array.from(map.entries()).map(([scope, data]) => {
+      const [divisionName, wardName] = scope.split("::");
       const variance = Number((data.expectedKg - data.actualKg).toFixed(2));
-      const status = Math.abs(variance) <= 0.1 ? "ম্যাচড" : "তদন্ত প্রয়োজন";
       return {
-        ward,
+        division: divisionName,
+        ward: wardName,
         expectedKg: data.expectedKg.toFixed(2),
         actualKg: data.actualKg.toFixed(2),
         variance: variance.toFixed(2),
-        status,
+        status: Math.abs(variance) <= 0.1 ? "ম্যাচড" : "তদন্ত প্রয়োজন",
       };
     });
   }, [rows]);
@@ -90,8 +97,7 @@ export default function AdminReportsPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await getDistributionReport({ page: 1, limit: 1000 });
-      setRows(data.rows || []);
+      setRows(await fetchReportRows());
     } catch (err) {
       setError(err instanceof Error ? err.message : "রিপোর্ট ডেটা লোড ব্যর্থ");
     } finally {
@@ -99,21 +105,27 @@ export default function AdminReportsPage() {
     }
   };
 
-  const downloadReconciliationCsv = () => {
-    const headers = ["Ward", "ExpectedKg", "ActualKg", "VarianceKg", "Status"];
-    const lines = reconciliationRows.map((row) => [
-      row.ward,
-      row.expectedKg,
-      row.actualKg,
-      row.variance,
-      row.status,
-    ]);
+  const downloadReport = async (format: "csv" | "xlsx") => {
+    try {
+      setError("");
+      const blob = await exportDistributionReport({
+        format,
+        from: from || undefined,
+        to: to || undefined,
+        division: division || undefined,
+        ward: ward || undefined,
+      });
 
-    exportToCSV(
-      `রিকনসিলিয়েশন_রিপোর্ট_${new Date().toISOString().slice(0, 10)}.csv`,
-      headers,
-      lines,
-    );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const ext = format === "xlsx" ? "xlsx" : "csv";
+      link.href = url;
+      link.download = `distribution-report-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "এক্সপোর্ট ব্যর্থ");
+    }
   };
 
   return (
@@ -130,6 +142,20 @@ export default function AdminReportsPage() {
         )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
           <input
+            type="text"
+            value={division}
+            onChange={(e) => setDivision(e.target.value)}
+            placeholder="বিভাগ (যেমন: Dhaka)"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <input
+            type="text"
+            value={ward}
+            onChange={(e) => setWard(e.target.value)}
+            placeholder="ওয়ার্ড"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <input
             type="date"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
@@ -145,7 +171,7 @@ export default function AdminReportsPage() {
             onClick={() => void loadData()}
             className="px-3 py-2 rounded bg-[#16679c] text-white text-[13px] hover:bg-[#0f557f]"
           >
-            ফিল্টার প্রয়োগ
+            ফিল্টার প্রয়োগ
           </button>
           <button
             onClick={() => void resetFilters()}
@@ -154,10 +180,16 @@ export default function AdminReportsPage() {
             রিসেট
           </button>
           <button
-            onClick={downloadReconciliationCsv}
+            onClick={() => void downloadReport("csv")}
             className="px-3 py-2 rounded bg-[#ecfdf3] border border-[#86efac] text-[#166534] text-[13px] hover:bg-[#dcfce7]"
           >
-            CSV এক্সপোর্ট
+            সার্ভার CSV এক্সপোর্ট
+          </button>
+          <button
+            onClick={() => void downloadReport("xlsx")}
+            className="px-3 py-2 rounded bg-[#eff6ff] border border-[#93c5fd] text-[#1d4ed8] text-[13px] hover:bg-[#dbeafe]"
+          >
+            সার্ভার XLSX এক্সপোর্ট
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -165,7 +197,8 @@ export default function AdminReportsPage() {
             <thead>
               <tr className="bg-[#f3f5f8] text-left">
                 {[
-                  "এলাকা/ওয়ার্ড",
+                  "বিভাগ",
+                  "ওয়ার্ড",
                   "প্রত্যাশিত পরিমাণ",
                   "বিতরণকৃত পরিমাণ",
                   "পার্থক্য",
@@ -179,7 +212,13 @@ export default function AdminReportsPage() {
             </thead>
             <tbody>
               {reconciliationRows.map((row) => (
-                <tr key={row.ward} className="odd:bg-white even:bg-[#fafbfc]">
+                <tr
+                  key={`${row.division}-${row.ward}`}
+                  className="odd:bg-white even:bg-[#fafbfc]"
+                >
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.division}
+                  </td>
                   <td className="p-2 border border-[#d7dde6]">{row.ward}</td>
                   <td className="p-2 border border-[#d7dde6]">
                     {row.expectedKg} kg

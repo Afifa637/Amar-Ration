@@ -6,6 +6,10 @@ const { writeAudit } = require("../services/audit.service");
 const { notifyUser } = require("../services/notification.service");
 const { normalizeDivision } = require("../utils/division.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
+const {
+  STOCK_ITEMS,
+  normalizeStockItem,
+} = require("../utils/stock-items.utils");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -53,9 +57,57 @@ async function resolveStockDistributor(req, distributorIdInput) {
 // POST /api/stock/in
 async function addStockIn(req, res) {
   try {
-    const { distributorId, qtyKg, item, ref, dateKey } = req.body || {};
+    const { distributorId, qtyKg, item, ref, dateKey, division, ward, wardNo } =
+      req.body || {};
 
-    const distributor = await resolveStockDistributor(req, distributorId);
+    let distributor = await resolveStockDistributor(req, distributorId);
+
+    if (req.user.userType === "Admin" && !distributor) {
+      const normalizedDivision = normalizeDivision(division);
+      const normalizedWard = normalizeWardNo(wardNo || ward);
+
+      if (!normalizedDivision || !normalizedWard) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Admin stock allocation এর জন্য distributorId অথবা division+ward প্রয়োজন",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      const matches = await Distributor.find({
+        division: normalizedDivision,
+        $or: [{ wardNo: normalizedWard }, { ward: normalizedWard }],
+      })
+        .select("_id authorityStatus")
+        .lean();
+
+      if (!matches.length) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "নির্বাচিত division+ward এর জন্য কোনো distributor পাওয়া যায়নি",
+          code: "NOT_FOUND",
+        });
+      }
+
+      const activeMatches = matches.filter(
+        (m) => m.authorityStatus === "Active",
+      );
+      const resolved = activeMatches.length ? activeMatches : matches;
+
+      if (resolved.length > 1) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "এই division+ward এ একাধিক distributor আছে। নির্দিষ্ট distributor নির্বাচন করুন",
+          code: "AMBIGUOUS_DISTRIBUTOR",
+        });
+      }
+
+      distributor = await Distributor.findById(resolved[0]._id);
+    }
+
     if (req.user.userType !== "Admin" && !distributor) {
       return res
         .status(403)
@@ -69,14 +121,22 @@ async function addStockIn(req, res) {
       });
     }
 
-    const qty = Math.max(0, Number(qtyKg));
-    if (!Number.isFinite(qty) || qty < 1) {
+    const qty = Number(qtyKg);
+    if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1) {
       return res.status(400).json({
         success: false,
-        message:
-          "সর্বনিম্ন ১ কেজি মজুদ নিবন্ধন করতে হবে। (Minimum stock-in is 1 kg)",
+        message: "স্টক IN এর পরিমাণ ১ কেজি বা তার বেশি পূর্ণসংখ্যা হতে হবে।",
       });
     }
+
+    const normalizedItem = normalizeStockItem(item);
+    if (!normalizedItem) {
+      return res.status(400).json({
+        success: false,
+        message: `item must be one of: ${STOCK_ITEMS.join(", ")}`,
+      });
+    }
+
     const effectiveDateKey = dateKey || todayKey();
 
     if (distributor?._id) {
@@ -101,7 +161,7 @@ async function addStockIn(req, res) {
       distributorId: distributor ? distributor._id : undefined,
       dateKey: effectiveDateKey,
       type: "IN",
-      item: item || "Rice",
+      item: normalizedItem,
       qtyKg: qty,
       ref: ref || undefined,
     });
@@ -125,11 +185,12 @@ async function addStockIn(req, res) {
     if (req.user.userType === "Admin" && distributor?.userId) {
       await notifyUser(distributor.userId, {
         title: "Stock allocated",
-        message: `${qty}kg stock allocated for ${entry.dateKey}.`,
+        message: `${qty}kg ${normalizedItem} stock allocated for ${entry.dateKey}.`,
         meta: {
           stockLedgerId: String(entry._id),
           dateKey: entry.dateKey,
           qtyKg: qty,
+          item: normalizedItem,
         },
       });
     }
@@ -167,7 +228,19 @@ async function getStockSummary(req, res) {
     }
 
     const query = {};
-    const targetDateKey = String(req.query.dateKey || todayKey()).trim();
+    const activeSession = distributor
+      ? await DistributionSession.findOne({
+          distributorId: distributor._id,
+          status: { $in: ["Open", "Paused"] },
+        })
+          .sort({ createdAt: -1 })
+          .select("dateKey")
+          .lean()
+      : null;
+
+    const targetDateKey = String(
+      req.query.dateKey || activeSession?.dateKey || todayKey(),
+    ).trim();
     if (targetDateKey) query.dateKey = targetDateKey;
     if (distributor) query.distributorId = distributor._id;
 
@@ -187,6 +260,36 @@ async function getStockSummary(req, res) {
       { stockInKg: 0, stockOutKg: 0, adjustKg: 0 },
     );
 
+    const byItem = STOCK_ITEMS.reduce((acc, itemName) => {
+      acc[itemName] = {
+        stockInKg: 0,
+        stockOutKg: 0,
+        adjustKg: 0,
+        balanceKg: 0,
+      };
+      return acc;
+    }, {});
+
+    for (const entry of entries) {
+      const itemName = normalizeStockItem(entry.item);
+      if (!itemName) continue;
+      const qty = Number(entry.qtyKg || 0);
+      if (!byItem[itemName]) continue;
+      if (entry.type === "IN") byItem[itemName].stockInKg += qty;
+      if (entry.type === "OUT") byItem[itemName].stockOutKg += qty;
+      if (entry.type === "ADJUST") byItem[itemName].adjustKg += qty;
+    }
+
+    for (const itemName of Object.keys(byItem)) {
+      const v = byItem[itemName];
+      v.stockInKg = Number(v.stockInKg.toFixed(3));
+      v.stockOutKg = Number(v.stockOutKg.toFixed(3));
+      v.adjustKg = Number(v.adjustKg.toFixed(3));
+      v.balanceKg = Number(
+        (v.stockInKg - v.stockOutKg + v.adjustKg).toFixed(3),
+      );
+    }
+
     const balanceKg = Number(
       (totals.stockInKg - totals.stockOutKg + totals.adjustKg).toFixed(3),
     );
@@ -202,6 +305,7 @@ async function getStockSummary(req, res) {
           adjustKg: Number(totals.adjustKg.toFixed(3)),
           balanceKg,
         },
+        byItem,
         entries,
       },
     });

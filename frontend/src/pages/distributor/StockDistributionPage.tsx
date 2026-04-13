@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
@@ -7,15 +7,20 @@ import {
   createDistributionSession,
   closeDistributionSession,
   completeDistribution,
+  downloadReceipt,
+  generateReceipt,
   getDistributionRecords,
   getDistributionSessions,
   getNotifications,
+  getConsumerPhotoVerify,
   getStockSummary,
   getDistributionStats,
   getDistributionTokens,
+  joinQueue,
   markNotificationAsRead,
   recordStockIn,
   startDistributionSession,
+  uploadConsumerPhoto,
   type NotificationItem,
   type DistributionRecord,
   type DistributionSession,
@@ -42,11 +47,16 @@ export default function StockDistributionPage() {
   const [stockOutKg, setStockOutKg] = useState(0);
   const [stockInKg, setStockInKg] = useState(0);
   const [stockBalanceKg, setStockBalanceKg] = useState(0);
+  const [stockByItem, setStockByItem] = useState<
+    Record<string, { stockInKg: number; stockOutKg: number; balanceKg: number }>
+  >({});
+  const [sessions, setSessions] = useState<DistributionSession[]>([]);
   const [openSession, setOpenSession] = useState<DistributionSession | null>(
     null,
   );
-  const [stockInInput, setStockInInput] = useState("");
-  const [stockRefInput, setStockRefInput] = useState("");
+  const [stockInItem, setStockInItem] = useState<"চাল" | "ডাল" | "পেঁয়াজ">(
+    "চাল",
+  );
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"সব" | "Issued" | "Used" | "Cancelled">(
     "সব",
@@ -67,13 +77,16 @@ export default function StockDistributionPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [plannedDateKey, setPlannedDateKey] = useState(todayDateKey());
   const [plannedStartAt, setPlannedStartAt] = useState("");
+  const [plannedRationItem, setPlannedRationItem] = useState<
+    "চাল" | "ডাল" | "পেঁয়াজ"
+  >("চাল");
+  const [photoVerified, setPhotoVerified] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [queueMsg, setQueueMsg] = useState("");
 
   const stockInQtyError =
     Number.isFinite(stockInQty) && stockInQty < 1
-      ? "সর্বনিম্ন ১ কেজি প্রয়োজন"
-      : "";
-  const stockInInputError =
-    stockInInput.trim() !== "" && Number(stockInInput) < 1
       ? "সর্বনিম্ন ১ কেজি প্রয়োজন"
       : "";
 
@@ -102,23 +115,49 @@ export default function StockDistributionPage() {
     setLoading(true);
     setError("");
     try {
-      const [tokenData, recordData, statData] = await Promise.all([
-        getDistributionTokens({ limit: 300 }),
-        getDistributionRecords({ limit: 300 }),
-        getDistributionStats(),
-      ]);
-
-      const [stockData, sessionData] = await Promise.all([
-        getStockSummary(),
-        getDistributionSessions({ dateKey: todayDateKey(), limit: 10 }),
-      ]);
+      const sessionData = await getDistributionSessions({ limit: 50 });
 
       const allSessions = sessionData.sessions || [];
+      setSessions(allSessions);
+
       const currentSession =
         allSessions.find((s) => s.status === "Open") ||
         allSessions.find((s) => s.status === "Paused") ||
         allSessions.find((s) => s.status === "Planned") ||
         null;
+
+      const liveSessionId =
+        currentSession && ["Open", "Paused"].includes(currentSession.status)
+          ? currentSession._id
+          : undefined;
+
+      const stockData = await getStockSummary({
+        dateKey: currentSession?.dateKey,
+      });
+
+      const [tokenData, recordData, statData] = liveSessionId
+        ? await Promise.all([
+            getDistributionTokens({ limit: 300, sessionId: liveSessionId }),
+            getDistributionRecords({ limit: 300, sessionId: liveSessionId }),
+            getDistributionStats({ sessionId: liveSessionId }),
+          ])
+        : [
+            { tokens: [] },
+            {
+              records: [],
+              stock: { dateKey: stockData.dateKey, stockOutKg: 0 },
+            },
+            {
+              totalTokens: 0,
+              issued: 0,
+              used: 0,
+              cancelled: 0,
+              mismatches: 0,
+              completedRecords: 0,
+              expectedKg: 0,
+              actualKg: 0,
+            },
+          ];
 
       setTokens(tokenData.tokens);
       setRecords(recordData.records);
@@ -126,6 +165,7 @@ export default function StockDistributionPage() {
       setStockOutKg(recordData.stock.stockOutKg);
       setStockInKg(stockData.summary.stockInKg);
       setStockBalanceKg(stockData.summary.balanceKg);
+      setStockByItem(stockData.byItem || {});
       setOpenSession(currentSession);
       setSessionStatus(currentSession?.status || "");
       setTodayStockTotal(Number(stockData.summary.stockInKg || 0));
@@ -149,15 +189,27 @@ export default function StockDistributionPage() {
     };
   }, []);
 
-  const fetchRecords = async () => {
+  const fetchRecords = useCallback(async () => {
     try {
-      const recordData = await getDistributionRecords({ limit: 300 });
+      const sessionId =
+        openSession && ["Open", "Paused"].includes(openSession.status)
+          ? openSession._id
+          : undefined;
+      if (!sessionId) {
+        setRecords([]);
+        setStockOutKg(0);
+        return;
+      }
+      const recordData = await getDistributionRecords({
+        limit: 300,
+        sessionId,
+      });
       setRecords(recordData.records || []);
       setStockOutKg(recordData.stock.stockOutKg || 0);
     } catch {
       // ignore
     }
-  };
+  }, [openSession]);
 
   useEffect(() => {
     void fetchRecords();
@@ -168,7 +220,7 @@ export default function StockDistributionPage() {
       return () => window.clearInterval(interval);
     }
     return undefined;
-  }, [sessionStatus]);
+  }, [sessionStatus, fetchRecords]);
 
   const filteredTokens = useMemo(() => {
     return tokens.filter((token) => {
@@ -187,14 +239,74 @@ export default function StockDistributionPage() {
   const openCompleteModal = (token: DistributionToken) => {
     setSelectedToken(token);
     setActualKg(token.rationQtyKg);
+    setPhotoVerified(false);
+    setPhotoFile(null);
     setOpenComplete(true);
+  };
+
+  const onJoinQueue = async (token: DistributionToken) => {
+    if (!openSession?._id) {
+      setError("প্রথমে একটি সেশন চালু করুন");
+      return;
+    }
+    const consumerId =
+      typeof token.consumerId === "string"
+        ? token.consumerId
+        : token.consumerId._id;
+    try {
+      setLoading(true);
+      setError("");
+      const result = await joinQueue(openSession._id, consumerId);
+      setQueueMsg(`কিউ নম্বর #${result.queueNumber} বরাদ্দ হয়েছে`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "কিউতে যোগ করা যায়নি");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onDownloadReceipt = async (token: DistributionToken) => {
+    try {
+      setLoading(true);
+      setError("");
+      await generateReceipt(token._id);
+      const blob = await downloadReceipt(token.tokenCode);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `receipt-${token.tokenCode}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "রসিদ ডাউনলোড ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const onComplete = async () => {
     if (!selectedToken) return;
 
+    if (!photoVerified) {
+      setError("ছবি যাচাই নিশ্চিত করতে চেকবক্স টিক দিন");
+      return;
+    }
+
+    const consumerId =
+      typeof selectedToken.consumerId === "string"
+        ? selectedToken.consumerId
+        : selectedToken.consumerId._id;
+
     try {
       setLoading(true);
+      if (photoFile) {
+        setPhotoBusy(true);
+        await uploadConsumerPhoto(consumerId, photoFile);
+        const verify = await getConsumerPhotoVerify(consumerId);
+        if (!verify.hasPhoto) {
+          throw new Error("ছবি যাচাই সম্পন্ন হয়নি");
+        }
+      }
       await completeDistribution(selectedToken.tokenCode, actualKg);
       setMessage("বিতরণ সম্পন্ন হয়েছে");
       setOpenComplete(false);
@@ -204,41 +316,11 @@ export default function StockDistributionPage() {
       setError(err instanceof Error ? err.message : "বিতরণ সম্পন্ন করা যায়নি");
     } finally {
       setLoading(false);
+      setPhotoBusy(false);
     }
   };
 
   const delta = Number((stats.expectedKg - stats.actualKg).toFixed(2));
-
-  const onStockIn = async () => {
-    if (
-      sessionStatus === "Open" ||
-      sessionStatus === "Paused" ||
-      sessionStatus === "Closed"
-    ) {
-      setError("সেশন শুরু হয়ে গেছে, এখন স্টক IN পরিবর্তন করা যাবে না");
-      return;
-    }
-
-    const qty = Number(stockInInput);
-    if (!Number.isFinite(qty) || qty < 1) {
-      setError("সর্বনিম্ন ১ কেজি প্রয়োজন");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError("");
-      await recordStockIn({ qtyKg: qty, ref: stockRefInput || undefined });
-      setMessage("স্টক IN রেকর্ড হয়েছে");
-      setStockInInput("");
-      setStockRefInput("");
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "স্টক IN রেকর্ড ব্যর্থ");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleStockIn = async () => {
     if (
@@ -257,7 +339,7 @@ export default function StockDistributionPage() {
     try {
       setSubmittingStock(true);
       setError("");
-      await recordStockIn({ qtyKg: stockInQty });
+      await recordStockIn({ qtyKg: stockInQty, item: stockInItem });
       setMessage("মজুদ সফলভাবে যোগ করা হয়েছে");
       await loadData();
     } catch (err) {
@@ -310,6 +392,7 @@ export default function StockDistributionPage() {
       setError("");
       await createDistributionSession({
         dateKey: plannedDateKey,
+        rationItem: plannedRationItem,
         scheduledStartAt: plannedStartAt
           ? new Date(plannedStartAt).toISOString()
           : undefined,
@@ -324,12 +407,15 @@ export default function StockDistributionPage() {
   };
 
   const onStartSession = async () => {
+    if (!openSession?._id) {
+      setError("শুরু করার জন্য পরিকল্পিত সেশন নেই");
+      return;
+    }
     try {
       setLoading(true);
       setError("");
       await startDistributionSession({
-        sessionId: openSession?._id,
-        dateKey: todayDateKey(),
+        sessionId: openSession._id,
       });
       setMessage("সেশন শুরু হয়েছে। এখন টোকেন স্ক্যান/ওজন ডেটা সক্রিয়");
       await loadData();
@@ -357,6 +443,11 @@ export default function StockDistributionPage() {
             {error || message}
           </div>
         )}
+        {queueMsg && (
+          <div className="mb-3 rounded border px-3 py-2 text-[12px] bg-purple-50 border-purple-200 text-purple-700">
+            {queueMsg}
+          </div>
+        )}
 
         <div className="mb-3 border rounded p-3 bg-[#f9fafb]">
           <div className="font-semibold mb-2">আজকের মজুদ নিবন্ধন</div>
@@ -374,7 +465,7 @@ export default function StockDistributionPage() {
           ) : (
             <div>
               <label className="text-[13px]">আজকের মজুদ পরিমাণ</label>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <input
                   type="number"
                   min={1}
@@ -383,6 +474,17 @@ export default function StockDistributionPage() {
                   onChange={(e) => setStockInQty(Number(e.target.value || 0))}
                   className="border rounded px-3 py-2 w-32"
                 />
+                <select
+                  value={stockInItem}
+                  onChange={(e) =>
+                    setStockInItem(e.target.value as "চাল" | "ডাল" | "পেঁয়াজ")
+                  }
+                  className="border rounded px-3 py-2"
+                >
+                  <option value="চাল">চাল</option>
+                  <option value="ডাল">ডাল</option>
+                  <option value="পেঁয়াজ">পেঁয়াজ</option>
+                </select>
                 <span className="text-gray-600 font-medium">কেজি</span>
               </div>
               {stockInQtyError && (
@@ -403,7 +505,7 @@ export default function StockDistributionPage() {
 
         <div className="mb-3 border rounded p-3 bg-[#f8fafc]">
           <div className="font-semibold mb-2">সেশন পরিকল্পনা ও শুরু</div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-2">
             <input
               type="date"
               value={plannedDateKey}
@@ -416,13 +518,31 @@ export default function StockDistributionPage() {
               onChange={(e) => setPlannedStartAt(e.target.value)}
               className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
             />
+            <select
+              value={plannedRationItem}
+              onChange={(e) =>
+                setPlannedRationItem(
+                  e.target.value as "চাল" | "ডাল" | "পেঁয়াজ",
+                )
+              }
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="চাল">চাল</option>
+              <option value="ডাল">ডাল</option>
+              <option value="পেঁয়াজ">পেঁয়াজ</option>
+            </select>
             <Button onClick={() => void onPlanSession()} disabled={loading}>
               📅 সেশন প্ল্যান করুন
             </Button>
             <Button
               variant="secondary"
               onClick={() => void onStartSession()}
-              disabled={loading || sessionStatus === "Open"}
+              disabled={
+                loading ||
+                !openSession ||
+                openSession.status === "Open" ||
+                openSession.status === "Closed"
+              }
             >
               ▶ সেশন শুরু
             </Button>
@@ -433,6 +553,25 @@ export default function StockDistributionPage() {
               ? ` | নির্ধারিত শুরু: ${new Date(openSession.scheduledStartAt).toLocaleString("bn-BD")}`
               : ""}
           </div>
+          {sessions.length > 0 && (
+            <div className="mt-2 text-[12px] text-[#374151]">
+              পরিকল্পিত/চলমান সেশন:
+              <div className="mt-1 flex flex-wrap gap-1">
+                {sessions
+                  .filter((s) =>
+                    ["Planned", "Open", "Paused"].includes(s.status),
+                  )
+                  .map((s) => (
+                    <span
+                      key={s._id}
+                      className="px-2 py-1 rounded border bg-white text-[11px]"
+                    >
+                      {s.dateKey} · {s.status} · {s.rationItem || "চাল"}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {mismatchAlerts.length > 0 && (
@@ -498,26 +637,23 @@ export default function StockDistributionPage() {
             ব্যালেন্স (kg): <b>{stockBalanceKg}</b>
           </div>
         </div>
+        {Object.keys(stockByItem).length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            {(["চাল", "ডাল", "পেঁয়াজ"] as const).map((item) => (
+              <div
+                key={item}
+                className="border rounded p-2 text-[12px] bg-white"
+              >
+                <div className="font-semibold">{item}</div>
+                <div>IN: {stockByItem[item]?.stockInKg ?? 0} kg</div>
+                <div>OUT: {stockByItem[item]?.stockOutKg ?? 0} kg</div>
+                <div>ব্যালেন্স: {stockByItem[item]?.balanceKg ?? 0} kg</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
-          <input
-            type="number"
-            min={1}
-            step="1"
-            value={stockInInput}
-            onChange={(e) => setStockInInput(e.target.value)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="স্টক IN (kg, যেমন 5)"
-          />
-          <input
-            value={stockRefInput}
-            onChange={(e) => setStockRefInput(e.target.value)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="স্টক ব্যাচ/রেফারেন্স (ঐচ্ছিক)"
-          />
-          <Button onClick={() => void onStockIn()} disabled={loading}>
-            ➕ স্টক IN
-          </Button>
           <Button
             variant="secondary"
             onClick={() => void onCloseSession()}
@@ -528,11 +664,6 @@ export default function StockDistributionPage() {
             🔒 সেশন ক্লোজ
           </Button>
         </div>
-        {stockInInputError && (
-          <div className="mb-3 text-[12px] text-red-600">
-            {stockInInputError}
-          </div>
-        )}
 
         {openSession && (
           <div className="mb-3 text-[12px] rounded border border-[#fde68a] bg-[#fffbeb] text-[#92400e] px-3 py-2">
@@ -623,8 +754,23 @@ export default function StockDistributionPage() {
                       </td>
                       <td className="border border-[#cfd6e0] p-2 text-center">
                         {token.status === "Issued" ? (
-                          <Button onClick={() => openCompleteModal(token)}>
-                            ⚖️ সম্পন্ন
+                          <div className="flex items-center justify-center gap-1">
+                            <Button onClick={() => openCompleteModal(token)}>
+                              ⚖️ সম্পন্ন
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              onClick={() => void onJoinQueue(token)}
+                            >
+                              কিউ
+                            </Button>
+                          </div>
+                        ) : token.status === "Used" ? (
+                          <Button
+                            variant="secondary"
+                            onClick={() => void onDownloadReceipt(token)}
+                          >
+                            রসিদ
                           </Button>
                         ) : (
                           <span className="text-[#6b7280]">—</span>
@@ -636,7 +782,11 @@ export default function StockDistributionPage() {
                 {filteredTokens.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-4 text-center text-[#6b7280]">
-                      {loading ? "লোড হচ্ছে..." : "কোনো টোকেন নেই"}
+                      {loading
+                        ? "লোড হচ্ছে..."
+                        : sessionStatus === "Open" || sessionStatus === "Paused"
+                          ? "কোনো টোকেন নেই"
+                          : "লাইভ সেশন নেই"}
                     </td>
                   </tr>
                 )}
@@ -792,6 +942,27 @@ export default function StockDistributionPage() {
             className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
             placeholder="বাস্তব কেজি (যেমন 5 kg)"
           />
+          <div className="space-y-2 border rounded p-2 bg-[#faf5ff] border-[#e9d5ff]">
+            <label className="flex items-center gap-2 text-[13px]">
+              <input
+                type="checkbox"
+                checked={photoVerified}
+                onChange={(e) => setPhotoVerified(e.target.checked)}
+              />
+              ছবি যাচাই হয়েছে (আবশ্যক)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[12px] bg-white"
+            />
+            {photoBusy && (
+              <div className="text-[12px] text-[#6b21a8]">
+                ছবি যাচাই হচ্ছে...
+              </div>
+            )}
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpenComplete(false)}>
               বাতিল

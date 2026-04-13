@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { STOCK_ITEMS } = require("../utils/stock-items.utils");
 
 const TokenSchema = new mongoose.Schema(
   {
@@ -20,8 +21,11 @@ const TokenSchema = new mongoose.Schema(
     sessionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "DistributionSession",
+      required: true,
     },
+    rationItem: { type: String, enum: STOCK_ITEMS, default: "চাল" },
     rationQtyKg: { type: Number, required: true },
+    iotVerified: { type: Boolean, default: false },
     status: {
       type: String,
       enum: ["Issued", "Used", "Cancelled", "Expired"],

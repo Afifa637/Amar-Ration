@@ -7,6 +7,7 @@ import {
   getConsumerCard,
   getAdminConsumerReview,
   getConsumerStats,
+  requestAuditReport,
   reissueConsumerCard,
   updateConsumer,
   type Consumer,
@@ -25,7 +26,16 @@ export default function AdminConsumersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState("সব বিভাগ");
   const [wardFilter, setWardFilter] = useState("সব ওয়ার্ড");
+  const [statusFilter, setStatusFilter] = useState("সব স্ট্যাটাস");
+  const [familyFilter, setFamilyFilter] = useState("সব");
+  const [blacklistFilter, setBlacklistFilter] = useState("সব");
+  const [cardFilter, setCardFilter] = useState("সব");
+  const [qrFilter, setQrFilter] = useState("সব");
+  const [auditFilter, setAuditFilter] = useState("সব");
+  const [mismatchOnly, setMismatchOnly] = useState(false);
+  const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<{
     row: AdminConsumerReviewRow;
     consumer: Consumer | null;
@@ -37,7 +47,34 @@ export default function AdminConsumersPage() {
     setError("");
     try {
       const [reviewData, consumerStats] = await Promise.all([
-        getAdminConsumerReview({ limit: 200 }),
+        getAdminConsumerReview({
+          limit: 200,
+          division: divisionFilter === "সব বিভাগ" ? undefined : divisionFilter,
+          ward: wardFilter === "সব ওয়ার্ড" ? undefined : wardFilter,
+          status: statusFilter === "সব স্ট্যাটাস" ? undefined : statusFilter,
+          familyFlag:
+            familyFilter === "সব"
+              ? undefined
+              : familyFilter === "শুধু ফ্ল্যাগড",
+          blacklistStatus:
+            blacklistFilter === "সব"
+              ? undefined
+              : (blacklistFilter as "None" | "Temp" | "Permanent"),
+          cardStatus:
+            cardFilter === "সব"
+              ? undefined
+              : (cardFilter as "Active" | "Inactive" | "Revoked"),
+          qrStatus:
+            qrFilter === "সব"
+              ? undefined
+              : (qrFilter as "Valid" | "Invalid" | "Revoked" | "Expired"),
+          auditNeeded:
+            auditFilter === "সব"
+              ? undefined
+              : auditFilter === "শুধু অডিট-প্রয়োজন",
+          mismatchOnly,
+          search: search || undefined,
+        }),
         getConsumerStats(),
       ]);
       setRows(reviewData.rows || []);
@@ -56,6 +93,7 @@ export default function AdminConsumersPage() {
 
   useEffect(() => {
     void loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const flaggedCount = useMemo(
@@ -123,17 +161,108 @@ export default function AdminConsumersPage() {
     }
   };
 
-  const wardOptions = useMemo(() => {
-    const wards = Array.from(
-      new Set(rows.map((row) => row.ward || "").filter(Boolean)),
+  const requestAuditForRow = async (row: AdminConsumerReviewRow) => {
+    if (!row.distributorUserId) {
+      setError("এই উপকারভোগীর জন্য নির্ধারিত ডিস্ট্রিবিউটর নেই");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      await requestAuditReport({
+        distributorUserId: row.distributorUserId,
+        note: `অপারেশনাল অডিট অনুরোধ: ${row.consumerCode} (${row.division || ""} - ${row.ward || ""})`,
+      });
+      setMessage("ডিস্ট্রিবিউটরের কাছে অডিট রিপোর্ট অনুরোধ পাঠানো হয়েছে");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "অডিট অনুরোধ ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const divisionOptions = useMemo(() => {
+    const divisions = Array.from(
+      new Set(rows.map((row) => row.division || "").filter(Boolean)),
     );
-    return ["সব ওয়ার্ড", ...wards];
+    return ["সব বিভাগ", ...divisions];
   }, [rows]);
 
+  const wardOptions = useMemo(() => {
+    const wards = Array.from(
+      new Set(
+        rows
+          .filter((row) =>
+            divisionFilter === "সব বিভাগ"
+              ? true
+              : (row.division || "") === divisionFilter,
+          )
+          .map((row) => row.ward || "")
+          .filter(Boolean),
+      ),
+    );
+    return ["সব ওয়ার্ড", ...wards];
+  }, [rows, divisionFilter]);
+
   const filteredRows = useMemo(() => {
-    if (wardFilter === "সব ওয়ার্ড") return rows;
-    return rows.filter((row) => (row.ward || "") === wardFilter);
-  }, [rows, wardFilter]);
+    return rows.filter((row) => {
+      if (
+        divisionFilter !== "সব বিভাগ" &&
+        (row.division || "") !== divisionFilter
+      ) {
+        return false;
+      }
+      if (wardFilter !== "সব ওয়ার্ড" && (row.ward || "") !== wardFilter) {
+        return false;
+      }
+      if (statusFilter !== "সব স্ট্যাটাস" && row.status !== statusFilter) {
+        return false;
+      }
+      if (familyFilter === "শুধু ফ্ল্যাগড" && !row.familyFlag) return false;
+      if (familyFilter === "শুধু নন-ফ্ল্যাগড" && row.familyFlag) return false;
+      if (blacklistFilter !== "সব" && row.blacklistStatus !== blacklistFilter) {
+        return false;
+      }
+      if (cardFilter !== "সব" && row.cardStatus !== cardFilter) {
+        return false;
+      }
+      if (qrFilter !== "সব" && row.qrStatus !== qrFilter) {
+        return false;
+      }
+      if (auditFilter === "শুধু অডিট-প্রয়োজন" && !row.auditNeeded) {
+        return false;
+      }
+      if (auditFilter === "শুধু অডিট-নয়" && row.auditNeeded) {
+        return false;
+      }
+      if (mismatchOnly && Number(row.mismatchCount || 0) < 1) {
+        return false;
+      }
+      if (search.trim()) {
+        const needle = search.toLowerCase();
+        const hit =
+          row.consumerCode.toLowerCase().includes(needle) ||
+          row.name.toLowerCase().includes(needle) ||
+          row.nidLast4.toLowerCase().includes(needle);
+        if (!hit) return false;
+      }
+
+      return true;
+    });
+  }, [
+    rows,
+    divisionFilter,
+    wardFilter,
+    statusFilter,
+    familyFilter,
+    blacklistFilter,
+    cardFilter,
+    qrFilter,
+    auditFilter,
+    mismatchOnly,
+    search,
+  ]);
 
   const blacklistBadge = (row: AdminConsumerReviewRow) => {
     if (row.familyFlag) {
@@ -206,8 +335,21 @@ export default function AdminConsumersPage() {
       </SectionCard>
 
       <SectionCard title="ফ্যামিলি-ভিত্তিক পরিচয় যাচাই">
-        <div className="mb-3 flex items-center gap-2">
-          <label className="text-[12px] text-[#6b7280]">ওয়ার্ড:</label>
+        <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <select
+            value={divisionFilter}
+            onChange={(e) => {
+              setDivisionFilter(e.target.value);
+              setWardFilter("সব ওয়ার্ড");
+            }}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            {divisionOptions.map((division) => (
+              <option key={division} value={division}>
+                {division}
+              </option>
+            ))}
+          </select>
           <select
             value={wardFilter}
             onChange={(e) => setWardFilter(e.target.value)}
@@ -219,6 +361,89 @@ export default function AdminConsumersPage() {
               </option>
             ))}
           </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="সব স্ট্যাটাস">সব স্ট্যাটাস</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Revoked">Revoked</option>
+            <option value="inactive_review">inactive_review</option>
+          </select>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="কোড/নাম/NID শেষ ৪ ডিজিট"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <div className="md:col-span-4 grid grid-cols-1 md:grid-cols-6 gap-2">
+            <select
+              value={familyFilter}
+              onChange={(e) => setFamilyFilter(e.target.value)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="সব">ফ্যামিলি: সব</option>
+              <option value="শুধু ফ্ল্যাগড">ফ্যামিলি: শুধু ফ্ল্যাগড</option>
+              <option value="শুধু নন-ফ্ল্যাগড">
+                ফ্যামিলি: শুধু নন-ফ্ল্যাগড
+              </option>
+            </select>
+            <select
+              value={blacklistFilter}
+              onChange={(e) => setBlacklistFilter(e.target.value)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="সব">ব্ল্যাকলিস্ট: সব</option>
+              <option value="None">None</option>
+              <option value="Temp">Temp</option>
+              <option value="Permanent">Permanent</option>
+            </select>
+            <select
+              value={cardFilter}
+              onChange={(e) => setCardFilter(e.target.value)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="সব">কার্ড: সব</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+              <option value="Revoked">Revoked</option>
+            </select>
+            <select
+              value={qrFilter}
+              onChange={(e) => setQrFilter(e.target.value)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="সব">QR: সব</option>
+              <option value="Valid">Valid</option>
+              <option value="Invalid">Invalid</option>
+              <option value="Revoked">Revoked</option>
+              <option value="Expired">Expired</option>
+            </select>
+            <select
+              value={auditFilter}
+              onChange={(e) => setAuditFilter(e.target.value)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            >
+              <option value="সব">অডিট: সব</option>
+              <option value="শুধু অডিট-প্রয়োজন">শুধু অডিট-প্রয়োজন</option>
+              <option value="শুধু অডিট-নয়">শুধু অডিট-নয়</option>
+            </select>
+            <label className="flex items-center gap-2 border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white">
+              <input
+                type="checkbox"
+                checked={mismatchOnly}
+                onChange={(e) => setMismatchOnly(e.target.checked)}
+              />
+              শুধু মিসম্যাচ
+            </label>
+          </div>
+          <div className="md:col-span-4 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => void loadData()}>
+              ফিল্টার প্রয়োগ
+            </Button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
@@ -226,8 +451,11 @@ export default function AdminConsumersPage() {
               <tr className="bg-[#f3f5f8] text-left">
                 {[
                   "কনজিউমার আইডি",
+                  "বিভাগ",
                   "ওয়ার্ড",
                   "ব্ল্যাকলিস্ট/ফ্ল্যাগ",
+                  "কার্ড/QR",
+                  "মিসম্যাচ",
                   "স্ট্যাটাস",
                   "অ্যাডমিন অ্যাকশন",
                 ].map((head) => (
@@ -244,10 +472,20 @@ export default function AdminConsumersPage() {
                     {row.consumerCode}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
+                    {row.division || "—"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
                     {row.ward || "—"}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {blacklistBadge(row)}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6] text-[12px]">
+                    কার্ড: {row.cardStatus || "Inactive"} <br />
+                    QR: {row.qrStatus || "Invalid"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {row.mismatchCount || 0}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">{row.status}</td>
                   <td className="p-2 border border-[#d7dde6]">
@@ -280,13 +518,21 @@ export default function AdminConsumersPage() {
                       >
                         QR পুনরায় ইস্যু
                       </Button>
+                      {row.auditNeeded && row.distributorUserId && (
+                        <Button
+                          variant="ghost"
+                          onClick={() => void requestAuditForRow(row)}
+                        >
+                          অডিট রিপোর্ট চাইুন
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ))}
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-[#6b7280]">
+                  <td colSpan={8} className="p-4 text-center text-[#6b7280]">
                     কোনো ডেটা পাওয়া যায়নি
                   </td>
                 </tr>

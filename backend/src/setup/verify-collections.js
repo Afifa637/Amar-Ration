@@ -18,6 +18,7 @@ const requiredCollections = [
   "offlinequeues",
   "notifications",
   "smsoutboxes",
+  "refreshtokens",
   "systemsettings",
 ];
 

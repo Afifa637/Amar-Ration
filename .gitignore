@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+backend/receipts
+backend/uploads/photos
+frontend/tsconfig.tsbuildinfo
 
 # Editor directories and files
 .vscode/*

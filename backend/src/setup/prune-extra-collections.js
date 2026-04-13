@@ -18,7 +18,10 @@ const requiredCollections = [
   "offlinequeues",
   "notifications",
   "smsoutboxes",
+  "refreshtokens",
   "systemsettings",
+  "complaints",
+  "blacklistappeals",
 ];
 
 (async () => {

@@ -57,9 +57,32 @@ async function flagDistributorForFraud(
   const distributor = await Distributor.findById(distributorId).lean();
   if (!distributor) return { flagged: false, reason: "DISTRIBUTOR_NOT_FOUND" };
 
+  const distributorUser = await User.findById(distributor.userId)
+    .select(
+      "_id name wardNo status authorityStatus pendingSuspend pendingSuspendAt",
+    )
+    .lean();
+  if (!distributorUser) return { flagged: false, reason: "USER_NOT_FOUND" };
+
+  if (
+    ["Suspended", "Revoked"].includes(distributorUser.authorityStatus) ||
+    distributorUser.status === "Suspended"
+  ) {
+    return { flagged: false, reason: "ALREADY_SUSPENDED" };
+  }
+
+  if (distributorUser.pendingSuspend) {
+    return {
+      flagged: false,
+      pendingReview: true,
+      reviewDeadline: distributorUser.pendingSuspendAt || null,
+      reason: "PENDING_REVIEW",
+    };
+  }
+
   const alreadyActive = await BlacklistEntry.findOne({
     targetType: "Distributor",
-    targetRefId: String(distributorId),
+    targetRefId: String(distributor._id),
     active: true,
   }).lean();
 
@@ -69,6 +92,7 @@ async function flagDistributorForFraud(
 
   const { temporaryBlockDays } = await getFraudConfig();
   const expiresAt = new Date(Date.now() + temporaryBlockDays * 86400000);
+  const reviewDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   const entry = await BlacklistEntry.create({
     distributorId: distributor._id,
@@ -76,17 +100,23 @@ async function flagDistributorForFraud(
     targetType: "Distributor",
     targetRefId: String(distributor._id),
     blockType: "Temporary",
-    reason: `Auto-flagged: ${mismatchCount} mismatches in last 30 days (threshold ${threshold})`,
+    reason: `Mismatch count ${mismatchCount} reached threshold ${threshold}`,
     active: true,
     expiresAt,
   });
 
-  await Distributor.findByIdAndUpdate(distributor._id, {
-    $set: { authorityStatus: "Suspended" },
-  });
-  await User.findByIdAndUpdate(distributor.userId, {
-    $set: { authorityStatus: "Suspended", status: "Suspended" },
-  });
+  const suspendedUser = await User.findByIdAndUpdate(
+    distributor.userId,
+    {
+      $set: {
+        pendingSuspend: true,
+        pendingSuspendAt: reviewDeadline,
+        pendingSuspendReason: `Mismatch count ${mismatchCount} reached threshold ${threshold}`,
+      },
+      $inc: { tokenVersion: 1 },
+    },
+    { new: true },
+  ).lean();
 
   await writeAudit({
     actorUserId: distributor.userId,
@@ -96,51 +126,58 @@ async function flagDistributorForFraud(
     entityId: String(distributor._id),
     severity: "Critical",
     meta: {
+      action: "AUTO_FRAUD_REVIEW_PENDING",
       mismatchCount,
       threshold,
       blacklistEntryId: String(entry._id),
+      reviewDeadline,
       expiresAt,
     },
   });
 
   await notifyUser(distributor.userId, {
-    title: "অ্যাকাউন্ট স্থগিত",
+    title: "অ্যাকাউন্ট রিভিউতে আছে",
     message:
-      "ওজন অমিলের সংখ্যা সীমা অতিক্রম করায় আপনার অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে স্থগিত করা হয়েছে।",
+      "ওজন অমিলের সংখ্যা সীমা অতিক্রম করেছে। ২৪ ঘণ্টার মধ্যে অ্যাডমিন রিভিউ হবে।",
     meta: {
       distributorId: String(distributor._id),
       mismatchCount,
       threshold,
+      reviewDeadline,
       expiresAt,
     },
   });
 
-  const distributorUser = await User.findById(distributor.userId)
-    .select("name wardNo")
-    .lean();
   const distributorWardNo = distributorUser?.wardNo || "N/A";
   const distributorName = distributorUser?.name || "ডিস্ট্রিবিউটর";
-
   await notifyAdmins({
-    title: `🚨 জালিয়াতি সতর্কতা — ওয়ার্ড ${distributorWardNo}`,
-    message: `${distributorName} এর অ্যাকাউন্ট ${mismatchCount} বার ওজন অমিলের কারণে স্বয়ংক্রিয়ভাবে স্থগিত।`,
+    title: "Fraud review pending",
+    message: `${distributorName} (${distributorWardNo}) এর অ্যাকাউন্ট ${mismatchCount} বার ওজন অমিলের কারণে রিভিউ কিউতে আছে (২৪ ঘণ্টা)।`,
     meta: {
       distributorId: String(distributor._id),
       userId: String(distributor.userId),
       distributorWardNo,
-      distributorName,
       mismatchCount,
       threshold,
+      reviewDeadline,
       expiresAt,
+      tokenVersion: suspendedUser?.tokenVersion,
     },
   });
 
-  return { flagged: true, entryId: String(entry._id), expiresAt };
+  return {
+    flagged: true,
+    pendingReview: true,
+    reviewDeadline,
+    expiresAt,
+    blacklistEntryId: String(entry._id),
+  };
 }
 
 async function checkDistributorMismatchCount(distributorId) {
-  if (!distributorId)
-    return { flagged: false, reason: "MISSING_DISTRIBUTOR_ID" };
+  if (!distributorId) {
+    return { flagged: false, reason: "DISTRIBUTOR_NOT_FOUND" };
+  }
 
   const { threshold } = await getFraudConfig();
   const mismatchCount = await getDistributorMismatchCount(distributorId);
@@ -159,6 +196,7 @@ async function checkDistributorMismatchCount(distributorId) {
     mismatchCount,
     threshold,
   );
+
   return {
     ...result,
     mismatchCount,

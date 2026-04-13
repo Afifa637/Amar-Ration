@@ -19,6 +19,18 @@ const stockRoutes = require("./routes/stock.routes");
 const notificationRoutes = require("./routes/notification.routes");
 const iotRoutes = require("./routes/iot.routes");
 const fieldRoutes = require("./routes/field.routes");
+const bulkRegisterRoutes = require("./routes/bulkRegister.routes");
+const qrRotationRoutes = require("./routes/qrRotation.routes");
+const fraudScoreRoutes = require("./routes/fraudScore.routes");
+const receiptRoutes = require("./routes/receipt.routes");
+const photoRoutes = require("./routes/photo.routes");
+const sessionRoutes = require("./routes/session.routes");
+const complaintRoutes = require("./routes/complaint.routes");
+const blacklistAppealRoutes = require("./routes/blacklistAppeal.routes");
+const eligibilityRoutes = require("./routes/eligibility.routes");
+const sessionHealthRoutes = require("./routes/sessionHealth.routes");
+const stockSuggestionRoutes = require("./routes/stockSuggestion.routes");
+const queueRoutes = require("./routes/queue.routes");
 
 // Validate critical environment variables
 const requiredEnv = ["MONGO_URI", "JWT_SECRET", "NID_ENCRYPTION_KEY"];
@@ -105,6 +117,18 @@ app.use("/api/stock", stockRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/iot", iotRoutes);
 app.use("/api/field", fieldRoutes);
+app.use("/api/bulk-register", bulkRegisterRoutes);
+app.use("/api/qr-rotation", qrRotationRoutes);
+app.use("/api/fraud-score", fraudScoreRoutes);
+app.use("/api/receipts", receiptRoutes);
+app.use("/api/photos", photoRoutes);
+app.use("/api/sessions", sessionRoutes);
+app.use("/api/complaints", complaintRoutes);
+app.use("/api/appeals", blacklistAppealRoutes);
+app.use("/api/eligibility", eligibilityRoutes);
+app.use("/api/session-health", sessionHealthRoutes);
+app.use("/api/stock-suggestion", stockSuggestionRoutes);
+app.use("/api/queue", queueRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

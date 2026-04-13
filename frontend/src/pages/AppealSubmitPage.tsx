@@ -1,0 +1,108 @@
+import { useState } from "react";
+import { submitAppeal } from "../services/api";
+
+export default function AppealSubmitPage() {
+  const [form, setForm] = useState({
+    consumerCode: "",
+    consumerPhone: "",
+    reason: "",
+    supportingInfo: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState("");
+  const [error, setError] = useState("");
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      setError("");
+      setSuccess("");
+      await submitAppeal({
+        consumerCode: form.consumerCode,
+        consumerPhone: form.consumerPhone,
+        reason: form.reason,
+        supportingInfo: form.supportingInfo,
+      });
+      setSuccess("আপিল জমা হয়েছে। যাচাই শেষে আপনাকে জানানো হবে।");
+      setForm({
+        consumerCode: "",
+        consumerPhone: "",
+        reason: "",
+        supportingInfo: "",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "আপিল জমা ব্যর্থ হয়েছে");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-purple-50/40 py-10 px-4">
+      <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-purple-100 p-6">
+        <h1 className="text-2xl font-bold text-gray-800 mb-1">আপিল জমা</h1>
+        <p className="text-sm text-gray-600 mb-6">
+          অযোগ্য/বাতিল তালিকা সংক্রান্ত আপিল করুন।
+        </p>
+
+        {success && (
+          <div className="mb-4 border border-green-200 bg-green-50 text-green-700 rounded-xl px-4 py-3 text-sm">
+            {success}
+          </div>
+        )}
+        {error && (
+          <div className="mb-4 border border-red-200 bg-red-50 text-red-700 rounded-xl px-4 py-3 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              className="border border-gray-200 rounded-lg px-3 py-2"
+              placeholder="ভোক্তা কোড (যেমন C0001)"
+              value={form.consumerCode}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, consumerCode: e.target.value }))
+              }
+              required
+            />
+            <input
+              className="border border-gray-200 rounded-lg px-3 py-2"
+              placeholder="মোবাইল নম্বর"
+              value={form.consumerPhone}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, consumerPhone: e.target.value }))
+              }
+              required
+            />
+          </div>
+
+          <input
+            className="w-full border border-gray-200 rounded-lg px-3 py-2"
+            placeholder="আপিলের কারণ (সংক্ষিপ্ত)"
+            value={form.reason}
+            onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))}
+            required
+          />
+          <textarea
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 min-h-35"
+            placeholder="সহায়ক তথ্য (ঐচ্ছিক)"
+            value={form.supportingInfo}
+            onChange={(e) =>
+              setForm((p) => ({ ...p, supportingInfo: e.target.value }))
+            }
+          />
+
+          <button
+            disabled={loading}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg px-5 py-2"
+          >
+            {loading ? "জমা হচ্ছে..." : "আপিল জমা দিন"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
