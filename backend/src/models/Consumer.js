@@ -24,10 +24,26 @@ const ConsumerSchema = new mongoose.Schema(
     motherNidHash: { type: String, index: true },
     status: {
       type: String,
-      enum: ["Active", "Inactive", "Revoked"],
+      enum: [
+        "Active",
+        "Inactive",
+        "Revoked",
+        "inactive_review",
+        "suspended",
+        "blacklisted",
+      ],
       default: "Inactive",
     },
     category: { type: String, enum: ["A", "B", "C"], default: "A" },
+    guardianPhone: {
+      type: String,
+      trim: true,
+      match: [
+        /^01[3-9]\d{8}$/,
+        "Invalid Bangladesh mobile number (01XXXXXXXXX)",
+      ],
+    },
+    guardianName: { type: String, trim: true },
 
     familyId: { type: mongoose.Schema.Types.ObjectId, ref: "Family" },
     createdByDistributor: {
@@ -46,6 +62,8 @@ const ConsumerSchema = new mongoose.Schema(
       enum: ["None", "Temp", "Permanent"],
       default: "None",
     },
+    photoPath: { type: String, default: null },
+    flaggedInactiveAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

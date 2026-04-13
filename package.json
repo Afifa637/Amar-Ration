@@ -1,5 +1,14 @@
 {
-  "dependencies": {
-    "nodemailer": "^8.0.5"
+  "name": "amar-ration",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:backend": "npm --workspace backend run dev",
+    "build:frontend": "npm --workspace frontend run build",
+    "lint:frontend": "npm --workspace frontend run lint"
   }
 }

@@ -1,5 +1,7 @@
 const router = require("express").Router();
 const { protect, authorize } = require("../middleware/auth");
+const { validate } = require("../middleware/validate");
+const { createDistributorSchema } = require("../validation/schemas");
 const {
   getAdminSummary,
   getAdminDistributors,
@@ -26,7 +28,11 @@ router.get("/summary", getAdminSummary);
 router.get("/distributors", getAdminDistributors);
 router.patch("/distributors/:userId/status", updateDistributorStatus);
 router.delete("/distributors/:userId", deleteDistributor);
-router.post("/distributors/create", createDistributor);
+router.post(
+  "/distributors/create",
+  validate(createDistributorSchema),
+  createDistributor,
+);
 router.patch(
   "/distributors/:userId/reset-password",
   adminResetDistributorPassword,

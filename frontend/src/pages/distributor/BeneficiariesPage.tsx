@@ -5,6 +5,8 @@ import Badge from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
 import { useAuth } from "../../context/useAuth";
 import {
+  bulkRegisterTemplate,
+  bulkRegisterUpload,
   createConsumer,
   deleteConsumer,
   getConsumerStats,
@@ -20,6 +22,8 @@ type FormState = {
   nidFull: string;
   fatherNidFull: string;
   motherNidFull: string;
+  guardianPhone: string;
+  guardianName: string;
   category: ConsumerCategory;
   status: ConsumerStatus;
 };
@@ -29,6 +33,8 @@ const emptyForm: FormState = {
   nidFull: "",
   fatherNidFull: "",
   motherNidFull: "",
+  guardianPhone: "",
+  guardianName: "",
   category: "A",
   status: "Inactive",
 };
@@ -51,6 +57,8 @@ export default function BeneficiariesPage() {
   });
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<Consumer | null>(null);
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkDryRun, setBulkDryRun] = useState(true);
 
   const normalizeNid = (value: string) => value.replace(/\D/g, "");
   const isValidNid = (value: string) =>
@@ -126,6 +134,8 @@ export default function BeneficiariesPage() {
           nidFull: consumerNid,
           fatherNidFull: fatherNid,
           motherNidFull: motherNid,
+          guardianPhone: form.guardianPhone.trim() || undefined,
+          guardianName: form.guardianName.trim() || undefined,
           category: form.category,
           status: form.status,
         });
@@ -136,6 +146,8 @@ export default function BeneficiariesPage() {
           nidFull: consumerNid,
           fatherNidFull: fatherNid,
           motherNidFull: motherNid,
+          guardianPhone: form.guardianPhone.trim() || undefined,
+          guardianName: form.guardianName.trim() || undefined,
           category: form.category,
           status: "Inactive",
         });
@@ -175,6 +187,76 @@ export default function BeneficiariesPage() {
 
   return (
     <div className="space-y-3">
+      <PortalSection title="বাল্ক নিবন্ধন (ডিস্ট্রিবিউটর)">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            className="md:col-span-2 border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+          />
+          <label className="flex items-center gap-2 text-[13px]">
+            <input
+              type="checkbox"
+              checked={bulkDryRun}
+              onChange={(e) => setBulkDryRun(e.target.checked)}
+            />
+            ড্রাই-রান
+          </label>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() =>
+                void (async () => {
+                  const blob = await bulkRegisterTemplate();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "bulk-register-template.csv";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                })()
+              }
+            >
+              টেমপ্লেট
+            </Button>
+            <Button
+              onClick={() =>
+                void (async () => {
+                  if (!bulkFile) {
+                    setError("CSV ফাইল নির্বাচন করুন");
+                    return;
+                  }
+                  try {
+                    setLoading(true);
+                    const result = await bulkRegisterUpload(
+                      bulkFile,
+                      bulkDryRun,
+                    );
+                    setMessage(
+                      `${result.inserted} টি সফল, ${result.skipped} টি স্কিপ হয়েছে`,
+                    );
+                    await loadData();
+                  } catch (err) {
+                    setError(
+                      err instanceof Error ? err.message : "বাল্ক আপলোড ব্যর্থ",
+                    );
+                  } finally {
+                    setLoading(false);
+                  }
+                })()
+              }
+            >
+              আপলোড
+            </Button>
+          </div>
+        </div>
+        <p className="text-[12px] text-[#6b7280] mt-2">
+          নোট: আপনি কেবল আপনার নিজস্ব division/ward এর ভোক্তাদের বাল্ক নিবন্ধন
+          করতে পারবেন। guardianName কলাম না থাকলেও আপলোড হবে।
+        </p>
+      </PortalSection>
+
       <PortalSection
         title="উপকারভোগী ব্যবস্থাপনা"
         right={
@@ -255,7 +337,7 @@ export default function BeneficiariesPage() {
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
             disabled={tab === "flags"}
           >
-            <option>সব স্ট্যাটাস</option>
+            <option value="সব">সব স্ট্যাটাস</option>
             <option>Active</option>
             <option>Inactive</option>
             <option>Revoked</option>
@@ -352,6 +434,8 @@ export default function BeneficiariesPage() {
                               nidFull: c.nidFull || "",
                               fatherNidFull: c.fatherNidFull || "",
                               motherNidFull: c.motherNidFull || "",
+                              guardianPhone: c.guardianPhone || "",
+                              guardianName: c.guardianName || "",
                               category: c.category,
                               status: c.status,
                             });
@@ -458,6 +542,31 @@ export default function BeneficiariesPage() {
               <option value="B">B</option>
               <option value="C">C</option>
             </select>
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">অভিভাবকের মোবাইল</div>
+            <input
+              value={form.guardianPhone}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  guardianPhone: e.target.value.replace(/\D/g, "").slice(0, 11),
+                }))
+              }
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+              placeholder="01XXXXXXXXX"
+            />
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">অভিভাবকের নাম</div>
+            <input
+              value={form.guardianName}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, guardianName: e.target.value }))
+              }
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+              placeholder="অভিভাবকের নাম লিখুন"
+            />
           </div>
           <div>
             <div className="text-[12px] mb-1 font-medium">

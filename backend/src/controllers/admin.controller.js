@@ -31,6 +31,10 @@ const {
   normalizeDivision,
   isSameDivision,
 } = require("../utils/division.utils");
+const {
+  STOCK_ITEMS,
+  normalizeStockItem,
+} = require("../utils/stock-items.utils");
 
 function generateStrongPassword(length = 14) {
   const charset =
@@ -603,6 +607,9 @@ async function updateDistributorStatus(req, res) {
 
     const previousStatus = user.authorityStatus || "Pending";
     user.authorityStatus = status;
+    user.pendingSuspend = false;
+    user.pendingSuspendAt = null;
+    user.pendingSuspendReason = null;
     if (status === "Active") {
       user.status = "Active";
     } else if (status === "Suspended") {
@@ -838,20 +845,61 @@ async function getAdminCardsSummary(req, res) {
     const now = new Date();
     const rotationThreshold = new Date(now.getTime() + 7 * 86400000);
 
-    const [issuedCards, activeQR, inactiveQR, dueForRotation] =
-      await Promise.all([
-        OMSCard.countDocuments({}),
-        QRCode.countDocuments({ status: "Valid" }),
-        QRCode.countDocuments({ status: { $ne: "Valid" } }),
-        QRCode.countDocuments({ validTo: { $lte: rotationThreshold } }),
-      ]);
+    const cards = await OMSCard.find({})
+      .select("consumerId cardStatus qrCodeId")
+      .lean();
+
+    const qrIds = cards
+      .map((card) => card.qrCodeId)
+      .filter(Boolean)
+      .map((id) => String(id));
+
+    const qrDocs = qrIds.length
+      ? await QRCode.find({ _id: { $in: qrIds } })
+          .select("_id status validTo")
+          .lean()
+      : [];
+    const qrMap = new Map(qrDocs.map((qr) => [String(qr._id), qr]));
+
+    const [consumerTotal] = await Promise.all([Consumer.countDocuments({})]);
+
+    const issuedCards = cards.length;
+    const activeCards = cards.filter(
+      (card) => card.cardStatus === "Active",
+    ).length;
+    const inactiveCards = cards.filter(
+      (card) => card.cardStatus !== "Active",
+    ).length;
+
+    let validQR = 0;
+    let revokedOrInvalidQR = 0;
+    let dueForRotation = 0;
+
+    for (const card of cards) {
+      const qr = qrMap.get(String(card.qrCodeId || ""));
+      if (qr?.status === "Valid") {
+        validQR += 1;
+        if (qr.validTo && new Date(qr.validTo) <= rotationThreshold) {
+          dueForRotation += 1;
+        }
+      } else {
+        revokedOrInvalidQR += 1;
+      }
+    }
+
+    const removedCards = Math.max(0, consumerTotal - issuedCards);
 
     res.json({
       success: true,
       data: {
         issuedCards,
-        activeQR,
-        inactiveRevoked: inactiveQR,
+        activeCards,
+        inactiveCards,
+        activeQR: validQR,
+        inactiveRevoked: revokedOrInvalidQR,
+        validQR,
+        revokedOrInvalidQR,
+        removedCards,
         dueForRotation,
       },
     });
@@ -863,83 +911,342 @@ async function getAdminCardsSummary(req, res) {
 
 async function getAdminDistributionMonitoring(req, res) {
   try {
-    const records = await DistributionRecord.find({})
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .populate({
-        path: "tokenId",
-        populate: [
-          {
-            path: "consumerId",
-            select: "ward division",
-          },
-          {
-            path: "distributorId",
-            select: "ward wardNo division userId",
-          },
-        ],
-      })
+    const viewRaw = String(req.query.view || "live").toLowerCase();
+    const view = ["live", "history", "mismatch"].includes(viewRaw)
+      ? viewRaw
+      : "live";
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
+
+    const distributorId = String(req.query.distributorId || "").trim();
+    const divisionFilter = normalizeDivision(req.query.division);
+    const wardFilter = normalizeWardNo(req.query.ward);
+    const sessionStatus = String(req.query.sessionStatus || "").trim();
+    const itemFilter = normalizeStockItem(req.query.item);
+    const mismatchOnly =
+      view === "mismatch" ||
+      ["1", "true", "yes"].includes(
+        String(req.query.mismatchOnly || "").toLowerCase(),
+      );
+
+    if (wardFilter && !divisionFilter) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const distributorQuery = {};
+    if (distributorId) distributorQuery._id = distributorId;
+    if (divisionFilter) distributorQuery.division = divisionFilter;
+    if (wardFilter) {
+      distributorQuery.$or = [{ wardNo: wardFilter }, { ward: wardFilter }];
+    }
+
+    const distributors = await Distributor.find(distributorQuery)
+      .select("_id userId ward wardNo division")
       .lean();
 
-    const distributorUserIds = records
-      .map((record) => {
-        const token =
-          record.tokenId && typeof record.tokenId === "object"
-            ? record.tokenId
-            : null;
-        const distributor =
-          token?.distributorId && typeof token.distributorId === "object"
-            ? token.distributorId
-            : null;
-        return distributor?.userId ? String(distributor.userId) : null;
-      })
-      .filter(Boolean);
+    if (!distributors.length) {
+      return res.json({
+        success: true,
+        data: {
+          rows: [],
+          groups: [],
+          pagination: { page, limit, total: 0, pages: 1 },
+          view,
+          filters: {
+            distributorId: distributorId || "",
+            division: divisionFilter || "",
+            ward: wardFilter || "",
+            sessionStatus,
+            item: itemFilter || "",
+            mismatchOnly,
+          },
+        },
+      });
+    }
 
+    const distributorIds = distributors.map((d) => String(d._id));
+    const distributorUserIds = distributors
+      .map((d) => d.userId)
+      .filter(Boolean);
     const users = await User.find({ _id: { $in: distributorUserIds } })
-      .select("name")
+      .select("_id name")
       .lean();
     const userNameMap = new Map(users.map((u) => [String(u._id), u.name]));
 
-    const rows = records.map((record) => {
-      const token =
-        record.tokenId && typeof record.tokenId === "object"
-          ? record.tokenId
-          : null;
-      const consumer =
-        token?.consumerId && typeof token.consumerId === "object"
-          ? token.consumerId
-          : null;
-      const distributor =
-        token?.distributorId && typeof token.distributorId === "object"
-          ? token.distributorId
-          : null;
+    const sessionQuery = { distributorId: { $in: distributorIds } };
+    if (sessionStatus) {
+      sessionQuery.status = sessionStatus;
+    } else if (view === "live") {
+      sessionQuery.status = { $in: ["Open", "Paused"] };
+    } else if (view === "history") {
+      sessionQuery.status = "Closed";
+    }
 
-      const division = normalizeDivision(
-        consumer?.division || distributor?.division || "",
-      );
-      const ward =
-        normalizeWardNo(
-          consumer?.ward || distributor?.wardNo || distributor?.ward,
-        ) ||
-        consumer?.ward ||
-        distributor?.ward ||
-        "Unknown";
-      const distributorName = distributor?.userId
-        ? userNameMap.get(String(distributor.userId)) || "—"
-        : "—";
+    const dateKey = String(req.query.dateKey || "").trim();
+    if (dateKey) sessionQuery.dateKey = dateKey;
 
-      return {
-        distributor: distributorName,
-        division: division || "Unknown",
-        ward,
-        expectedKg: record.expectedKg,
-        actualKg: record.actualKg,
-        status: record.mismatch ? "Mismatch" : "Matched",
-        action: record.mismatch ? "Pause + Alert" : "Continue",
+    const totalSessions =
+      await DistributionSession.countDocuments(sessionQuery);
+    const totalPages = Math.max(1, Math.ceil(totalSessions / limit));
+    const safePage = Math.min(page, totalPages);
+
+    let sessionsQuery = DistributionSession.find(sessionQuery)
+      .sort({ updatedAt: -1 })
+      .select("_id distributorId dateKey status openedAt closedAt updatedAt")
+      .lean();
+
+    if (view === "history") {
+      sessionsQuery = sessionsQuery.skip((safePage - 1) * limit).limit(limit);
+    } else {
+      sessionsQuery = sessionsQuery.limit(250);
+    }
+
+    const sessions = await sessionsQuery;
+    if (!sessions.length) {
+      return res.json({
+        success: true,
+        data: {
+          rows: [],
+          groups: [],
+          pagination: {
+            page: safePage,
+            limit,
+            total: totalSessions,
+            pages: totalPages,
+          },
+          view,
+          filters: {
+            distributorId: distributorId || "",
+            division: divisionFilter || "",
+            ward: wardFilter || "",
+            sessionStatus,
+            item: itemFilter || "",
+            mismatchOnly,
+          },
+        },
+      });
+    }
+
+    const sessionIdList = sessions.map((s) => String(s._id));
+    const tokens = await Token.find({ sessionId: { $in: sessionIdList } })
+      .select("_id sessionId rationItem")
+      .lean();
+    const tokenIdList = tokens.map((t) => String(t._id));
+    const tokenById = new Map(tokens.map((t) => [String(t._id), t]));
+
+    const rawRecords = tokenIdList.length
+      ? await DistributionRecord.find({ tokenId: { $in: tokenIdList } })
+          .select("_id tokenId expectedKg actualKg mismatch createdAt")
+          .sort({ createdAt: -1 })
+          .lean()
+      : [];
+
+    const stockQuery = {
+      distributorId: {
+        $in: Array.from(new Set(sessions.map((s) => String(s.distributorId)))),
+      },
+      dateKey: { $in: Array.from(new Set(sessions.map((s) => s.dateKey))) },
+    };
+    if (itemFilter) stockQuery.item = itemFilter;
+
+    const stockRows = await StockLedger.find(stockQuery)
+      .select("distributorId dateKey item type qtyKg")
+      .lean();
+
+    const emptyStockByItem = () =>
+      STOCK_ITEMS.reduce((acc, itemName) => {
+        acc[itemName] = 0;
+        return acc;
+      }, {});
+
+    const stockByDistributorDate = new Map();
+    for (const row of stockRows) {
+      const itemName = normalizeStockItem(row.item);
+      if (!itemName) continue;
+
+      const key = `${String(row.distributorId)}::${row.dateKey}`;
+      const current = stockByDistributorDate.get(key) || emptyStockByItem();
+      const qty = Number(row.qtyKg || 0);
+
+      if (row.type === "IN") current[itemName] += qty;
+      if (row.type === "OUT") current[itemName] -= qty;
+      if (row.type === "ADJUST") current[itemName] += qty;
+
+      stockByDistributorDate.set(key, current);
+    }
+
+    for (const stock of stockByDistributorDate.values()) {
+      for (const itemName of Object.keys(stock)) {
+        stock[itemName] = Number(stock[itemName].toFixed(3));
+      }
+    }
+
+    const sessionStats = new Map(
+      sessions.map((s) => [
+        String(s._id),
+        {
+          expectedKg: 0,
+          actualKg: 0,
+          mismatchCount: 0,
+          rows: [],
+        },
+      ]),
+    );
+
+    for (const record of rawRecords) {
+      const token = tokenById.get(String(record.tokenId));
+      if (!token) continue;
+      const sessionId = String(token.sessionId);
+      const stats = sessionStats.get(sessionId);
+      if (!stats) continue;
+
+      const rowItem = normalizeStockItem(token.rationItem);
+      if (!rowItem) continue;
+      if (itemFilter && rowItem !== itemFilter) continue;
+      if (mismatchOnly && !record.mismatch) continue;
+
+      const expected = Number(record.expectedKg || 0);
+      const actual = Number(record.actualKg || 0);
+
+      stats.expectedKg += expected;
+      stats.actualKg += actual;
+      if (record.mismatch) stats.mismatchCount += 1;
+      stats.rows.push({
+        recordId: String(record._id),
+        item: rowItem,
+        expectedKg: expected,
+        actualKg: actual,
+        mismatch: !!record.mismatch,
+        createdAt: record.createdAt,
+      });
+    }
+
+    const distributorById = new Map(
+      distributors.map((d) => [String(d._id), d]),
+    );
+    const groupsMap = new Map();
+
+    for (const session of sessions) {
+      const sessionId = String(session._id);
+      const distributorIdStr = String(session.distributorId);
+      const stats = sessionStats.get(sessionId) || {
+        expectedKg: 0,
+        actualKg: 0,
+        mismatchCount: 0,
+        rows: [],
       };
-    });
 
-    res.json({ success: true, data: { rows } });
+      if ((view === "mismatch" || mismatchOnly) && stats.mismatchCount < 1) {
+        continue;
+      }
+
+      const distributor = distributorById.get(distributorIdStr);
+      if (!distributor) continue;
+
+      const stockKey = `${distributorIdStr}::${session.dateKey}`;
+      const stockBalanceByItem =
+        stockByDistributorDate.get(stockKey) || emptyStockByItem();
+
+      if (!groupsMap.has(distributorIdStr)) {
+        const ward =
+          normalizeWardNo(distributor.wardNo || distributor.ward) ||
+          distributor.ward ||
+          "—";
+        const division = normalizeDivision(distributor.division) || "Unknown";
+
+        groupsMap.set(distributorIdStr, {
+          distributorId: distributorIdStr,
+          distributorName:
+            userNameMap.get(String(distributor.userId)) ||
+            "অজানা ডিস্ট্রিবিউটর",
+          division,
+          ward,
+          sessions: [],
+          totals: {
+            expectedKg: 0,
+            actualKg: 0,
+            mismatchCount: 0,
+          },
+        });
+      }
+
+      const group = groupsMap.get(distributorIdStr);
+      group.sessions.push({
+        sessionId,
+        dateKey: session.dateKey,
+        sessionStatus: session.status,
+        openedAt: session.openedAt || null,
+        closedAt: session.closedAt || null,
+        updatedAt: session.updatedAt,
+        expectedKg: Number(stats.expectedKg.toFixed(3)),
+        actualKg: Number(stats.actualKg.toFixed(3)),
+        mismatchCount: stats.mismatchCount,
+        stockBalanceByItem,
+        rows: stats.rows,
+      });
+      group.totals.expectedKg += stats.expectedKg;
+      group.totals.actualKg += stats.actualKg;
+      group.totals.mismatchCount += stats.mismatchCount;
+    }
+
+    const groups = Array.from(groupsMap.values()).map((group) => ({
+      ...group,
+      totals: {
+        expectedKg: Number(group.totals.expectedKg.toFixed(3)),
+        actualKg: Number(group.totals.actualKg.toFixed(3)),
+        mismatchCount: group.totals.mismatchCount,
+      },
+      sessions: group.sessions.sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      ),
+    }));
+
+    const rows = groups.flatMap((group) =>
+      group.sessions.map((s) => ({
+        distributorId: group.distributorId,
+        distributor: group.distributorName,
+        division: group.division,
+        ward: group.ward,
+        sessionId: s.sessionId,
+        dateKey: s.dateKey,
+        sessionStatus: s.sessionStatus,
+        expectedKg: s.expectedKg,
+        actualKg: s.actualKg,
+        mismatchCount: s.mismatchCount,
+        status: s.mismatchCount > 0 ? "Mismatch" : "Matched",
+        action: s.mismatchCount > 0 ? "Pause + Alert" : "Continue",
+        stockBalanceByItem: s.stockBalanceByItem,
+      })),
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        rows,
+        groups,
+        pagination: {
+          page: safePage,
+          limit,
+          total: totalSessions,
+          pages: totalPages,
+        },
+        view,
+        filters: {
+          distributorId: distributorId || "",
+          division: divisionFilter || "",
+          ward: wardFilter || "",
+          sessionStatus,
+          item: itemFilter || "",
+          mismatchOnly,
+        },
+      },
+    });
   } catch (error) {
     console.error("getAdminDistributionMonitoring error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -949,28 +1256,167 @@ async function getAdminDistributionMonitoring(req, res) {
 async function getAdminConsumerReview(req, res) {
   try {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const requestedDivision = String(req.query.division || "").trim();
+    const requestedWard = normalizeWardNo(req.query.ward || req.query.wardNo);
+    const requestedStatus = String(req.query.status || "").trim();
+    const requestedBlacklist = String(req.query.blacklistStatus || "").trim();
+    const requestedCardStatus = String(req.query.cardStatus || "").trim();
+    const requestedQrStatus = String(req.query.qrStatus || "").trim();
+    const requestedFamilyFlag = String(req.query.familyFlag || "").trim();
+    const requestedAuditNeeded = String(req.query.auditNeeded || "").trim();
+    const requestedMismatchOnly = String(req.query.mismatchOnly || "").trim();
+    const search = String(req.query.search || "").trim();
 
-    const consumers = await Consumer.find({})
+    if (requestedWard && !requestedDivision) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const consumerQuery = {};
+    if (requestedDivision) {
+      consumerQuery.division = normalizeDivision(requestedDivision);
+    }
+    if (requestedWard) {
+      consumerQuery.ward = requestedWard;
+    }
+    if (requestedStatus) {
+      consumerQuery.status = requestedStatus;
+    }
+    if (requestedBlacklist) {
+      consumerQuery.blacklistStatus = requestedBlacklist;
+    }
+
+    const consumers = await Consumer.find(consumerQuery)
       .populate("familyId", "flaggedDuplicate")
+      .populate("createdByDistributor", "userId")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
 
+    const consumerIds = consumers.map((c) => c._id);
+    const cards = await OMSCard.find({ consumerId: { $in: consumerIds } })
+      .populate("qrCodeId", "status")
+      .select("consumerId cardStatus qrCodeId")
+      .lean();
+    const cardByConsumerId = new Map(
+      cards.map((card) => [String(card.consumerId), card]),
+    );
+
+    const tokens = await Token.find({ consumerId: { $in: consumerIds } })
+      .select("_id consumerId")
+      .lean();
+    const tokenById = new Map(tokens.map((t) => [String(t._id), t]));
+    const tokenIds = tokens.map((t) => t._id);
+
+    const mismatchRecords = tokenIds.length
+      ? await DistributionRecord.find({
+          tokenId: { $in: tokenIds },
+          mismatch: true,
+        })
+          .select("tokenId")
+          .lean()
+      : [];
+
+    const mismatchByConsumerId = new Map();
+    for (const record of mismatchRecords) {
+      const token = tokenById.get(String(record.tokenId));
+      if (!token?.consumerId) continue;
+      const key = String(token.consumerId);
+      mismatchByConsumerId.set(key, (mismatchByConsumerId.get(key) || 0) + 1);
+    }
+
     const rows = consumers.map((consumer) => {
       const family = consumer.familyId || null;
+      const distributor =
+        consumer.createdByDistributor &&
+        typeof consumer.createdByDistributor === "object"
+          ? consumer.createdByDistributor
+          : null;
+      const card = cardByConsumerId.get(String(consumer._id));
+      const qr =
+        card?.qrCodeId && typeof card.qrCodeId === "object"
+          ? card.qrCodeId
+          : null;
+      const mismatchCount = Number(
+        mismatchByConsumerId.get(String(consumer._id)) || 0,
+      );
+      const auditNeeded =
+        !!family?.flaggedDuplicate ||
+        consumer.blacklistStatus === "Temp" ||
+        consumer.blacklistStatus === "Permanent" ||
+        mismatchCount > 0;
+
       return {
         id: String(consumer._id),
         consumerCode: consumer.consumerCode,
         name: consumer.name,
+        division: consumer.division || "",
         ward: consumer.ward || "",
         nidLast4: consumer.nidLast4,
         status: consumer.status,
         blacklistStatus: consumer.blacklistStatus,
         familyFlag: !!family?.flaggedDuplicate,
+        cardStatus: card?.cardStatus || "Inactive",
+        qrStatus: qr?.status || "Invalid",
+        mismatchCount,
+        auditNeeded,
+        distributorUserId: distributor?.userId
+          ? String(distributor.userId)
+          : null,
       };
     });
 
-    res.json({ success: true, data: { rows } });
+    const filteredRows = rows.filter((row) => {
+      if (
+        requestedDivision &&
+        !isSameDivision(requestedDivision, row.division || "")
+      ) {
+        return false;
+      }
+
+      if (requestedWard && normalizeWardNo(row.ward || "") !== requestedWard) {
+        return false;
+      }
+
+      if (requestedCardStatus && row.cardStatus !== requestedCardStatus) {
+        return false;
+      }
+
+      if (requestedQrStatus && row.qrStatus !== requestedQrStatus) {
+        return false;
+      }
+
+      if (requestedFamilyFlag === "true" && !row.familyFlag) return false;
+      if (requestedFamilyFlag === "false" && row.familyFlag) return false;
+
+      if (requestedAuditNeeded === "true" && !row.auditNeeded) return false;
+      if (requestedAuditNeeded === "false" && row.auditNeeded) return false;
+
+      if (
+        ["1", "true", "yes"].includes(requestedMismatchOnly.toLowerCase()) &&
+        row.mismatchCount < 1
+      ) {
+        return false;
+      }
+
+      if (search) {
+        const needle = search.toLowerCase();
+        const hit =
+          row.consumerCode.toLowerCase().includes(needle) ||
+          row.name.toLowerCase().includes(needle) ||
+          String(row.nidLast4 || "")
+            .toLowerCase()
+            .includes(needle);
+        if (!hit) return false;
+      }
+
+      return true;
+    });
+
+    res.json({ success: true, data: { rows: filteredRows } });
   } catch (error) {
     console.error("getAdminConsumerReview error:", error);
     res.status(500).json({ success: false, message: "Server error" });

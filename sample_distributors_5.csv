@@ -1,0 +1,6 @@
+name,email,phone,division,wardNo,ward,district,upazila,unionName,officeAddress,authorityMonths
+ডিস্ট্রিবিউটর ঢাকা-০৫,dist.dhaka05@example.com,01811111105,Dhaka,05,05,Dhaka,Savar,Tetuljhora,তেঁতুলঝোড়া বাজার,12
+ডিস্ট্রিবিউটর খুলনা-০৬,dist.khulna06@example.com,01811111106,Khulna,06,06,Khulna,Khalishpur,Khalishpur Union,খালিশপুর কেন্দ্র,12
+ডিস্ট্রিবিউটর রাজশাহী-০৭,dist.raj07@example.com,01811111107,Rajshahi,07,07,Rajshahi,Boalia,Boalia Union,বোয়ালিয়া বিতরণ কেন্দ্র,12
+ডিস্ট্রিবিউটর সিলেট-০৮,dist.syl08@example.com,01811111108,Sylhet,08,08,Sylhet,Sadar,Sylhet Union,সিলেট সদর বাজার,12
+ডিস্ট্রিবিউটর চট্টগ্রাম-০৯,dist.ctg09@example.com,01811111109,Chattogram,09,09,Chattogram,Sitakunda,Kumira Union,কুমিরা স্টোর পয়েন্ট,12

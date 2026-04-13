@@ -4,7 +4,15 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from "axios";
 
-const API_BASE_URL = "http://localhost:5000/api";
+const viteEnv = ((import.meta as unknown as { env?: Record<string, unknown> })
+  .env || {}) as {
+  VITE_API_BASE_URL?: string;
+  DEV?: boolean;
+};
+
+const API_BASE_URL =
+  viteEnv.VITE_API_BASE_URL?.replace(/\/$/, "") ||
+  (viteEnv.DEV ? "http://localhost:5000/api" : "/api");
 export const AUTH_STORAGE_KEY = "amar_ration_auth";
 
 const api = axios.create({
@@ -13,6 +21,62 @@ const api = axios.create({
     "Content-Type": "application/json",
   },
 });
+
+let refreshPromise: Promise<string | null> | null = null;
+
+type AuthStorage = {
+  user?: unknown;
+  token?: string;
+  refreshToken?: string;
+};
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) return null;
+
+      let stored: AuthStorage;
+      try {
+        stored = JSON.parse(raw) as AuthStorage;
+      } catch {
+        return null;
+      }
+
+      if (!stored?.refreshToken) return null;
+
+      const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+        refreshToken: stored.refreshToken,
+      });
+
+      const nextToken: string | undefined = response?.data?.data?.token;
+      const nextRefresh: string | undefined = response?.data?.data?.refreshToken;
+      if (!nextToken || !nextRefresh) return null;
+
+      const nextStored: AuthStorage = {
+        ...stored,
+        token: nextToken,
+        refreshToken: nextRefresh,
+      };
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextStored));
+      api.defaults.headers.common.Authorization = `Bearer ${nextToken}`;
+      return nextToken;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
+
+function forceLogoutAndRedirect() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  delete api.defaults.headers.common.Authorization;
+
+  if (typeof window !== "undefined" && window.location.pathname !== "/") {
+    window.location.href = "/";
+  }
+}
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const stored = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -33,7 +97,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     const status = error?.response?.status;
     const apiMessage =
       (error?.response?.data as { message?: string } | undefined)?.message ||
@@ -42,16 +106,34 @@ api.interceptors.response.use(
       error.message = apiMessage;
     }
     const requestUrl: string = error?.config?.url || "";
+    const requestConfig =
+      (error?.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined) ||
+      undefined;
     const isAuthCall =
-      requestUrl.includes("/auth/login") || requestUrl.includes("/auth/signup");
+      requestUrl.includes("/auth/login") ||
+      requestUrl.includes("/auth/signup") ||
+      requestUrl.includes("/auth/refresh") ||
+      requestUrl.includes("/auth/logout");
+
+    if (status === 401 && !isAuthCall && requestConfig && !requestConfig._retry) {
+      requestConfig._retry = true;
+
+      try {
+        const nextToken = await tryRefreshAccessToken();
+        if (nextToken) {
+          requestConfig.headers = requestConfig.headers ?? {};
+          requestConfig.headers.Authorization = `Bearer ${nextToken}`;
+          return api(requestConfig);
+        }
+      } catch {
+        // fallthrough
+      }
+
+      forceLogoutAndRedirect();
+    }
 
     if (status === 401 && !isAuthCall) {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-      delete api.defaults.headers.common.Authorization;
-
-      if (typeof window !== "undefined" && window.location.pathname !== "/") {
-        window.location.href = "/";
-      }
+      forceLogoutAndRedirect();
     }
 
     return Promise.reject(error);
@@ -70,6 +152,8 @@ export type Consumer = {
   nidFull?: string;
   fatherNidFull?: string;
   motherNidFull?: string;
+  guardianPhone?: string;
+  guardianName?: string;
   category: ConsumerCategory;
   status: ConsumerStatus;
   division?: string;
@@ -92,6 +176,7 @@ export type TokenStatus = "Issued" | "Used" | "Cancelled" | "Expired";
 export type DistributionToken = {
   _id: string;
   tokenCode: string;
+  rationItem?: StockItem;
   qrPayload?: string;
   qrImageDataUrl?: string;
   sessionDateKey?: string;
@@ -136,6 +221,7 @@ export type DistributionSession = {
   _id: string;
   distributorId: string;
   dateKey: string;
+  rationItem?: StockItem;
   status: "Planned" | "Open" | "Paused" | "Closed";
   scheduledStartAt?: string;
   openedAt?: string;
@@ -235,30 +321,105 @@ export type AdminDistributorsResponse = {
 
 export type AdminCardsSummary = {
   issuedCards: number;
+  activeCards?: number;
+  inactiveCards?: number;
   activeQR: number;
   inactiveRevoked: number;
+  validQR?: number;
+  revokedOrInvalidQR?: number;
+  removedCards?: number;
   dueForRotation: number;
 };
 
+export type StockItem = "চাল" | "ডাল" | "পেঁয়াজ";
+
 export type AdminDistributionMonitorRow = {
+  distributorId?: string;
   distributor?: string;
   division?: string;
   ward: string;
+  sessionId?: string;
+  dateKey?: string;
+  sessionStatus?: "Planned" | "Open" | "Paused" | "Closed" | string;
+  mismatchCount?: number;
   expectedKg: number;
   actualKg: number;
   status: "Matched" | "Mismatch";
   action: string;
+  stockBalanceByItem?: Record<StockItem, number>;
+};
+
+export type AdminMonitoringRecordRow = {
+  recordId: string;
+  item: StockItem;
+  expectedKg: number;
+  actualKg: number;
+  mismatch: boolean;
+  createdAt?: string;
+};
+
+export type AdminMonitoringSessionGroup = {
+  sessionId: string;
+  dateKey: string;
+  sessionStatus: "Planned" | "Open" | "Paused" | "Closed" | string;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  updatedAt: string;
+  expectedKg: number;
+  actualKg: number;
+  mismatchCount: number;
+  stockBalanceByItem: Record<StockItem, number>;
+  rows: AdminMonitoringRecordRow[];
+};
+
+export type AdminMonitoringDistributorGroup = {
+  distributorId: string;
+  distributorName: string;
+  division: string;
+  ward: string;
+  sessions: AdminMonitoringSessionGroup[];
+  totals: {
+    expectedKg: number;
+    actualKg: number;
+    mismatchCount: number;
+  };
+};
+
+export type AdminDistributionMonitoringResponse = {
+  rows: AdminDistributionMonitorRow[];
+  groups: AdminMonitoringDistributorGroup[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    pages: number;
+  };
+  view: "live" | "history" | "mismatch";
+  filters: {
+    distributorId?: string;
+    division?: string;
+    ward?: string;
+    sessionStatus?: string;
+    item?: StockItem | "";
+    mismatchOnly?: boolean;
+  };
 };
 
 export type AdminConsumerReviewRow = {
   id: string;
   consumerCode: string;
   name: string;
+  division?: string;
   ward?: string;
   nidLast4: string;
-  status: ConsumerStatus;
+  status: ConsumerStatus | "inactive_review" | "suspended" | "blacklisted";
   blacklistStatus?: "None" | "Temp" | "Permanent";
   familyFlag: boolean;
+  cardStatus?: "Active" | "Inactive" | "Revoked";
+  qrStatus?: "Valid" | "Invalid" | "Revoked" | "Expired";
+  mismatchCount?: number;
+  auditNeeded?: boolean;
+  distributorUserId?: string | null;
 };
 
 export type MonitoringBlacklistEntry = {
@@ -308,7 +469,7 @@ export type StockLedgerEntry = {
   distributorId?: string;
   dateKey: string;
   type: "IN" | "OUT" | "ADJUST";
-  item?: string;
+  item?: StockItem;
   qtyKg: number;
   ref?: string;
   createdAt: string;
@@ -323,6 +484,15 @@ export type StockSummaryResponse = {
     adjustKg: number;
     balanceKg: number;
   };
+  byItem?: Record<
+    StockItem,
+    {
+      stockInKg: number;
+      stockOutKg: number;
+      adjustKg: number;
+      balanceKg: number;
+    }
+  >;
   entries: StockLedgerEntry[];
 };
 
@@ -373,6 +543,7 @@ export type DistributionReportRow = {
   consumerName: string;
   ward: string;
   category: ConsumerCategory | "";
+  division?: string;
 };
 
 export type TokenAnalytics = {
@@ -393,6 +564,7 @@ export type DistributorSettings = {
   };
   distribution: {
     weightThresholdKg: number;
+    weightThresholdPercent?: number;
     autoPauseOnMismatch: boolean;
     tokenPerConsumerPerDay: number;
   };
@@ -423,6 +595,82 @@ export type DistributorSettings = {
     immutable: boolean;
   };
 };
+
+export interface ComplaintStats {
+  total: number;
+  open: number;
+  under_review: number;
+  resolved: number;
+  rejected: number;
+  byCategory?: Record<string, number>;
+}
+
+export interface MonthlyPerformanceRow {
+  distributorId: string;
+  distributorName: string;
+  year: number;
+  month: number;
+  monthName: string;
+  totalSessions: number;
+  totalDistributions: number;
+  mismatchCount: number;
+  mismatchRate: number;
+  iotVerifiedCount: number;
+  iotRate: number;
+  fraudScore: number;
+  riskLevel: string;
+  rating: number;
+  badge: string;
+  generatedAt: string;
+}
+
+export interface StockSuggestionResult {
+  division?: string;
+  ward: string;
+  union: string;
+  item?: StockItem | "all";
+  movingAverage: number;
+  suggestedStock: number;
+  itemBreakdown?: Record<
+    StockItem,
+    {
+      movingAverage: number;
+      suggestedStock: number;
+      totalKg: number;
+      sessionsConsidered: number;
+    }
+  >;
+  trend: "increasing" | "decreasing" | "stable";
+  trendBangla: string;
+  note: string;
+  generatedAt: string;
+  last3Sessions: Array<{
+    sessionId: string;
+    date: string;
+    totalKg: number;
+    consumerCount: number;
+  }>;
+}
+
+export interface QueueStatus {
+  sessionId: string;
+  currentlyServing: {
+    id: string;
+    queueNumber: number;
+    consumerName: string;
+    consumerCode: string;
+    category?: string;
+  } | null;
+  waitingCount: number;
+  nextUp: Array<{
+    id: string;
+    queueNumber: number;
+    consumerName: string;
+    consumerCode: string;
+    category?: string;
+  }>;
+  lastUpdated: string;
+}
 
 export type SettingsProfile = {
   _id?: string;
@@ -470,6 +718,8 @@ export async function createConsumer(payload: {
   nidFull: string;
   fatherNidFull: string;
   motherNidFull: string;
+  guardianPhone?: string;
+  guardianName?: string;
   category: ConsumerCategory;
   status?: ConsumerStatus;
 }) {
@@ -487,6 +737,8 @@ export async function updateConsumer(
     nidFull?: string;
     fatherNidFull?: string;
     motherNidFull?: string;
+    guardianPhone?: string;
+    guardianName?: string;
     category?: ConsumerCategory;
     status?: ConsumerStatus;
   },
@@ -597,6 +849,7 @@ export async function getDistributionTokens(params?: {
   limit?: number;
   search?: string;
   status?: TokenStatus;
+  sessionId?: string;
   withImage?: boolean;
 }) {
   const response = await api.get<{
@@ -617,6 +870,7 @@ export async function getDistributionRecords(params?: {
   limit?: number;
   search?: string;
   mismatch?: "true" | "false";
+  sessionId?: string;
 }) {
   const response = await api.get<{
     data: {
@@ -628,7 +882,7 @@ export async function getDistributionRecords(params?: {
   return response.data.data;
 }
 
-export async function getDistributionStats() {
+export async function getDistributionStats(params?: { sessionId?: string }) {
   const response = await api.get<{
     data: {
       stats: {
@@ -642,7 +896,7 @@ export async function getDistributionStats() {
         actualKg: number;
       };
     };
-  }>("/distribution/stats");
+  }>("/distribution/stats", { params });
   return response.data.data.stats;
 }
 
@@ -670,6 +924,7 @@ export async function createDistributionSession(payload: {
   distributorId?: string;
   dateKey?: string;
   scheduledStartAt?: string;
+  rationItem?: StockItem;
 }) {
   const response = await api.post<{
     data: {
@@ -718,8 +973,11 @@ export async function closeDistributionSession(payload: {
 
 export async function recordStockIn(payload: {
   distributorId?: string;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
   qtyKg: number;
-  item?: string;
+  item?: StockItem;
   ref?: string;
   dateKey?: string;
 }) {
@@ -746,9 +1004,14 @@ export async function getAdminSummary() {
   return response.data.data;
 }
 
-export async function getAdminDistributors() {
+export async function getAdminDistributors(params?: {
+  division?: string;
+  ward?: string;
+  wardNo?: string;
+}) {
   const response = await api.get<{ data: AdminDistributorsResponse }>(
     "/admin/distributors",
+    { params },
   );
   return response.data.data;
 }
@@ -810,9 +1073,20 @@ export async function getAdminCardsSummary() {
   return response.data.data;
 }
 
-export async function getAdminDistributionMonitoring() {
-  const response = await api.get<{ data: { rows: AdminDistributionMonitorRow[] } }>(
+export async function getAdminDistributionMonitoring(params?: {
+  view?: "live" | "history" | "mismatch";
+  distributorId?: string;
+  division?: string;
+  ward?: string;
+  sessionStatus?: "Planned" | "Open" | "Paused" | "Closed" | string;
+  item?: StockItem;
+  mismatchOnly?: boolean;
+  page?: number;
+  limit?: number;
+}) {
+  const response = await api.get<{ data: AdminDistributionMonitoringResponse }>(
     "/admin/distribution/monitoring",
+    { params },
   );
   return response.data.data;
 }
@@ -827,7 +1101,20 @@ export async function forceCloseAdminDistributionSession(
   return response.data.data;
 }
 
-export async function getAdminConsumerReview(params?: { limit?: number }) {
+export async function getAdminConsumerReview(params?: {
+  limit?: number;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
+  status?: string;
+  familyFlag?: boolean;
+  blacklistStatus?: "None" | "Temp" | "Permanent";
+  cardStatus?: "Active" | "Inactive" | "Revoked";
+  qrStatus?: "Valid" | "Invalid" | "Revoked" | "Expired";
+  mismatchOnly?: boolean;
+  auditNeeded?: boolean;
+  search?: string;
+}) {
   const response = await api.get<{ data: { rows: AdminConsumerReviewRow[] } }>(
     "/admin/consumers/review",
     { params },
@@ -917,6 +1204,9 @@ export async function getDistributionReport(params?: {
   search?: string;
   mismatch?: "true" | "false";
   status?: TokenStatus;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
   sortBy?: "createdAt" | "tokenCode" | "expectedKg" | "actualKg";
   sortOrder?: "asc" | "desc";
   page?: number;
@@ -926,6 +1216,22 @@ export async function getDistributionReport(params?: {
     data: { rows: DistributionReportRow[]; pagination: PaginationData };
   }>("/reports/distribution", { params });
   return response.data.data;
+}
+
+export async function exportDistributionReport(params?: {
+  from?: string;
+  to?: string;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
+  format?: "csv" | "xlsx";
+}) {
+  const format = params?.format || "csv";
+  const response = await api.get("/reports/export", {
+    params: { ...params, format },
+    responseType: "blob",
+  });
+  return response.data as Blob;
 }
 
 export async function getTokenAnalytics(params?: { from?: string; to?: string }) {
@@ -1191,6 +1497,482 @@ export async function clearReadNotifications() {
     data: { deleted: number };
   }>("/notifications/clear-read");
   return response.data;
+}
+
+export async function setupAdmin2FA() {
+  const response = await api.get<{
+    data: { secret: string; qrDataUrl: string; message?: string };
+  }>("/auth/2fa/setup");
+  return response.data.data;
+}
+
+export async function resetAdmin2FASetup() {
+  const response = await api.post<{
+    data: { secret: string; qrDataUrl: string; message?: string };
+  }>("/auth/2fa/setup/reset");
+  return response.data.data;
+}
+
+export async function verifyAdmin2FA(token: string) {
+  const response = await api.post<{
+    success: boolean;
+    message?: string;
+    data?: { backupCodes?: string[] };
+  }>("/auth/2fa/verify", { token });
+  return response.data;
+}
+
+export async function disableAdmin2FA(payload: {
+  password: string;
+  totpToken: string;
+}) {
+  const response = await api.post<{ success: boolean; message?: string }>(
+    "/auth/2fa/disable",
+    payload,
+  );
+  return response.data;
+}
+
+// Bulk Register
+export async function bulkRegisterUpload(file: File, dryRun: boolean) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await api.post<{
+    data: {
+      dryRun: boolean;
+      total: number;
+      inserted: number;
+      skipped: number;
+      errors: Array<{ row: number; name: string; nid: string; reason: string }>;
+    };
+  }>(`/bulk-register/upload?dryRun=${dryRun ? "true" : "false"}`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data.data;
+}
+
+export async function bulkRegisterTemplate(): Promise<Blob> {
+  const headers = [
+    "name",
+    "nidNumber",
+    "fatherNidNumber",
+    "motherNidNumber",
+    "phone",
+    "wardNumber",
+    "unionName",
+    "upazila",
+    "district",
+    "division",
+    "category",
+    "memberCount",
+    "guardianName",
+  ];
+  const sample = [
+    [
+      "রহিম উদ্দিন",
+      "1234567890",
+      "1234500001",
+      "1234500002",
+      "01712345678",
+      "1",
+      "Tetuljhora",
+      "Savar",
+      "Dhaka",
+      "Dhaka",
+      "A",
+      "4",
+      "",
+    ],
+  ];
+  const lines = [headers.join(","), ...sample.map((r) => r.join(","))].join("\n");
+  return new Blob([`\uFEFF${lines}`], { type: "text/csv;charset=utf-8" });
+}
+
+// QR Rotation
+export async function triggerQRRotation() {
+  const response = await api.post<{ data: { rotated: number; failed: number } }>(
+    "/qr-rotation/trigger",
+  );
+  return response.data.data;
+}
+
+export async function forceResetAllQRCodes() {
+  const response = await api.post<{
+    data: { total: number; updated: number; failed: number; failedIds?: string[] };
+  }>("/qr-rotation/force-reset-all");
+  return response.data.data;
+}
+
+export async function regenerateConsumerQR(consumerId: string) {
+  const response = await api.post<{ data: { newQrPayload: string; validTo: string } }>(
+    `/qr-rotation/regenerate/${consumerId}`,
+  );
+  return response.data.data;
+}
+
+// Fraud Score
+export async function getFraudReport(days = 30) {
+  const response = await api.get<{ data: { summary: Record<string, number>; distributors: unknown[] } }>(
+    "/fraud-score/report",
+    { params: { days } },
+  );
+  return response.data.data;
+}
+
+export async function getDistributorFraudScore(distributorId: string, days = 30) {
+  const response = await api.get<{ data: unknown }>(
+    `/fraud-score/distributor/${distributorId}`,
+    { params: { days } },
+  );
+  return response.data.data;
+}
+
+export async function getTopRiskyDistributors(limit = 5, days = 30) {
+  const response = await api.get<{ data: unknown[] }>("/fraud-score/top-risky", {
+    params: { limit, days },
+  });
+  return response.data.data;
+}
+
+export async function getDistributorMonthlyPerf(
+  distributorId: string,
+  year?: number,
+  month?: number,
+) {
+  try {
+    const response = await api.get<{ data: MonthlyPerformanceRow }>(
+      `/fraud-score/monthly/${distributorId}`,
+      { params: { year, month } },
+    );
+    return response.data.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      const fallbackYear = year || new Date().getFullYear();
+      const fallbackMonth = month || new Date().getMonth() + 1;
+      return {
+        distributorId,
+        distributorName: "N/A",
+        year: fallbackYear,
+        month: fallbackMonth,
+        monthName: "",
+        totalSessions: 0,
+        totalDistributions: 0,
+        mismatchCount: 0,
+        mismatchRate: 0,
+        iotVerifiedCount: 0,
+        iotRate: 0,
+        fraudScore: 0,
+        riskLevel: "LOW",
+        rating: 1,
+        badge: "N/A",
+        generatedAt: new Date().toISOString(),
+      } as MonthlyPerformanceRow;
+    }
+    throw error;
+  }
+}
+
+export async function getAllMonthlyPerf(year?: number, month?: number) {
+  try {
+    const response = await api.get<{
+      data: {
+        distributors: MonthlyPerformanceRow[];
+        summary: {
+          totalDistributors: number;
+          avgRating: number;
+          topPerformer: MonthlyPerformanceRow | null;
+          worstPerformer: MonthlyPerformanceRow | null;
+        };
+      };
+    }>("/fraud-score/monthly-all", { params: { year, month } });
+    return response.data.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return {
+        distributors: [],
+        summary: {
+          totalDistributors: 0,
+          avgRating: 0,
+          topPerformer: null,
+          worstPerformer: null,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+// Receipts
+export async function downloadReceipt(tokenCode: string): Promise<Blob> {
+  const response = await api.get(`/receipts/${tokenCode}`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}
+
+export async function generateReceipt(tokenId: string) {
+  const response = await api.post<{ data: { filePath: string; tokenCode: string } }>(
+    `/receipts/generate/${tokenId}`,
+  );
+  return response.data.data;
+}
+
+// Photos
+export async function uploadConsumerPhoto(consumerId: string, file: File) {
+  const formData = new FormData();
+  formData.append("photo", file);
+  const response = await api.post<{ data: { photoUrl: string } }>(
+    `/photos/upload/${consumerId}`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response.data.data;
+}
+
+export async function getConsumerPhotoVerify(consumerId: string) {
+  const response = await api.get<{
+    data: {
+      name: string;
+      consumerCode: string;
+      category: string;
+      ward: string;
+      photoUrl: string | null;
+      hasPhoto: boolean;
+    };
+  }>(`/photos/verify/${consumerId}`);
+  return response.data.data;
+}
+
+// Complaints
+export async function submitComplaint(data: object) {
+  const response = await axios.post<{ data: { complaintId: string } }>(
+    `${API_BASE_URL}/complaints`,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getComplaints(params?: object) {
+  const response = await api.get<{
+    data: {
+      items: Array<Record<string, unknown>>;
+      pagination: PaginationData;
+    };
+  }>("/complaints", { params });
+  return response.data.data;
+}
+
+export async function resolveComplaint(complaintId: string, data: object) {
+  const response = await api.patch<{ data: Record<string, unknown> }>(
+    `/complaints/${complaintId}/resolve`,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getComplaintStats() {
+  const response = await api.get<{ data: ComplaintStats }>("/complaints/stats");
+  return response.data.data;
+}
+
+// Blacklist Appeals
+export async function submitAppeal(data: object) {
+  const response = await axios.post<{ data: { appealId: string } }>(
+    `${API_BASE_URL}/appeals`,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getAppeals(params?: object) {
+  const response = await api.get<{
+    data: { items: Array<Record<string, unknown>>; pagination: PaginationData };
+  }>("/appeals", { params });
+  return response.data.data;
+}
+
+export async function reviewAppeal(appealId: string, data: object) {
+  const response = await api.patch<{ data: { decision: string } }>(
+    `/appeals/${appealId}/review`,
+    data,
+  );
+  return response.data.data;
+}
+
+// Eligibility
+export async function getInactiveConsumers(params?: object) {
+  const response = await api.get<{
+    data: { items: Array<Record<string, unknown>>; pagination: PaginationData };
+  }>("/eligibility/inactive", { params });
+  return response.data.data;
+}
+
+export async function reactivateConsumer(consumerId: string) {
+  const response = await api.patch<{ data: { consumerId: string } }>(
+    `/eligibility/${consumerId}/reactivate`,
+  );
+  return response.data.data;
+}
+
+export async function deactivateConsumer(consumerId: string) {
+  const response = await api.patch<{ data: { consumerId: string } }>(
+    `/eligibility/${consumerId}/deactivate`,
+  );
+  return response.data.data;
+}
+
+export async function getEligibilityStats() {
+  const response = await api.get<{
+    data: {
+      active: number;
+      inactive_review: number;
+      suspended: number;
+      blacklisted: number;
+    };
+  }>("/eligibility/stats");
+  return response.data.data;
+}
+
+export async function runEligibilityNow() {
+  const response = await api.post<{ data: { flagged: number; alreadyFlagged: number } }>(
+    "/eligibility/flag-now",
+  );
+  return response.data.data;
+}
+
+// Session Health
+export function openSessionHealthSSE(
+  sessionId: string,
+  onData: (data: Record<string, unknown>) => void,
+  onError: () => void,
+): EventSource {
+  const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+  let token = "";
+  if (stored) {
+    try {
+      token = JSON.parse(stored)?.token || "";
+    } catch {
+      token = "";
+    }
+  }
+
+  const url = `${API_BASE_URL}/session-health/${sessionId}/live${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const eventSource = new EventSource(url);
+  eventSource.onmessage = (event) => {
+    try {
+      onData(JSON.parse(event.data));
+    } catch {
+      onError();
+    }
+  };
+  eventSource.onerror = () => onError();
+  return eventSource;
+}
+
+export async function downloadReconciliationReport(sessionId: string): Promise<Blob> {
+  const response = await api.get(`/session-health/${sessionId}/report`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}
+
+export async function generateReconciliationReport(sessionId: string) {
+  const response = await api.post<{ data: { filePath: string } }>(
+    `/session-health/${sessionId}/generate-report`,
+  );
+  return response.data.data;
+}
+
+// Stock Suggestion
+export async function getSystemStockSuggestion(item?: StockItem) {
+  const response = await api.get<{
+    data: {
+      wards: StockSuggestionResult[];
+      item?: StockItem | "all";
+      systemTotal: { movingAverage: number; suggestedStock: number };
+      generatedAt: string;
+    };
+  }>("/stock-suggestion/system", {
+    params: { item: item || undefined },
+  });
+  return response.data.data;
+}
+
+export async function getWardStockSuggestion(
+  division: string,
+  ward: string,
+  union?: string,
+  item?: StockItem,
+) {
+  const response = await api.get<{ data: StockSuggestionResult }>(
+    "/stock-suggestion/ward",
+    { params: { division, ward, union, item: item || undefined } },
+  );
+  return response.data.data;
+}
+
+export async function deleteConsumerCard(consumerId: string) {
+  const response = await api.delete<{
+    data: {
+      consumerId: string;
+      consumerCode: string;
+      removedCardId: string;
+    };
+  }>(`/consumers/${consumerId}/card`);
+  return response.data.data;
+}
+
+export async function getSimpleStockSuggestion(item?: StockItem) {
+  const response = await api.get<{
+    data: {
+      item?: StockItem | "all";
+      movingAverage: number;
+      suggestedStock: number;
+      generatedAt: string;
+    };
+  }>("/stock-suggestion/simple", {
+    params: { item: item || undefined },
+  });
+  return response.data.data;
+}
+
+// Queue
+export async function joinQueue(sessionId: string, consumerId: string) {
+  const response = await api.post<{
+    data: {
+      queueNumber: number;
+      position: number;
+      estimatedWaitMinutes: number;
+      queueEntryId: string;
+      status: string;
+    };
+  }>("/queue/join", { sessionId, consumerId });
+  return response.data.data;
+}
+
+export async function getQueueStatus(sessionId: string) {
+  const response = await api.get<{ data: QueueStatus }>(`/queue/status/${sessionId}`);
+  return response.data.data;
+}
+
+export async function callNextInQueue(sessionId: string) {
+  const response = await api.patch<{ data: QueueStatus }>(`/queue/call-next/${sessionId}`);
+  return response.data.data;
+}
+
+export async function skipQueueEntry(entryId: string) {
+  const response = await api.patch<{ data: QueueStatus }>(`/queue/skip/${entryId}`);
+  return response.data.data;
+}
+
+export async function getSessionQueueEntries(sessionId: string, page = 1, limit = 20) {
+  const response = await api.get<{
+    data: {
+      items: Array<Record<string, unknown>>;
+      pagination: PaginationData;
+    };
+  }>(`/queue/session/${sessionId}`, { params: { page, limit } });
+  return response.data.data;
 }
 
 export default api;

@@ -101,12 +101,12 @@ export default function Sidebar() {
   }, [quickInfo.systemStatus]);
 
   return (
-    <div className="h-full p-3 flex flex-col">
+    <div className="h-full p-3 flex flex-col min-h-0">
       <div className="px-3 py-2 border-b border-white/10 mb-3">
         <div className="text-[13px] opacity-90">মেনু</div>
       </div>
 
-      <nav className="space-y-1">
+      <nav className="space-y-1 overflow-y-auto pr-1 flex-1">
         <NavLink
           to="/dashboard"
           className={({ isActive }) =>
@@ -145,6 +145,16 @@ export default function Sidebar() {
         >
           <span>📦</span>
           <span>স্টক ও বিতরণ</span>
+        </NavLink>
+
+        <NavLink
+          to="/queue"
+          className={({ isActive }) =>
+            `${navItem} ${isActive ? activeItem : ""}`
+          }
+        >
+          <span>🧾</span>
+          <span>লাইভ কিউ</span>
         </NavLink>
 
         <NavLink
@@ -199,7 +209,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Quick panel */}
-      <div className="mt-4 border-t border-white/10 pt-3">
+      <div className="mt-4 border-t border-white/10 pt-3 shrink-0">
         <div className="text-[12px] opacity-90 px-3 mb-2">দ্রুত তথ্য</div>
 
         <div className="px-3 space-y-2 text-[12px]">

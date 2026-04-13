@@ -11,6 +11,8 @@ const Consumer = require("../models/Consumer");
 const AuditLog = require("../models/AuditLog");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const StockLedger = require("../models/StockLedger");
+const SmsOutbox = require("../models/SmsOutbox");
+const RefreshToken = require("../models/RefreshToken");
 
 (async () => {
   try {
@@ -39,6 +41,8 @@ const StockLedger = require("../models/StockLedger");
       AuditLog.syncIndexes(),
       BlacklistEntry.syncIndexes(),
       StockLedger.syncIndexes(),
+      SmsOutbox.syncIndexes(),
+      RefreshToken.syncIndexes(),
     ]);
 
     console.log("✅ All indexes synchronized successfully.");

@@ -85,6 +85,52 @@ function runController(controller, req) {
   });
 }
 
+function normalizeOfflinePayload(payload) {
+  const action = String(payload?.action || "").toUpperCase();
+
+  if (action === "SCAN") {
+    const qrPayload =
+      payload?.qrPayload || payload?.qrToken || payload?.consumerCode;
+    if (!qrPayload) {
+      return {
+        valid: false,
+        message: "SCAN action requires qrPayload/qrToken/consumerCode",
+      };
+    }
+    return {
+      valid: true,
+      value: {
+        action: "SCAN",
+        qrPayload: String(qrPayload),
+      },
+    };
+  }
+
+  if (action === "COMPLETE") {
+    const tokenCode = String(payload?.tokenCode || "").trim();
+    const actualKg = Number(payload?.actualKg);
+    if (!tokenCode || !Number.isFinite(actualKg) || actualKg <= 0) {
+      return {
+        valid: false,
+        message: "COMPLETE action requires tokenCode and valid actualKg",
+      };
+    }
+    return {
+      valid: true,
+      value: {
+        action: "COMPLETE",
+        tokenCode,
+        actualKg,
+      },
+    };
+  }
+
+  return {
+    valid: false,
+    message: "Unsupported offline action",
+  };
+}
+
 async function syncTargetStatus(entry) {
   const status = applyBlacklistStatus(entry.blockType, entry.active);
 
@@ -472,9 +518,17 @@ async function createOfflineQueueEntry(req, res) {
         .json({ success: false, message: "payload object is required" });
     }
 
+    const normalized = normalizeOfflinePayload(payload);
+    if (!normalized.valid) {
+      return res.status(400).json({
+        success: false,
+        message: normalized.message,
+      });
+    }
+
     const item = await OfflineQueue.create({
       distributorId: distributor._id,
-      payload,
+      payload: normalized.value,
       status: "Pending",
     });
 

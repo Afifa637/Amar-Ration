@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
+  getComplaintStats,
   getAdminDistributors,
   getAdminDistributionMonitoring,
   getAdminSummary,
+  getSimpleStockSuggestion,
+  getTopRiskyDistributors,
   updateAdminDistributorStatus,
   type AdminDistributorRow,
   type AdminSummary,
@@ -53,6 +56,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [quickWidgets, setQuickWidgets] = useState({
+    suggestedStock: 0,
+    pendingComplaints: 0,
+    topRiskName: "—",
+  });
 
   const load = async () => {
     setLoading(true);
@@ -65,14 +73,28 @@ export default function AdminDashboard() {
           getAdminDistributionMonitoring(),
         ],
       );
+      const [stockData, complaintData, riskyData] = await Promise.all([
+        getSimpleStockSuggestion(),
+        getComplaintStats(),
+        getTopRiskyDistributors(1, 30),
+      ]);
       setSummary(summaryData);
       setAllDistributorRows(distributorsData.rows || []);
       setPendingRows(
         (distributorsData.rows || []).filter(
-          (row) => row.authorityStatus === "Pending",
+          (row) => !row.authorityStatus || row.authorityStatus === "Pending",
         ),
       );
       setMonitorRows(monitoringData.rows || []);
+      setQuickWidgets({
+        suggestedStock: Number(stockData.suggestedStock || 0),
+        pendingComplaints: Number(
+          (complaintData.open || 0) + (complaintData.under_review || 0),
+        ),
+        topRiskName:
+          (riskyData[0] as { distributorName?: string })?.distributorName ||
+          "—",
+      });
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "ড্যাশবোর্ড ডেটা লোড ব্যর্থ",
@@ -91,7 +113,6 @@ export default function AdminDashboard() {
     return () => {
       window.clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const suspendedCount = useMemo(
@@ -216,6 +237,31 @@ export default function AdminDashboard() {
         )}
       </SectionCard>
 
+      <SectionCard title="দ্রুত প্রশাসনিক উইজেট">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="border rounded p-3 bg-purple-50">
+            <div className="text-xs text-gray-600">পরামর্শকৃত পরবর্তী স্টক</div>
+            <div className="text-2xl font-bold text-purple-700">
+              {quickWidgets.suggestedStock} kg
+            </div>
+          </div>
+          <div className="border rounded p-3 bg-amber-50">
+            <div className="text-xs text-gray-600">Pending অভিযোগ</div>
+            <div className="text-2xl font-bold text-amber-700">
+              {quickWidgets.pendingComplaints}
+            </div>
+          </div>
+          <div className="border rounded p-3 bg-rose-50">
+            <div className="text-xs text-gray-600">
+              Top ঝুঁকিপূর্ণ ডিস্ট্রিবিউটর
+            </div>
+            <div className="text-lg font-bold text-rose-700">
+              {quickWidgets.topRiskName}
+            </div>
+          </div>
+        </div>
+      </SectionCard>
+
       {suspendedCount > 0 && (
         <div className="bg-red-50 border-l-4 border-red-500 p-4 text-[#991b1b]">
           ⚠️ {suspendedCount} জন ডিস্ট্রিবিউটর বর্তমানে স্থগিত অবস্থায় রয়েছেন
@@ -230,7 +276,7 @@ export default function AdminDashboard() {
       )}
 
       <SectionCard title="অপেক্ষমাণ ডিস্ট্রিবিউটর অনুমোদন">
-        {pendingRows.length === 0 ? (
+        {(summary?.stats.pendingDistributors || 0) === 0 ? (
           <div className="text-sm text-green-700">
             সকল ডিস্ট্রিবিউটর অনুমোদিত ✓
           </div>

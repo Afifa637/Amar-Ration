@@ -5,6 +5,7 @@ const {
   distributionReport,
   tokenAnalytics,
   reportAuditLogs,
+  exportDistributionReport,
 } = require("../controllers/reports.controller");
 
 router.get(
@@ -31,5 +32,6 @@ router.get(
   authorize("Admin", "Distributor", "FieldUser"),
   reportAuditLogs,
 );
+router.get("/export", protect, authorize("Admin"), exportDistributionReport);
 
 module.exports = router;

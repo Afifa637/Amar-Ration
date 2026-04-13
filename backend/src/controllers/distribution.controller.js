@@ -15,6 +15,7 @@ const User = require("../models/User");
 const Family = require("../models/Family");
 const OMSCard = require("../models/OMSCard");
 const QRCode = require("../models/QRCode");
+const SmsOutbox = require("../models/SmsOutbox");
 const {
   rationQtyByCategory,
   makeTokenCode,
@@ -27,6 +28,14 @@ const {
 } = require("../services/notification.service");
 const { checkDistributorMismatchCount } = require("../services/fraud.service");
 const {
+  sendDistributionSms,
+  sendMismatchSms,
+} = require("../services/sms.service");
+const {
+  generateReceipt,
+  generateReconciliationReport,
+} = require("../services/receipt.service");
+const {
   normalizeWardNo,
   isSameWard: isSameWardScoped,
   buildWardMatchQuery,
@@ -36,9 +45,41 @@ const {
   isSameDivision,
   buildDivisionMatchQuery,
 } = require("../utils/division.utils");
+const {
+  buildOmsQrPayload,
+  parseOmsQrPayload,
+} = require("../utils/qr-payload.utils");
+const { normalizeStockItem } = require("../utils/stock-items.utils");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+async function getItemBalanceKg({ distributorId, dateKey, item, session }) {
+  const normalizedItem = normalizeStockItem(item);
+  if (!normalizedItem) {
+    const error = new Error("Invalid stock item");
+    error.code = "INVALID_STOCK_ITEM";
+    throw error;
+  }
+
+  const query = {
+    distributorId,
+    dateKey,
+    item: normalizedItem,
+  };
+  const entries = await StockLedger.find(query)
+    .session(session)
+    .select("type qtyKg")
+    .lean();
+
+  return entries.reduce((sum, entry) => {
+    const qty = Number(entry.qtyKg || 0);
+    if (entry.type === "IN") return sum + qty;
+    if (entry.type === "OUT") return sum - qty;
+    if (entry.type === "ADJUST") return sum + qty;
+    return sum;
+  }, 0);
 }
 
 function isSameDivisionScoped(distributor, consumer) {
@@ -126,6 +167,18 @@ async function createDistributionSession(req, res) {
     }
 
     const dateKey = String(req.body?.dateKey || todayKey()).trim();
+    const requestedRationItem = req.body?.rationItem;
+    const rationItem = requestedRationItem
+      ? normalizeStockItem(requestedRationItem)
+      : "চাল";
+
+    if (!rationItem) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ration item",
+        code: "VALIDATION_ERROR",
+      });
+    }
     const scheduledStartAt = req.body?.scheduledStartAt
       ? new Date(req.body.scheduledStartAt)
       : undefined;
@@ -156,23 +209,10 @@ async function createDistributionSession(req, res) {
       });
     }
 
-    const existingPlanned = await DistributionSession.findOne({
-      distributorId: distributor._id,
-      status: "Planned",
-    }).lean();
-
-    if (existingPlanned) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Only one planned session is allowed. Start or close the existing planned session first.",
-        data: { session: existingPlanned },
-      });
-    }
-
     const sessionDoc = await DistributionSession.create({
       distributorId: distributor._id,
       dateKey,
+      rationItem,
       status: "Planned",
       scheduledStartAt,
     });
@@ -187,6 +227,7 @@ async function createDistributionSession(req, res) {
       severity: "Info",
       meta: {
         dateKey,
+        rationItem,
         distributorId: String(distributor._id),
         scheduledStartAt: scheduledStartAt || null,
       },
@@ -345,6 +386,33 @@ async function resolveConsumerFromPayload(qrPayload) {
   const payload = String(qrPayload || "").trim();
   if (!payload) return { consumer: null, qr: null, card: null };
 
+  const structured = parseOmsQrPayload(payload);
+  if (structured?.expired) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "QR_EXPIRED_BY_DATE",
+    };
+  }
+
+  if (structured && structured.consumerCode) {
+    const consumer = await Consumer.findOne({
+      consumerCode: {
+        $regex: `^${String(structured.consumerCode).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        $options: "i",
+      },
+    });
+
+    if (consumer) {
+      const card = await OMSCard.findOne({ consumerId: consumer._id }).lean();
+      const qr = card?.qrCodeId
+        ? await QRCode.findById(card.qrCodeId).lean()
+        : null;
+      return { consumer, qr, card };
+    }
+  }
+
   const payloadHash = sha256(payload);
   const qr = await QRCode.findOne({
     $or: [{ payload }, { payloadHash }],
@@ -418,7 +486,7 @@ async function rotateOmsQrAfterSessionClose(consumerIds) {
 
   const [consumers, cards] = await Promise.all([
     Consumer.find({ _id: { $in: ids } })
-      .select("_id status")
+      .select("_id status consumerCode ward wardNo category")
       .lean(),
     OMSCard.find({ consumerId: { $in: ids } })
       .select("_id consumerId qrCodeId")
@@ -439,10 +507,16 @@ async function rotateOmsQrAfterSessionClose(consumerIds) {
       await QRCode.findByIdAndUpdate(card.qrCodeId, { status: "Revoked" });
     }
 
-    const qrToken = crypto.randomBytes(32).toString("hex");
     const now = new Date();
     const validTo = new Date(now.getTime() + qrDays * 86400000);
     const qrStatus = consumer.status === "Active" ? "Valid" : "Invalid";
+    const qrToken =
+      buildOmsQrPayload({
+        consumerCode: consumer.consumerCode,
+        ward: consumer.ward || consumer.wardNo,
+        category: consumer.category,
+        expiryDate: validTo,
+      }) || crypto.randomBytes(32).toString("hex");
 
     const newQr = await QRCode.create({
       payload: qrToken,
@@ -663,6 +737,16 @@ async function scanAndIssueToken(req, res) {
 
     let tokenDoc = null;
 
+    const plannedRationItem = normalizeStockItem(plannedSession.rationItem);
+    if (!plannedRationItem) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid planned ration item",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
     for (let i = 0; i < 5; i += 1) {
       try {
         const tokenCode = makeTokenCode();
@@ -683,6 +767,7 @@ async function scanAndIssueToken(req, res) {
               consumerId: consumer._id,
               distributorId: distributor._id,
               sessionId: plannedSession._id,
+              rationItem: plannedRationItem,
               rationQtyKg,
               status: "Issued",
             },
@@ -722,7 +807,11 @@ async function scanAndIssueToken(req, res) {
         entityType: "Token",
         entityId: String(tokenDoc._id),
         severity: "Info",
-        meta: { token: tokenDoc.tokenCode, consumer: consumer.consumerCode },
+        meta: {
+          token: tokenDoc.tokenCode,
+          consumer: consumer.consumerCode,
+          rationItem: tokenDoc.rationItem,
+        },
       },
       session,
     );
@@ -785,10 +874,11 @@ async function completeDistribution(req, res) {
   }
 
   const actual = Number(actualKg);
-  if (!Number.isFinite(actual) || actual <= 0) {
-    return res
-      .status(400)
-      .json({ success: false, message: "actualKg must be a positive number" });
+  if (!Number.isFinite(actual) || !Number.isInteger(actual) || actual <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "actualKg must be a positive integer in 1kg step",
+    });
   }
 
   const session = await mongoose.startSession();
@@ -832,10 +922,11 @@ async function completeDistribution(req, res) {
         .json({ success: false, message: "Token is not in issued state" });
     }
 
+    let tokenSession = null;
     if (token.sessionId) {
-      const tokenSession = await DistributionSession.findById(token.sessionId)
+      tokenSession = await DistributionSession.findById(token.sessionId)
         .session(session)
-        .select("status")
+        .select("status dateKey")
         .lean();
       if (!tokenSession || tokenSession.status !== "Open") {
         await session.abortTransaction();
@@ -856,25 +947,71 @@ async function completeDistribution(req, res) {
         .json({ success: false, message: "Distribution already completed" });
     }
 
-    const [globalSetting, legacySetting] = await Promise.all([
+    const itemName = normalizeStockItem(token.rationItem);
+    if (!itemName) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid token ration item",
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const stockDateKey =
+      tokenSession?.dateKey || token.sessionDateKey || todayKey();
+    const currentBalanceKg = await getItemBalanceKg({
+      distributorId: distributor._id,
+      dateKey: stockDateKey,
+      item: itemName,
+      session,
+    });
+    if (actual > currentBalanceKg) {
+      await session.abortTransaction();
+      return res.status(409).json({
+        success: false,
+        message: `${itemName} মজুদ অপর্যাপ্ত। বর্তমান ব্যালেন্স ${Number(currentBalanceKg.toFixed(3))}kg`,
+      });
+    }
+
+    const [globalSetting, legacySetting, consumer] = await Promise.all([
       SystemSetting.findOne({ key: "distributor:global:settings" })
         .session(session)
         .lean(),
       SystemSetting.findOne({ key: "weightThresholdKg" })
         .session(session)
         .lean(),
+      Consumer.findById(token.consumerId)
+        .session(session)
+        .select("consumerCode category guardianPhone guardianName name")
+        .lean(),
     ]);
 
-    const maxDiff = Math.max(
-      1,
-      Number(
+    const rawThreshold = Number(
+      globalSetting?.value?.distribution?.weightThresholdPercent ??
         globalSetting?.value?.distribution?.weightThresholdKg ??
-          parseThreshold(legacySetting?.value),
-      ) || 1,
+        parseThreshold(legacySetting?.value) ??
+        0.05,
+    );
+    const autoPauseOnMismatch =
+      globalSetting?.value?.distribution?.autoPauseOnMismatch !== false;
+    const thresholdPercent = Math.max(
+      0.01,
+      Number.isFinite(rawThreshold)
+        ? rawThreshold > 1
+          ? rawThreshold / 100
+          : rawThreshold
+        : 0.05,
     );
 
     const expected = Number(token.rationQtyKg);
+    const maxDiff = Math.max(0.05, expected * thresholdPercent);
     const mismatch = Math.abs(actual - expected) > maxDiff;
+    const thresholdDetails = {
+      expected,
+      actual,
+      maxDiff: Number(maxDiff.toFixed(3)),
+      thresholdPercent: Number((thresholdPercent * 100).toFixed(1)),
+      category: consumer?.category || "Unknown",
+    };
 
     await DistributionRecord.create(
       [
@@ -890,14 +1027,16 @@ async function completeDistribution(req, res) {
 
     token.status = "Used";
     token.usedAt = new Date();
+    token.iotVerified = false;
     await token.save({ session });
 
     await stockOut(
       {
         distributorId: distributor._id,
-        dateKey: todayKey(),
+        dateKey: stockDateKey,
         qtyKg: actual,
         ref: token.tokenCode,
+        item: itemName,
       },
       session,
     );
@@ -910,26 +1049,77 @@ async function completeDistribution(req, res) {
         entityType: "Token",
         entityId: String(token._id),
         severity: mismatch ? "Critical" : "Info",
-        meta: { token: token.tokenCode, expected, actual },
+        meta: {
+          token: token.tokenCode,
+          consumer: consumer?.consumerCode,
+          ...thresholdDetails,
+        },
       },
       session,
     );
+
+    if (mismatch && autoPauseOnMismatch && token.sessionId) {
+      await DistributionSession.findByIdAndUpdate(
+        token.sessionId,
+        { $set: { status: "Paused" } },
+        { session },
+      );
+    }
 
     if (mismatch) {
       await notifyUser(req.user.userId, {
         title: "Weight mismatch alert",
         message: `Token ${token.tokenCode} mismatch: expected ${expected}kg, actual ${actual}kg.`,
-        meta: { token: token.tokenCode, expected, actual },
+        meta: {
+          token: token.tokenCode,
+          consumer: consumer?.consumerCode,
+          ...thresholdDetails,
+        },
       });
 
       await notifyAdmins({
         title: "Weight mismatch alert",
         message: `Token ${token.tokenCode} mismatch: expected ${expected}kg, actual ${actual}kg.`,
-        meta: { token: token.tokenCode, expected, actual },
+        meta: {
+          token: token.tokenCode,
+          consumer: consumer?.consumerCode,
+          ...thresholdDetails,
+        },
       });
     }
 
     await session.commitTransaction();
+    if (mismatch) {
+      void sendMismatchSms(
+        {
+          _id: token.consumerId,
+          guardianPhone: consumer?.guardianPhone,
+          phone: consumer?.guardianPhone,
+        },
+        token.tokenCode,
+        expected,
+        actual,
+      );
+    } else {
+      void sendDistributionSms(
+        {
+          _id: token.consumerId,
+          guardianPhone: consumer?.guardianPhone,
+          phone: consumer?.guardianPhone,
+        },
+        token.tokenCode,
+        actual,
+        itemName,
+      );
+      setImmediate(() => {
+        generateReceipt(token._id).catch((err) =>
+          console.error(
+            "generateReceipt distribution complete error:",
+            err?.message || err,
+          ),
+        );
+      });
+    }
 
     let fraudCheck = null;
     if (mismatch) {
@@ -939,7 +1129,14 @@ async function completeDistribution(req, res) {
     return res.json({
       success: true,
       message: "Distribution completed",
-      data: { mismatch, expected, actual, maxDiff, fraudCheck },
+      data: {
+        mismatch,
+        expected,
+        actual,
+        maxDiff: Number(maxDiff.toFixed(3)),
+        thresholdPercent: Number((thresholdPercent * 100).toFixed(1)),
+        fraudCheck,
+      },
     });
   } catch (error) {
     await session.abortTransaction();
@@ -953,7 +1150,14 @@ async function completeDistribution(req, res) {
 // GET /api/distribution/tokens
 async function listTokens(req, res) {
   try {
-    const { search, status, page = 1, limit = 20, withImage } = req.query;
+    const {
+      search,
+      status,
+      sessionId,
+      page = 1,
+      limit = 20,
+      withImage,
+    } = req.query;
     const includeImage = String(withImage || "false") === "true";
     const distributor =
       req.user.userType === "Admin"
@@ -969,6 +1173,7 @@ async function listTokens(req, res) {
     const query = {};
     if (distributor) query.distributorId = distributor._id;
     if (status) query.status = status;
+    if (sessionId) query.sessionId = String(sessionId);
 
     const textQuery = buildTokenSearchQuery(search);
     if (textQuery) Object.assign(query, textQuery);
@@ -1072,7 +1277,7 @@ async function cancelToken(req, res) {
 // GET /api/distribution/records
 async function getDistributionRecords(req, res) {
   try {
-    const { search, mismatch, page = 1, limit = 20 } = req.query;
+    const { search, mismatch, sessionId, page = 1, limit = 20 } = req.query;
     const distributor =
       req.user.userType === "Admin"
         ? null
@@ -1086,6 +1291,7 @@ async function getDistributionRecords(req, res) {
 
     const tokenQuery = {};
     if (distributor) tokenQuery.distributorId = distributor._id;
+    if (sessionId) tokenQuery.sessionId = String(sessionId);
 
     if (search) {
       tokenQuery.tokenCode = { $regex: search, $options: "i" };
@@ -1120,7 +1326,15 @@ async function getDistributionRecords(req, res) {
         .lean(),
     ]);
 
-    const dateKey = todayKey();
+    let dateKey = todayKey();
+    if (sessionId) {
+      const scopedSession = await DistributionSession.findById(
+        String(sessionId),
+      )
+        .select("dateKey")
+        .lean();
+      if (scopedSession?.dateKey) dateKey = scopedSession.dateKey;
+    }
     const stockQuery = { dateKey };
     if (distributor) stockQuery.distributorId = distributor._id;
 
@@ -1166,7 +1380,9 @@ async function getDistributionStats(req, res) {
     }
 
     const tokenQuery = {};
+    const sessionId = String(req.query.sessionId || "").trim();
     if (distributor) tokenQuery.distributorId = distributor._id;
+    if (sessionId) tokenQuery.sessionId = sessionId;
 
     const tokenIds = await Token.find(tokenQuery).select("_id status").lean();
     const idSet = tokenIds.map((item) => item._id);
@@ -1495,6 +1711,15 @@ async function closeDistributionSession(req, res) {
         },
       });
     }
+
+    setImmediate(() => {
+      generateReconciliationReport(daySession._id).catch((err) =>
+        console.error(
+          "generateReconciliationReport auto error:",
+          err?.message || err,
+        ),
+      );
+    });
 
     res.json({
       success: true,

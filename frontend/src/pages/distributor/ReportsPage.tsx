@@ -21,6 +21,8 @@ export default function ReportsPage() {
   const [to, setTo] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<TokenStatus | "">("");
+  const [division, setDivision] = useState("");
+  const [ward, setWard] = useState("");
   const [mismatch, setMismatch] = useState<"" | "true" | "false">("");
   const [sortBy, setSortBy] = useState<
     "createdAt" | "tokenCode" | "expectedKg" | "actualKg"
@@ -46,6 +48,11 @@ export default function ReportsPage() {
   const [auditRows, setAuditRows] = useState<AuditLogEntry[]>([]);
 
   const loadData = async () => {
+    if (ward.trim() && !division.trim()) {
+      setError("ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ দিন");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
@@ -59,6 +66,8 @@ export default function ReportsPage() {
             to: to || undefined,
             search: search.trim() || undefined,
             status: status || undefined,
+            division: division.trim() || undefined,
+            ward: ward.trim() || undefined,
             mismatch: mismatch || undefined,
             sortBy,
             sortOrder,
@@ -170,7 +179,7 @@ export default function ReportsPage() {
 
       {/* ================= FILTER BAR ================= */}
       <PortalSection title="রিপোর্ট ফিল্টার">
-        <div className="grid grid-cols-1 md:grid-cols-8 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-10 gap-2">
           <input
             type="date"
             value={from}
@@ -188,6 +197,18 @@ export default function ReportsPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="টোকেন/কনজিউমার সার্চ"
             className="border rounded px-2 py-1 text-[12px] md:col-span-2"
+          />
+          <input
+            value={division}
+            onChange={(e) => setDivision(e.target.value)}
+            placeholder="বিভাগ"
+            className="border rounded px-2 py-1 text-[12px]"
+          />
+          <input
+            value={ward}
+            onChange={(e) => setWard(e.target.value)}
+            placeholder="ওয়ার্ড"
+            className="border rounded px-2 py-1 text-[12px]"
           />
           <select
             value={status}
@@ -246,6 +267,8 @@ export default function ReportsPage() {
               setTo("");
               setSearch("");
               setStatus("");
+              setDivision("");
+              setWard("");
               setMismatch("");
               void loadData();
             }}

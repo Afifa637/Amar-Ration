@@ -4,17 +4,26 @@ const User = require("../models/User");
 // Middleware to verify JWT token
 exports.protect = async (req, res, next) => {
   try {
-    // Get token from header
+    // Get token from Authorization header (primary)
     const authHeader = req.headers.authorization;
+    let token = "";
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1] || "";
+    }
+
+    // Fallback for SSE/EventSource where custom headers are not available
+    if (!token && req.method === "GET") {
+      const queryToken = String(req.query?.token || "").trim();
+      if (queryToken) token = queryToken;
+    }
+
+    if (!token) {
       return res.status(401).json({
         success: false,
         message: "No token provided.",
       });
     }
-
-    const token = authHeader.split(" ")[1];
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);

@@ -9,26 +9,20 @@ import {
   getStockSummary,
   recordStockIn,
   type AdminDistributorRow,
-  type AdminDistributionMonitorRow,
+  type AdminMonitoringDistributorGroup,
+  type AdminMonitoringSessionGroup,
   type AdminSummary,
+  type StockItem,
 } from "../../services/api";
+
+type MonitoringTab = "live" | "history" | "mismatch";
+const STOCK_ITEMS: StockItem[] = ["চাল", "ডাল", "পেঁয়াজ"];
+const SESSION_STATUS_OPTIONS = ["", "Open", "Paused", "Closed", "Planned"];
 
 export default function AdminDistributionPage() {
   const [summary, setSummary] = useState<AdminSummary | null>(null);
-  const [rows, setRows] = useState<AdminDistributionMonitorRow[]>([]);
+  const [groups, setGroups] = useState<AdminMonitoringDistributorGroup[]>([]);
   const [distributors, setDistributors] = useState<AdminDistributorRow[]>([]);
-  const [sessions, setSessions] = useState<
-    Array<{
-      _id: string;
-      distributorId: string;
-      dateKey: string;
-      status: "Open" | "Paused" | "Closed";
-      openedAt?: string;
-      closedAt?: string;
-      createdAt: string;
-      updatedAt: string;
-    }>
-  >([]);
   const [criticalEvents, setCriticalEvents] = useState<
     Array<{
       _id: string;
@@ -37,40 +31,86 @@ export default function AdminDistributionPage() {
       createdAt: string;
     }>
   >([]);
+
+  const [tab, setTab] = useState<MonitoringTab>("live");
+  const [monitorDistributorId, setMonitorDistributorId] = useState("");
+  const [monitorDivision, setMonitorDivision] = useState("");
+  const [monitorWard, setMonitorWard] = useState("");
+  const [monitorSessionStatus, setMonitorSessionStatus] = useState("");
+  const [monitorItem, setMonitorItem] = useState<StockItem | "">("");
+  const [monitorMismatchOnly, setMonitorMismatchOnly] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPages, setHistoryPages] = useState(1);
+  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+
   const [selectedDistributorId, setSelectedDistributorId] = useState("");
   const [stockQty, setStockQty] = useState("");
   const [stockRef, setStockRef] = useState("");
-  const [stockBalance, setStockBalance] = useState<number | null>(null);
+  const [stockItem, setStockItem] = useState<StockItem>("চাল");
+  const [stockBalanceTotal, setStockBalanceTotal] = useState<number | null>(
+    null,
+  );
+  const [stockBalanceItem, setStockBalanceItem] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const filterParams = useMemo(
+    () => ({
+      view: tab,
+      distributorId: monitorDistributorId || undefined,
+      division: monitorDivision || undefined,
+      ward: monitorWard || undefined,
+      sessionStatus: monitorSessionStatus || undefined,
+      item: monitorItem || undefined,
+      mismatchOnly: tab === "mismatch" ? true : monitorMismatchOnly,
+      page: tab === "history" ? historyPage : 1,
+      limit: tab === "history" ? 8 : 40,
+    }),
+    [
+      historyPage,
+      monitorDistributorId,
+      monitorDivision,
+      monitorItem,
+      monitorMismatchOnly,
+      monitorSessionStatus,
+      monitorWard,
+      tab,
+    ],
+  );
 
   const loadMainData = async () => {
     setLoading(true);
     setError("");
     try {
-      const [summaryData, monitoringData, distributorsData, sessionData] =
-        await Promise.all([
+      const [summaryData, monitoringData, distributorsData] = await Promise.all(
+        [
           getAdminSummary(),
-          getAdminDistributionMonitoring(),
+          getAdminDistributionMonitoring(filterParams),
           getAdminDistributors(),
-          getDistributionSessions({ page: 1, limit: 200 }),
-        ]);
+        ],
+      );
       setSummary(summaryData);
       setCriticalEvents(
         (summaryData.alerts || []).filter((a) =>
           ["Critical", "Warning"].includes(a.severity),
         ),
       );
-      setRows(monitoringData.rows || []);
+      setGroups(monitoringData.groups || []);
+      setHistoryPages(monitoringData.pagination?.pages || 1);
       const activeRows = (distributorsData.rows || []).filter(
         (row) => row.authorityStatus === "Active",
       );
       setDistributors(activeRows);
-      setSessions(sessionData.sessions || []);
       if (!selectedDistributorId && activeRows[0]?.distributorId) {
         setSelectedDistributorId(activeRows[0].distributorId);
       }
+
+      const nextExpanded: Record<string, boolean> = {};
+      (monitoringData.groups || []).forEach((g) => {
+        nextExpanded[g.distributorId] = expandedMap[g.distributorId] ?? true;
+      });
+      setExpandedMap(nextExpanded);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "ডিস্ট্রিবিউশন ডেটা লোড ব্যর্থ",
@@ -95,7 +135,10 @@ export default function AdminDistributionPage() {
 
   useEffect(() => {
     void loadMainData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterParams]);
 
+  useEffect(() => {
     const summaryTimer = window.setInterval(() => {
       void loadMainData();
     }, 60000);
@@ -118,48 +161,83 @@ export default function AdminDistributionPage() {
         const data = await getStockSummary({
           distributorId: selectedDistributorId,
         });
-        setStockBalance(data.summary.balanceKg);
+        setStockBalanceTotal(data.summary.balanceKg);
+        setStockBalanceItem(data.byItem?.[stockItem]?.balanceKg ?? null);
       } catch {
-        setStockBalance(null);
+        setStockBalanceTotal(null);
+        setStockBalanceItem(null);
       }
     };
     void loadStock();
-  }, [selectedDistributorId]);
+  }, [selectedDistributorId, stockItem]);
 
   const pausedPoints = useMemo(
-    () => rows.filter((row) => row.status === "Mismatch").length,
-    [rows],
+    () => groups.reduce((sum, g) => sum + (g.totals.mismatchCount || 0), 0),
+    [groups],
   );
 
-  const statusLabel = (status: AdminDistributionMonitorRow["status"]) =>
-    status === "Mismatch" ? "মিসম্যাচ" : "ম্যাচড";
+  const totalOpenSessions = useMemo(
+    () =>
+      groups.reduce(
+        (sum, g) =>
+          sum +
+          g.sessions.filter((s) => ["Open", "Paused"].includes(s.sessionStatus))
+            .length,
+        0,
+      ),
+    [groups],
+  );
 
   const onAllocateStock = async () => {
     const qty = Number(stockQty);
-    if (!selectedDistributorId) {
-      setError("ডিস্ট্রিবিউটর নির্বাচন করুন");
+    if (!selectedDistributorId && !(monitorDivision && monitorWard)) {
+      setError("ডিস্ট্রিবিউটর অথবা division+ward নির্বাচন করুন");
       return;
     }
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setError("স্টক কেজি সঠিকভাবে দিন");
+    if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1) {
+      setError("স্টক কেজি ১ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
       return;
     }
 
     try {
       setLoading(true);
       setError("");
-      await recordStockIn({
-        distributorId: selectedDistributorId,
+      const result = await recordStockIn({
+        distributorId: selectedDistributorId || undefined,
+        division: selectedDistributorId
+          ? undefined
+          : monitorDivision || undefined,
+        ward: selectedDistributorId ? undefined : monitorWard || undefined,
         qtyKg: qty,
+        item: stockItem,
         ref: stockRef || undefined,
       });
+
+      const resolvedDistributorId =
+        selectedDistributorId ||
+        (typeof result.entry.distributorId === "string"
+          ? result.entry.distributorId
+          : "");
+
+      if (!resolvedDistributorId) {
+        setError("স্টক বরাদ্দ হয়েছে, তবে distributor সনাক্ত করা যায়নি");
+        await loadMainData();
+        return;
+      }
+
+      if (!selectedDistributorId) {
+        setSelectedDistributorId(resolvedDistributorId);
+      }
+
       const stock = await getStockSummary({
-        distributorId: selectedDistributorId,
+        distributorId: resolvedDistributorId,
       });
-      setStockBalance(stock.summary.balanceKg);
+      setStockBalanceTotal(stock.summary.balanceKg);
+      setStockBalanceItem(stock.byItem?.[stockItem]?.balanceKg ?? null);
       setStockQty("");
       setStockRef("");
-      setMessage("স্টক IN বরাদ্দ সংরক্ষণ হয়েছে");
+      setMessage(`স্টক IN (${stockItem}) বরাদ্দ সংরক্ষণ হয়েছে`);
+      await loadMainData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "স্টক IN বরাদ্দ ব্যর্থ");
     } finally {
@@ -221,18 +299,138 @@ export default function AdminDistributionPage() {
     return `${day} দিন আগে`;
   };
 
-  const distributorById = useMemo(() => {
-    const map = new Map<string, AdminDistributorRow>();
-    distributors.forEach((d) => {
-      if (d.distributorId) map.set(d.distributorId, d);
-    });
-    return map;
-  }, [distributors]);
+  const divisionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          distributors
+            .map((d) => d.division || "")
+            .filter((v): v is string => Boolean(v)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [distributors],
+  );
+
+  const wardOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          distributors
+            .filter((d) =>
+              monitorDivision ? (d.division || "") === monitorDivision : true,
+            )
+            .map((d) => d.ward || d.wardNo || "")
+            .filter((v): v is string => Boolean(v)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [distributors, monitorDivision],
+  );
+
+  const toggleGroup = (distributorId: string) => {
+    setExpandedMap((prev) => ({
+      ...prev,
+      [distributorId]: !prev[distributorId],
+    }));
+  };
+
+  const statusBadgeClass = (status: string) => {
+    if (status === "Open") return "bg-emerald-100 text-emerald-800";
+    if (status === "Paused") return "bg-amber-100 text-amber-800";
+    if (status === "Closed") return "bg-slate-100 text-slate-800";
+    return "bg-sky-100 text-sky-800";
+  };
+
+  const renderSession = (s: AdminMonitoringSessionGroup) => {
+    const mismatchRows = s.rows.filter((r) => r.mismatch);
+
+    return (
+      <div
+        key={s.sessionId}
+        className="border border-[#d7dde6] rounded-lg p-3 bg-white space-y-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[12px] px-2 py-1 rounded bg-[#f1f5f9] text-[#334155]">
+              সেশন: {s.dateKey}
+            </span>
+            <span
+              className={`text-[12px] px-2 py-1 rounded ${statusBadgeClass(s.sessionStatus)}`}
+            >
+              {s.sessionStatus}
+            </span>
+          </div>
+          <div className="text-[12px] text-[#6b7280]">
+            শেষ আপডেট: {relativeBanglaTime(s.updatedAt)}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[13px]">
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">প্রত্যাশিত</div>
+            <div className="font-semibold">{s.expectedKg} kg</div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">প্রকৃত</div>
+            <div className="font-semibold">{s.actualKg} kg</div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">মিসম্যাচ</div>
+            <div className="font-semibold">{s.mismatchCount}</div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">স্টক আইটেম</div>
+            <div className="font-semibold">
+              {Object.keys(s.stockBalanceByItem || {}).length}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {STOCK_ITEMS.map((item) => (
+            <div
+              key={`${s.sessionId}-${item}`}
+              className={`rounded border px-2 py-1.5 text-[12px] ${
+                monitorItem === item
+                  ? "border-[#0f766e] bg-[#ecfeff]"
+                  : "border-[#e5e7eb] bg-[#f8fafc]"
+              }`}
+            >
+              <div className="text-[#6b7280]">{item}</div>
+              <div className="font-semibold">
+                {s.stockBalanceByItem?.[item] ?? 0} kg
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {mismatchRows.length > 0 && (
+          <div className="border border-[#fecaca] bg-[#fef2f2] rounded p-2">
+            <div className="text-[12px] font-semibold text-[#991b1b] mb-1">
+              মিসম্যাচ সারি
+            </div>
+            <div className="space-y-1">
+              {mismatchRows.slice(0, 8).map((row) => (
+                <div
+                  key={row.recordId}
+                  className="grid grid-cols-4 gap-2 text-[12px] border border-[#fca5a5] rounded px-2 py-1 bg-white"
+                >
+                  <span>আইটেম: {row.item}</span>
+                  <span>প্রত্যাশিত: {row.expectedKg}kg</span>
+                  <span>প্রকৃত: {row.actualKg}kg</span>
+                  <span className="text-[#b91c1c]">মিসম্যাচ</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-3">
       <div className="bg-white border border-[#d7dde6] rounded px-3 py-2 text-[12px] text-[#4b5563]">
-        অ্যাডমিন <span className="mx-1">›</span> টোকেন ও ডিস্ট্রিবিউশন কন্ট্রোল
+        অ্যাডমিন <span className="mx-1">›</span> সংগ্রহ ও স্টক কন্ট্রোল
       </div>
 
       <SectionCard title="বিতরণ দিনের নিয়ন্ত্রণ">
@@ -259,7 +457,7 @@ export default function AdminDistributionPage() {
           {[
             ["ভ্যালিড স্ক্যান", String(summary?.ops.validScans ?? 0)],
             ["রিজেক্টেড স্ক্যান", String(summary?.ops.rejectedScans ?? 0)],
-            ["ইস্যুকৃত টোকেন", String(summary?.ops.tokensGenerated ?? 0)],
+            ["লাইভ/এক্টিভ সেশন", String(totalOpenSessions)],
             ["স্থগিত পয়েন্ট", String(pausedPoints)],
           ].map(([label, value]) => (
             <div
@@ -278,18 +476,8 @@ export default function AdminDistributionPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="রিয়েল-টাইম ভ্যালিডেশন লজিক">
-        <ul className="space-y-2 text-sm text-[#374151]">
-          <li>• QR ভ্যালিডিটি যাচাই</li>
-          <li>• উপকারভোগীর সক্রিয়/নিষ্ক্রিয় স্ট্যাটাস যাচাই</li>
-          <li>• ডুপ্লিকেট ফ্যামিলি কনফ্লিক্ট যাচাই</li>
-          <li>• শুধুমাত্র বৈধ উপকারভোগীর জন্য টোকেন ইস্যু</li>
-          <li>• ব্যবহৃত টোকেন পুনর্ব্যবহারযোগ্য নয়</li>
-        </ul>
-      </SectionCard>
-
       <SectionCard title="স্টক বরাদ্দ ও সেশন নিয়ন্ত্রণ">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
           <select
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
             value={selectedDistributorId}
@@ -305,9 +493,22 @@ export default function AdminDistributionPage() {
               ))}
           </select>
 
+          <select
+            value={stockItem}
+            onChange={(e) => setStockItem(e.target.value as StockItem)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            {STOCK_ITEMS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+
           <input
             type="number"
-            step="0.01"
+            min={1}
+            step={1}
             value={stockQty}
             onChange={(e) => setStockQty(e.target.value)}
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
@@ -338,123 +539,221 @@ export default function AdminDistributionPage() {
           </button>
         </div>
 
-        <div className="mt-2 text-[12px] text-[#4b5563]">
-          নির্বাচিত ডিস্ট্রিবিউটরের বর্তমান স্টক ব্যালেন্স:{" "}
-          <span className="font-semibold">{stockBalance ?? "—"} kg</span>
+        <div className="mt-2 text-[12px] text-[#4b5563] space-y-1">
+          <div>
+            নির্বাচিত আইটেম ({stockItem}) ব্যালেন্স:{" "}
+            <span className="font-semibold">{stockBalanceItem ?? "—"} kg</span>
+          </div>
+          <div>
+            মোট (সব আইটেম) ব্যালেন্স:{" "}
+            <span className="font-semibold">{stockBalanceTotal ?? "—"} kg</span>
+          </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="আইওটি ওজন ও স্টক মনিটরিং">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-[#f3f5f8] text-left">
-                {[
-                  "ডিস্ট্রিবিউটর",
-                  "বিভাগ / ওয়ার্ড",
-                  "প্রত্যাশিত ওজন",
-                  "প্রকৃত ওজন",
-                  "স্ট্যাটাস",
-                  "অ্যাকশন",
-                ].map((head) => (
-                  <th key={head} className="p-2 border border-[#d7dde6]">
-                    {head}
-                  </th>
+      <SectionCard title="আইওটি ওজন + স্টক মনিটরিং (ডিস্ট্রিবিউটর-গ্রুপড)">
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {[
+              ["live", "Live"],
+              ["history", "Recent History"],
+              ["mismatch", "Mismatch Only"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setTab(key as MonitoringTab);
+                  setHistoryPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-[12px] border ${
+                  tab === key
+                    ? "bg-[#16679c] border-[#16679c] text-white"
+                    : "bg-white border-[#cfd6e0] text-[#334155]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+            <select
+              value={monitorDistributorId}
+              onChange={(e) => {
+                setMonitorDistributorId(e.target.value);
+                setHistoryPage(1);
+              }}
+              className="border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white"
+            >
+              <option value="">সব ডিস্ট্রিবিউটর</option>
+              {distributors
+                .filter((d) => d.distributorId)
+                .map((d) => (
+                  <option key={d.userId} value={d.distributorId || ""}>
+                    {d.name}
+                  </option>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, idx) => (
-                <tr
-                  key={`${row.ward}-${idx}`}
-                  className="odd:bg-white even:bg-[#fafbfc]"
-                >
-                  <td className="p-2 border border-[#d7dde6]">
-                    {row.distributor || "—"}
-                  </td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    <div>{row.division || "—"}</div>
-                    <div className="text-[11px] text-[#6b7280]">
-                      Ward {row.ward || "—"}
-                    </div>
-                  </td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    {row.expectedKg}kg
-                  </td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    {row.actualKg}kg
-                  </td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    {statusLabel(row.status)}
-                  </td>
-                  <td className="p-2 border border-[#d7dde6]">
-                    {row.status === "Mismatch" ? "স্থগিত + এলার্ট" : "চলমান"}
-                  </td>
-                </tr>
+            </select>
+
+            <select
+              value={monitorDivision}
+              onChange={(e) => {
+                setMonitorDivision(e.target.value);
+                setMonitorWard("");
+                setHistoryPage(1);
+              }}
+              className="border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white"
+            >
+              <option value="">সব বিভাগ</option>
+              {divisionOptions.map((division) => (
+                <option key={division} value={division}>
+                  {division}
+                </option>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+            </select>
 
-      <SectionCard title="প্রতি-ডিস্ট্রিবিউটর লাইভ সেশন">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-[#f3f5f8] text-left">
-                {[
-                  "ডিস্ট্রিবিউটর",
-                  "ওয়ার্ড",
-                  "তারিখ",
-                  "স্ট্যাটাস",
-                  "শুরু",
-                  "শেষ আপডেট",
-                ].map((head) => (
-                  <th key={head} className="p-2 border border-[#d7dde6]">
-                    {head}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => {
-                const d = distributorById.get(s.distributorId);
-                return (
-                  <tr key={s._id} className="odd:bg-white even:bg-[#fafbfc]">
-                    <td className="p-2 border border-[#d7dde6]">
-                      {d?.name || "—"}
-                    </td>
-                    <td className="p-2 border border-[#d7dde6]">
-                      {d?.ward || "—"}
-                    </td>
-                    <td className="p-2 border border-[#d7dde6]">{s.dateKey}</td>
-                    <td className="p-2 border border-[#d7dde6]">
-                      {s.status === "Open"
-                        ? "Open"
-                        : s.status === "Paused"
-                          ? "Paused"
-                          : "Closed"}
-                    </td>
-                    <td className="p-2 border border-[#d7dde6]">
-                      {s.openedAt
-                        ? new Date(s.openedAt).toLocaleString("bn-BD")
-                        : "—"}
-                    </td>
-                    <td className="p-2 border border-[#d7dde6]">
-                      {relativeBanglaTime(s.updatedAt)}
-                    </td>
-                  </tr>
-                );
-              })}
-              {sessions.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-3 text-center text-[#6b7280]">
-                    কোনো সেশন ডেটা নেই
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            <select
+              value={monitorWard}
+              onChange={(e) => {
+                setMonitorWard(e.target.value);
+                setHistoryPage(1);
+              }}
+              className="border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white"
+            >
+              <option value="">সব ওয়ার্ড</option>
+              {wardOptions.map((ward) => (
+                <option key={ward} value={ward}>
+                  {ward}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={monitorSessionStatus}
+              onChange={(e) => {
+                setMonitorSessionStatus(e.target.value);
+                setHistoryPage(1);
+              }}
+              className="border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white"
+            >
+              <option value="">সব স্ট্যাটাস</option>
+              {SESSION_STATUS_OPTIONS.filter(Boolean).map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={monitorItem}
+              onChange={(e) => {
+                setMonitorItem((e.target.value as StockItem) || "");
+                setHistoryPage(1);
+              }}
+              className="border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white"
+            >
+              <option value="">সব আইটেম</option>
+              {STOCK_ITEMS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+
+            <label className="inline-flex items-center gap-2 border border-[#cfd6e0] rounded px-2 py-2 text-[12px] bg-white">
+              <input
+                type="checkbox"
+                checked={monitorMismatchOnly || tab === "mismatch"}
+                onChange={(e) => {
+                  if (tab === "mismatch") return;
+                  setMonitorMismatchOnly(e.target.checked);
+                  setHistoryPage(1);
+                }}
+                disabled={tab === "mismatch"}
+              />
+              শুধু মিসম্যাচ
+            </label>
+          </div>
+
+          {groups.length === 0 && (
+            <div className="border border-dashed border-[#d7dde6] rounded p-5 text-center text-[13px] text-[#6b7280]">
+              নির্বাচিত ফিল্টারে কোনো ডেটা নেই
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {groups.map((group) => {
+              const expanded = expandedMap[group.distributorId] ?? true;
+              return (
+                <div
+                  key={group.distributorId}
+                  className="border border-[#d7dde6] rounded-lg bg-[#f8fafc]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.distributorId)}
+                    className="w-full text-left px-3 py-3 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <div>
+                      <div className="font-semibold text-[#0f172a]">
+                        {group.distributorName}
+                      </div>
+                      <div className="text-[12px] text-[#64748b]">
+                        {group.division} • ওয়ার্ড {group.ward}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[12px]">
+                      <span className="px-2 py-1 rounded bg-white border border-[#cbd5e1]">
+                        প্রত্যাশিত: {group.totals.expectedKg}kg
+                      </span>
+                      <span className="px-2 py-1 rounded bg-white border border-[#cbd5e1]">
+                        প্রকৃত: {group.totals.actualKg}kg
+                      </span>
+                      <span className="px-2 py-1 rounded bg-[#fee2e2] text-[#b91c1c] border border-[#fecaca]">
+                        মিসম্যাচ: {group.totals.mismatchCount}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-white border border-[#cbd5e1]">
+                        {expanded ? "▲" : "▼"}
+                      </span>
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="px-3 pb-3 space-y-3">
+                      {group.sessions.map((s) => renderSession(s))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {tab === "history" && historyPages > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                disabled={historyPage <= 1}
+                className="px-3 py-1.5 rounded border border-[#cfd6e0] text-[12px] disabled:opacity-50"
+              >
+                পূর্ববর্তী
+              </button>
+              <span className="text-[12px] text-[#6b7280]">
+                পৃষ্ঠা {historyPage} / {historyPages}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setHistoryPage((p) => Math.min(historyPages, p + 1))
+                }
+                disabled={historyPage >= historyPages}
+                className="px-3 py-1.5 rounded border border-[#cfd6e0] text-[12px] disabled:opacity-50"
+              >
+                পরবর্তী
+              </button>
+            </div>
+          )}
         </div>
       </SectionCard>
 
