@@ -270,6 +270,15 @@ export type AuditReportRequest = {
   overdueNotified?: boolean;
   decision?: "Approved" | "Rejected" | "Suspended";
   reviewedAt?: string;
+  attachments?: Array<{
+    _id: string;
+    originalName: string;
+    storedName: string;
+    mimeType: string;
+    size: number;
+    relativePath: string;
+    uploadedAt?: string;
+  }>;
   status: "Requested" | "Submitted" | "Reviewed" | "Closed";
   submittedAt?: string;
   createdAt: string;
@@ -512,6 +521,7 @@ export type ConsumerCardRow = {
   consumerCode: string;
   name: string;
   category: ConsumerCategory;
+  division?: string;
   ward?: string;
   unionName?: string;
   upazila?: string;
@@ -687,6 +697,13 @@ export type SettingsProfile = {
   ward?: string;
 };
 
+export type Admin2FAStatus = {
+  enabled: boolean;
+  setupPending: boolean;
+  pendingSince?: string | null;
+  secret?: string | null;
+};
+
 type Pagination = {
   total: number;
   page: number;
@@ -775,6 +792,9 @@ export async function getConsumerCards(params?: {
   page?: number;
   limit?: number;
   search?: string;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
   cardStatus?: "Active" | "Inactive" | "Revoked";
   qrStatus?: "Valid" | "Revoked" | "Expired" | "Invalid";
   withImage?: boolean;
@@ -977,7 +997,7 @@ export async function recordStockIn(payload: {
   ward?: string;
   wardNo?: string;
   qtyKg: number;
-  item?: StockItem;
+  item: StockItem;
   ref?: string;
   dateKey?: string;
 }) {
@@ -1008,6 +1028,9 @@ export async function getAdminDistributors(params?: {
   division?: string;
   ward?: string;
   wardNo?: string;
+  status?: "Active" | "Suspended" | "Revoked" | "Pending";
+  auditRequired?: boolean;
+  search?: string;
 }) {
   const response = await api.get<{ data: AdminDistributorsResponse }>(
     "/admin/distributors",
@@ -1066,9 +1089,14 @@ export async function adminResetDistributorPassword(
   return response.data;
 }
 
-export async function getAdminCardsSummary() {
+export async function getAdminCardsSummary(params?: {
+  division?: string;
+  ward?: string;
+  wardNo?: string;
+}) {
   const response = await api.get<{ data: AdminCardsSummary }>(
     "/admin/cards/summary",
+    { params },
   );
   return response.data.data;
 }
@@ -1375,12 +1403,39 @@ export async function getDistributorAuditRequests() {
 export async function submitAuditReport(
   requestId: string,
   reportText: string,
+  files?: File[],
 ) {
+  const formData = new FormData();
+  formData.append("reportText", reportText);
+  (files || []).forEach((file) => formData.append("files", file));
+
   const response = await api.post<{ data: { request: AuditReportRequest } }>(
     `/distributor/audit-requests/${requestId}/submit`,
-    { reportText },
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
   );
   return response.data.data;
+}
+
+export async function downloadAdminAuditRequestFile(
+  requestId: string,
+  fileId: string,
+): Promise<Blob> {
+  const response = await api.get(`/admin/audit/requests/${requestId}/files/${fileId}`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}
+
+export async function downloadDistributorAuditRequestFile(
+  requestId: string,
+  fileId: string,
+): Promise<Blob> {
+  const response = await api.get(
+    `/distributor/audit-requests/${requestId}/files/${fileId}`,
+    { responseType: "blob" },
+  );
+  return response.data as Blob;
 }
 
 export async function resolveOfflineQueueItem(
@@ -1501,15 +1556,22 @@ export async function clearReadNotifications() {
 
 export async function setupAdmin2FA() {
   const response = await api.get<{
-    data: { secret: string; qrDataUrl: string; message?: string };
+    data: { secret: string; message?: string };
   }>("/auth/2fa/setup");
+  return response.data.data;
+}
+
+export async function getAdmin2FAStatus() {
+  const response = await api.get<{ data: Admin2FAStatus }>("/auth/2fa/status");
   return response.data.data;
 }
 
 export async function resetAdmin2FASetup() {
   const response = await api.post<{
-    data: { secret: string; qrDataUrl: string; message?: string };
-  }>("/auth/2fa/setup/reset");
+    data: { secret: string; message?: string };
+  }>("/auth/2fa/setup/reset", {
+    confirmText: "CHANGE_2FA_SECRET",
+  });
   return response.data.data;
 }
 

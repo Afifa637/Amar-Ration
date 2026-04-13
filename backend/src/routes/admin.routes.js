@@ -20,6 +20,7 @@ const {
   listAuditReportRequests,
   requestAuditReport,
   reviewAuditReportRequest,
+  downloadAuditReportFile,
 } = require("../controllers/audit-report.controller");
 
 router.use(protect, authorize("Admin"));
@@ -46,5 +47,6 @@ router.get("/audit/:id/detail", getAdminAuditDetail);
 router.get("/audit/requests", listAuditReportRequests);
 router.post("/audit/requests", requestAuditReport);
 router.patch("/audit/requests/:id/review", reviewAuditReportRequest);
+router.get("/audit/requests/:id/files/:fileId", downloadAuditReportFile);
 
 module.exports = router;

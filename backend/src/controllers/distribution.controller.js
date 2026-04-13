@@ -1509,6 +1509,15 @@ async function listDistributionSessions(req, res) {
     const limitNum = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
 
     const query = {};
+
+    if (!distributor && inputWard && !inputDivision) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
     if (distributor) query.distributorId = distributor._id;
     if (status) query.status = status;
     if (dateKey) query.dateKey = String(dateKey);

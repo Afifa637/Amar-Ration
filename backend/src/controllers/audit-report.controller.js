@@ -1,11 +1,20 @@
 const AuditReportRequest = require("../models/AuditReportRequest");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
+const path = require("path");
+const fs = require("fs");
 const { writeAudit } = require("../services/audit.service");
 const {
   notifyAdmins,
   notifyUser,
 } = require("../services/notification.service");
+
+function getAuditUploadsDir() {
+  return path.resolve(
+    process.cwd(),
+    process.env.AUDIT_REPORT_UPLOADS_DIR || "./uploads/audit-reports",
+  );
+}
 
 async function applyOverdueSuspension(request) {
   if (!request?.dueAt) return false;
@@ -174,11 +183,13 @@ async function listMyAuditReportRequests(req, res) {
 
 async function submitAuditReport(req, res) {
   try {
-    const { reportText } = req.body || {};
-    if (!reportText || !String(reportText).trim()) {
+    const reportText = String(req.body?.reportText || "").trim();
+    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+
+    if (!reportText && uploadedFiles.length < 1) {
       return res.status(400).json({
         success: false,
-        message: "reportText is required",
+        message: "reportText or at least one file is required",
       });
     }
 
@@ -193,7 +204,22 @@ async function submitAuditReport(req, res) {
         .json({ success: false, message: "Audit request not found" });
     }
 
-    request.reportText = String(reportText).trim();
+    request.reportText = reportText || request.reportText || "";
+    if (uploadedFiles.length > 0) {
+      const attachments = uploadedFiles
+        .filter((file) => file?.path)
+        .map((file) => ({
+          originalName: file.originalname,
+          storedName: file.filename,
+          mimeType: file.mimetype,
+          size: Number(file.size || 0),
+          relativePath: path.relative(process.cwd(), file.path),
+          uploadedAt: new Date(),
+        }));
+
+      request.attachments = [...(request.attachments || []), ...attachments];
+    }
+
     request.status = "Submitted";
     request.submittedAt = new Date();
     await request.save();
@@ -223,6 +249,50 @@ async function submitAuditReport(req, res) {
   } catch (error) {
     console.error("submitAuditReport error:", error);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function downloadAuditReportFile(req, res) {
+  try {
+    const { id, fileId } = req.params;
+    const request = await AuditReportRequest.findById(id).lean();
+
+    if (!request) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Audit request not found" });
+    }
+
+    if (
+      req.user.userType === "Distributor" &&
+      String(request.distributorUserId) !== String(req.user.userId)
+    ) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const fileMeta = (request.attachments || []).find(
+      (item) => String(item._id) === String(fileId),
+    );
+
+    if (!fileMeta) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Attachment not found" });
+    }
+
+    const baseDir = getAuditUploadsDir();
+    const absolutePath = path.resolve(process.cwd(), fileMeta.relativePath);
+
+    if (!absolutePath.startsWith(baseDir) || !fs.existsSync(absolutePath)) {
+      return res
+        .status(404)
+        .json({ success: false, message: "File not found" });
+    }
+
+    return res.download(absolutePath, fileMeta.originalName);
+  } catch (error) {
+    console.error("downloadAuditReportFile error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 }
 
@@ -296,4 +366,5 @@ module.exports = {
   listMyAuditReportRequests,
   submitAuditReport,
   reviewAuditReportRequest,
+  downloadAuditReportFile,
 };

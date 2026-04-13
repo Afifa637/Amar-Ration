@@ -195,7 +195,20 @@ async function getAdminDistributors(req, res) {
   try {
     const inputDivision = String(req.query.division || "").trim();
     const inputWard = normalizeWardNo(req.query.wardNo || req.query.ward);
+    const inputStatus = String(req.query.status || "").trim();
+    const inputAuditFlag = String(req.query.auditRequired || "").trim();
+    const inputSearch = String(req.query.search || "")
+      .trim()
+      .toLowerCase();
     const canonDiv = inputDivision ? normalizeDivision(inputDivision) : "";
+
+    if (inputWard && !canonDiv) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
 
     const userQuery = { userType: "Distributor" };
     if (canonDiv) {
@@ -265,6 +278,32 @@ async function getAdminDistributors(req, res) {
       if (inputWard) {
         const rowWard = normalizeWardNo(row.wardNo || row.ward);
         if (!rowWard || rowWard !== inputWard) {
+          return false;
+        }
+      }
+
+      if (inputStatus && row.authorityStatus !== inputStatus) {
+        return false;
+      }
+
+      if (inputAuditFlag === "true" && !row.auditRequired) return false;
+      if (inputAuditFlag === "false" && row.auditRequired) return false;
+
+      if (inputSearch) {
+        const haystack = [
+          row.name,
+          row.email,
+          row.contactEmail,
+          row.phone,
+          row.userId,
+          row.division,
+          row.ward,
+          row.wardNo,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(inputSearch)) {
           return false;
         }
       }
@@ -844,8 +883,27 @@ async function getAdminCardsSummary(req, res) {
   try {
     const now = new Date();
     const rotationThreshold = new Date(now.getTime() + 7 * 86400000);
+    const requestedDivision = normalizeDivision(req.query.division);
+    const requestedWard = normalizeWardNo(req.query.ward || req.query.wardNo);
 
-    const cards = await OMSCard.find({})
+    if (requestedWard && !requestedDivision) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const consumerQuery = {};
+    if (requestedDivision) consumerQuery.division = requestedDivision;
+    if (requestedWard) consumerQuery.ward = requestedWard;
+
+    const consumers = await Consumer.find(consumerQuery).select("_id").lean();
+    const consumerIds = consumers.map((c) => c._id);
+
+    const cards = await OMSCard.find({
+      consumerId: { $in: consumerIds },
+    })
       .select("consumerId cardStatus qrCodeId")
       .lean();
 
@@ -861,7 +919,7 @@ async function getAdminCardsSummary(req, res) {
       : [];
     const qrMap = new Map(qrDocs.map((qr) => [String(qr._id), qr]));
 
-    const [consumerTotal] = await Promise.all([Consumer.countDocuments({})]);
+    const consumerTotal = consumers.length;
 
     const issuedCards = cards.length;
     const activeCards = cards.filter(
@@ -921,7 +979,7 @@ async function getAdminDistributionMonitoring(req, res) {
 
     const distributorId = String(req.query.distributorId || "").trim();
     const divisionFilter = normalizeDivision(req.query.division);
-    const wardFilter = normalizeWardNo(req.query.ward);
+    const wardFilter = normalizeWardNo(req.query.ward || req.query.wardNo);
     const sessionStatus = String(req.query.sessionStatus || "").trim();
     const itemFilter = normalizeStockItem(req.query.item);
     const mismatchOnly =
