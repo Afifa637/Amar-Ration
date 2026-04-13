@@ -26,8 +26,8 @@ float target_p1 = 0.0, target_p2 = 0.0, target_p3 = 0.0;
 int selected_product = 0; 
 float tolerance_kg = 0.01; 
 float cal_factor = 2280.0; 
-String backend_base_url = "";
-String backend_api_key = "";
+String backend_base_url = "http://192.169.1.110:5000/api";
+String backend_api_key = "amar_ration_iot_device_key_2026";
 
 // ডাটা সেভ করার জন্য
 String saved_data_html = ""; 
