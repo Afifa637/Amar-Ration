@@ -91,6 +91,10 @@ app.get("/", (req, res) =>
   res.json({ ok: true, name: "Amar-Ration Backend (MongoDB)" }),
 );
 
+app.get("/api", (req, res) =>
+  res.json({ ok: true, name: "Amar-Ration API", status: "ready" }),
+);
+
 app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);

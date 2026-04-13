@@ -24,10 +24,12 @@ HX711 scale;
 // গ্লোবাল ভেরিয়েবল
 float target_p1 = 0.0, target_p2 = 0.0, target_p3 = 0.0; 
 int selected_product = 0; 
-float tolerance_kg = 0.01; 
+float tolerance_g = 10.0; 
 float cal_factor = 2280.0; 
 String backend_base_url = "http://192.169.1.110:5000/api";
 String backend_api_key = "amar_ration_iot_device_key_2026";
+String last_sync_message = "Never synced";
+int last_sync_http_code = -1;
 
 // ডাটা সেভ করার জন্য
 String saved_data_html = ""; 
@@ -51,6 +53,14 @@ float extractJsonNumber(const String &body, const String &key, float fallback) {
 
 bool syncTargetsFromBackend() {
   if (backend_base_url.length() == 0 || backend_api_key.length() == 0) {
+    last_sync_http_code = -1;
+    last_sync_message = "Missing backend URL or API key";
+    return false;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    last_sync_http_code = -2;
+    last_sync_message = "WiFi not connected (device likely in AP mode)";
     return false;
   }
 
@@ -62,7 +72,10 @@ bool syncTargetsFromBackend() {
   http.begin(url);
   http.addHeader("x-iot-api-key", backend_api_key);
   int httpCode = http.GET();
+  last_sync_http_code = httpCode;
   if (httpCode != HTTP_CODE_OK) {
+    String errBody = http.getString();
+    last_sync_message = "HTTP " + String(httpCode) + " from backend: " + errBody;
     http.end();
     return false;
   }
@@ -73,6 +86,7 @@ bool syncTargetsFromBackend() {
   target_p1 = extractJsonNumber(payload, "\"p1Kg\":", target_p1);
   target_p2 = extractJsonNumber(payload, "\"p2Kg\":", target_p2);
   target_p3 = extractJsonNumber(payload, "\"p3Kg\":", target_p3);
+  last_sync_message = "Sync OK: P1=" + String(target_p1, 2) + ", P2=" + String(target_p2, 2) + ", P3=" + String(target_p3, 2);
   return true;
 }
 
@@ -115,9 +129,9 @@ const char index_html[] PROGMEM = R"=====(
       <p style="font-size:12px; color:#d6e4ff; margin-top:-4px;">Targets are managed from the admin web app and synced to this device.</p>
         <input type="text" id="cust_name" placeholder="Customer Name">
         <input type="text" id="cust_id" placeholder="Ration ID">
-      <div class="row"><label>P1 (Rice)</label><input type="number" id="q1" placeholder="Kg" readonly style="background:rgba(255,255,255,0.08);"></div>
-      <div class="row"><label>P2 (Lentil)</label><input type="number" id="q2" placeholder="Kg" readonly style="background:rgba(255,255,255,0.08);"></div>
-      <div class="row"><label>P3 (Onion)</label><input type="number" id="q3" placeholder="Kg" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <div class="row"><label>P1 (Rice)</label><input type="number" id="q1" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <div class="row"><label>P2 (Lentil)</label><input type="number" id="q2" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <div class="row"><label>P3 (Onion)</label><input type="number" id="q3" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
       <button onclick="saveCustomer()">Save Customer</button>
     </div>
 
@@ -147,6 +161,7 @@ const char index_html[] PROGMEM = R"=====(
         <h2>WiFi Setup</h2>
         <button onclick="scanWifi()" style="background:#17a2b8; margin-bottom:10px;">Scan WiFi Networks</button>
         <select id="wifi_list"><option value="">Select a Network</option></select>
+      <input type="text" id="wifi_ssid" placeholder="Or type SSID manually (2.4GHz)">
         <input type="text" id="wifi_pass" placeholder="WiFi Password">
         <button onclick="saveWifi()" style="background:#28a745;">Save & Restart</button>
       <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); margin:20px 0;">
@@ -184,9 +199,9 @@ const char index_html[] PROGMEM = R"=====(
         }
         function loadCurrentTargets() {
           fetch('/current_targets').then(r=>r.json()).then(data => {
-            document.getElementById('q1').value = data.p1Kg ?? 0;
-            document.getElementById('q2').value = data.p2Kg ?? 0;
-            document.getElementById('q3').value = data.p3Kg ?? 0;
+            document.getElementById('q1').value = Math.round((data.p1Kg ?? 0) * 1000);
+            document.getElementById('q2').value = Math.round((data.p2Kg ?? 0) * 1000);
+            document.getElementById('q3').value = Math.round((data.p3Kg ?? 0) * 1000);
           }).catch(() => {});
         }
         function saveCustomer() { 
@@ -201,8 +216,10 @@ const char index_html[] PROGMEM = R"=====(
             fetch('/scan_wifi').then(r=>r.text()).then(data => { document.getElementById('wifi_list').innerHTML = data; });
         }
         function saveWifi() {
-            let s = document.getElementById('wifi_list').value;
+          let s = document.getElementById('wifi_list').value;
+          let manual = document.getElementById('wifi_ssid').value.trim();
             let p = document.getElementById('wifi_pass').value;
+          if(!s && manual) s = manual;
             if(!s) { alert("Select a network first!"); return; }
             fetch(`/save_wifi?s=${encodeURIComponent(s)}&p=${encodeURIComponent(p)}`).then(r=>r.text()).then(res => { alert(res); });
         }
@@ -241,7 +258,7 @@ void handleGetTable() {
   if(saved_data_html == "") {
       server.send(200, "text/html", "<p style='color:#ffc107;'>No records found yet.</p>");
   } else {
-      String table = "<table><tr><th>ID</th><th>Name</th><th>Item</th><th>Wt(Kg)</th><th>Status</th></tr>";
+      String table = "<table><tr><th>ID</th><th>Name</th><th>Item</th><th>Wt(g)</th><th>Status</th></tr>";
       table += saved_data_html;
       table += "</table>";
       server.send(200, "text/html", table);
@@ -263,13 +280,27 @@ void handleCalibrate() {
 }
 
 void handleTolerance() {
-  if(server.hasArg("g")) { tolerance_kg = server.arg("g").toFloat() / 1000.0; server.send(200, "text/plain", "Tolerance Updated!"); }
+  if(server.hasArg("g")) {
+    tolerance_g = max(0.0f, server.arg("g").toFloat());
+    server.send(200, "text/plain", "Tolerance Updated!");
+  }
 }
 
 void handleScanWifi() {
-  int n = WiFi.scanNetworks();
+  // In AP fallback, keep hotspot alive while enabling station scan.
+  WiFi.mode(WIFI_AP_STA);
+  int n = WiFi.scanNetworks(false, true);
   String options = "<option value=''>Select Network</option>";
-  for (int i = 0; i < n; ++i) { options += "<option value='" + WiFi.SSID(i) + "'>" + WiFi.SSID(i) + "</option>"; }
+  if (n <= 0) {
+    options += "<option value=''>No 2.4GHz WiFi found</option>";
+  } else {
+    for (int i = 0; i < n; ++i) {
+      String ssid = WiFi.SSID(i);
+      if (ssid.length() == 0) ssid = "(hidden)";
+      options += "<option value='" + ssid + "'>" + ssid + "</option>";
+    }
+  }
+  WiFi.scanDelete();
   server.send(200, "text/html", options);
 }
 
@@ -302,9 +333,12 @@ void handleSaveBackend() {
 
 void handleSyncTargets() {
   if (syncTargetsFromBackend()) {
-    server.send(200, "text/plain", "Product targets synced from backend!");
+    server.send(200, "text/plain", last_sync_message);
   } else {
-    server.send(500, "text/plain", "Target sync failed. Check backend URL and API key.");
+    String msg = "Target sync failed. " + last_sync_message;
+    msg += " | Device IP: ";
+    msg += (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "AP mode";
+    server.send(500, "text/plain", msg);
   }
 }
 
@@ -335,6 +369,7 @@ void setup() {
   lcd.setCursor(0, 1); lcd.print("Connecting...   ");
   
   if (saved_ssid != "") {
+      WiFi.mode(WIFI_STA);
       WiFi.begin(saved_ssid.c_str(), saved_pass.c_str());
       int retries = 0;
       while (WiFi.status() != WL_CONNECTED && retries < 15) { delay(500); Serial.print("."); retries++; }
@@ -346,6 +381,7 @@ void setup() {
       lcd.setCursor(0, 1); lcd.print("IP:"); lcd.print(WiFi.localIP());
   } else {
       // যদি কানেক্ট না হয়, তাহলে নিজস্ব হটস্পট (AP Mode) চালু করবে
+      WiFi.mode(WIFI_AP_STA);
       WiFi.softAP("Smart Ration", "12345678");
       lcd.setCursor(0, 0); lcd.print("AP Mode Active!");
       lcd.setCursor(0, 1); lcd.print("IP:192.168.4.1 ");
@@ -387,10 +423,11 @@ void setup() {
 // ================== MAIN LOOP ==================
 void loop() {
   server.handleClient(); 
-  float currentWeight = scale.get_units(5); 
+  float currentWeightKg = scale.get_units(5);
+  float currentWeightG = currentWeightKg * 1000.0;
 
   if (digitalRead(BTN_TARE) == LOW) {
-    if (currentWeight > 0.05) { 
+    if (currentWeightG > 50.0) { 
       lcd.clear(); lcd.print("Tare Failed!"); lcd.setCursor(0, 1); lcd.print("Weight > 50g"); delay(2000);
     } else {
       scale.tare(); lcd.clear(); lcd.print("Tared Success!"); delay(1000);
@@ -409,15 +446,16 @@ void loop() {
 
   if (btn_pressed > 0) {
     if (selected_product == btn_pressed) { 
-        float target = (btn_pressed==1) ? target_p1 : (btn_pressed==2) ? target_p2 : target_p3;
-        float diff = currentWeight - target;
+      float targetKg = (btn_pressed==1) ? target_p1 : (btn_pressed==2) ? target_p2 : target_p3;
+      float targetG = targetKg * 1000.0;
+      float diffG = currentWeightG - targetG;
         
-        if (abs(diff) <= tolerance_kg) { 
+      if (abs(diffG) <= tolerance_g) { 
             lcd.clear(); lcd.print("Data Saved!"); 
             
             // ডাটাবেসে (টেবিলে) সেভ হচ্ছে
             String p_name = (btn_pressed == 1) ? "Rice" : (btn_pressed == 2) ? "Lentil" : "Onion";
-            saved_data_html += "<tr><td>" + current_id + "</td><td>" + current_user + "</td><td>" + p_name + "</td><td>" + String(currentWeight, 2) + "</td><td style='color:#00ff00;'>Success</td></tr>";
+        saved_data_html += "<tr><td>" + current_id + "</td><td>" + current_user + "</td><td>" + p_name + "</td><td>" + String(currentWeightG, 1) + "</td><td style='color:#00ff00;'>Success</td></tr>";
 
             delay(1500); selected_product = 0; 
         } else {
@@ -433,20 +471,21 @@ void loop() {
   // --- DISPLAY LOGIC ---
   if(digitalRead(BTN_TARE) == HIGH && digitalRead(BTN_RESET) == HIGH && btn_pressed == 0) {
       lcd.setCursor(0, 0);
-      float target = 0.0;
+      float targetKg = 0.0;
+      float targetG = 0.0;
 
-      if (selected_product == 1) { lcd.print("P1 Tgt:"); lcd.print(target_p1, 2); lcd.print("Kg "); target = target_p1; }
-      else if (selected_product == 2) { lcd.print("P2 Tgt:"); lcd.print(target_p2, 2); lcd.print("Kg "); target = target_p2; }
-      else if (selected_product == 3) { lcd.print("P3 Tgt:"); lcd.print(target_p3, 2); lcd.print("Kg "); target = target_p3; }
+      if (selected_product == 1) { targetKg = target_p1; targetG = targetKg * 1000.0; lcd.print("P1:"); lcd.print(targetG, 0); lcd.print("g   "); }
+      else if (selected_product == 2) { targetKg = target_p2; targetG = targetKg * 1000.0; lcd.print("P2:"); lcd.print(targetG, 0); lcd.print("g   "); }
+      else if (selected_product == 3) { targetKg = target_p3; targetG = targetKg * 1000.0; lcd.print("P3:"); lcd.print(targetG, 0); lcd.print("g   "); }
       else { lcd.print("Select Product  "); }
       
-      lcd.setCursor(0, 1); lcd.print(currentWeight, 2); lcd.print(" Kg  ");
+      lcd.setCursor(0, 1); lcd.print(currentWeightG, 0); lcd.print("g      ");
 
       if (selected_product > 0) {
-          float diff = currentWeight - target;
+        float diffG = currentWeightG - targetG;
           lcd.setCursor(10, 1);
-          if (diff > tolerance_kg) { lcd.print("OVER "); } 
-          else if (diff < -tolerance_kg) { lcd.print("UNDER"); } 
+        if (diffG > tolerance_g) { lcd.print("OVER "); } 
+        else if (diffG < -tolerance_g) { lcd.print("UNDER"); } 
           else { lcd.print("OK!  "); }
       } else {
           lcd.setCursor(10, 1); lcd.print("      "); 
