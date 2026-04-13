@@ -17,6 +17,7 @@ const DEFAULT_DISTRIBUTOR_SETTINGS = {
   },
   distribution: {
     weightThresholdKg: 1,
+    weightThresholdPercent: 0.05,
     autoPauseOnMismatch: true,
     tokenPerConsumerPerDay: 1,
   },
@@ -54,7 +55,7 @@ function generateToken(userId, userType, tokenVersion) {
     { userId, userType, tokenVersion, jti },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "2h",
+      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
     },
   );
 }
@@ -177,6 +178,18 @@ function sanitizeIncomingSettings(payload) {
     Number(merged.distribution.weightThresholdKg) || 1,
   );
 
+  merged.distribution.weightThresholdPercent = Number(
+    merged.distribution.weightThresholdPercent,
+  );
+  if (!Number.isFinite(merged.distribution.weightThresholdPercent)) {
+    merged.distribution.weightThresholdPercent =
+      DEFAULT_DISTRIBUTOR_SETTINGS.distribution.weightThresholdPercent;
+  }
+  merged.distribution.weightThresholdPercent = Math.max(
+    0.01,
+    Number(merged.distribution.weightThresholdPercent) || 0.05,
+  );
+
   merged.distribution.tokenPerConsumerPerDay = Math.max(
     1,
     Number(merged.distribution.tokenPerConsumerPerDay) || 1,
@@ -220,6 +233,7 @@ function mergeDistributorWithGlobal(distributorValue, globalValue) {
     distribution: {
       ...scoped.distribution,
       weightThresholdKg: global.distribution.weightThresholdKg,
+      weightThresholdPercent: global.distribution.weightThresholdPercent,
       tokenPerConsumerPerDay: global.distribution.tokenPerConsumerPerDay,
       autoPauseOnMismatch: global.distribution.autoPauseOnMismatch,
     },

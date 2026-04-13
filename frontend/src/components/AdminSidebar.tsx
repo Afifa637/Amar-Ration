@@ -24,8 +24,12 @@ const adminLinks = [
     icon: "🎫",
     label: "টোকেন ও ডিস্ট্রিবিউশন কন্ট্রোল",
   },
-  { to: "/admin/audit", icon: "🛡️", label: "অডিট, ফ্রড ও ব্ল্যাকলিস্ট" },
-  { to: "/admin/reports", icon: "📑", label: "রিপোর্ট ও রিকনসিলিয়েশন" },
+  { to: "/admin/qr-rotation", icon: "🔁", label: "QR রোটেশন" },
+  { to: "/admin/complaints", icon: "🗣️", label: "অভিযোগ ব্যবস্থাপনা" },
+  { to: "/admin/appeals", icon: "📨", label: "আপিল ব্যবস্থাপনা" },
+  { to: "/admin/eligibility", icon: "✅", label: "যোগ্যতা ব্যবস্থাপনা" },
+  { to: "/admin/stock-suggestion", icon: "📦", label: "স্টক সাজেশন" },
+  { to: "/admin/audit", icon: "🛡️", label: "অডিট/ফ্রড/ব্ল্যাকলিস্ট/রিপোর্ট" },
   { to: "/admin/settings", icon: "⚙️", label: "সিস্টেম সেটিংস" },
 ];
 
@@ -53,12 +57,12 @@ export default function AdminSidebar() {
   }, []);
 
   return (
-    <div className="h-full p-3 flex flex-col">
+    <div className="h-full p-3 flex flex-col min-h-0">
       <div className="px-3 py-2 border-b border-white/10 mb-3">
         <div className="text-[13px] opacity-90">অ্যাডমিন মেনু</div>
       </div>
 
-      <nav className="space-y-1">
+      <nav className="space-y-1 overflow-y-auto pr-1 flex-1">
         {adminLinks.map((item) => (
           <NavLink
             key={item.to}
@@ -73,7 +77,7 @@ export default function AdminSidebar() {
         ))}
       </nav>
 
-      <div className="mt-4 border-t border-white/10 pt-3">
+      <div className="mt-4 border-t border-white/10 pt-3 shrink-0">
         <div className="text-[12px] opacity-90 px-3 mb-2">দ্রুত অবস্থা</div>
 
         <div className="px-3 space-y-2 text-[12px]">

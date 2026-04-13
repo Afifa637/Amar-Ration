@@ -12,6 +12,7 @@ const {
   decryptNid,
   hashNid,
 } = require("../services/nid-security.service");
+const { nextConsumerCode } = require("../services/consumer-code.service");
 const { writeAudit } = require("../services/audit.service");
 const {
   notifyAdmins,
@@ -27,6 +28,7 @@ const {
   isSameDivision,
   buildDivisionMatchQuery,
 } = require("../utils/division.utils");
+const { buildOmsQrPayload } = require("../utils/qr-payload.utils");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -92,20 +94,10 @@ function canAccessConsumerByScope(distributor, consumer) {
 }
 
 // Generate unique consumer code
-const generateConsumerCode = async () => {
-  const lastConsumer = await Consumer.findOne()
-    .sort({ createdAt: -1 })
-    .select("consumerCode");
+const generateConsumerCode = async () => nextConsumerCode();
 
-  if (lastConsumer && lastConsumer.consumerCode) {
-    const lastNumber = parseInt(lastConsumer.consumerCode.substring(1));
-    return `C${String(lastNumber + 1).padStart(4, "0")}`;
-  }
-  return "C0001";
-};
-
-// Generate unique QR token
-const generateQRToken = () => {
+// Generate fallback opaque QR token
+const generateOpaqueQRToken = () => {
   return crypto.randomBytes(32).toString("hex");
 };
 
@@ -244,6 +236,8 @@ exports.addConsumer = async (req, res) => {
       unionName,
       ward,
       status,
+      guardianPhone,
+      guardianName,
     } = req.body;
 
     // Validation
@@ -278,6 +272,17 @@ exports.addConsumer = async (req, res) => {
       });
     }
 
+    if (guardianPhone) {
+      const bdPhone = /^01[3-9]\d{8}$/;
+      if (!bdPhone.test(String(guardianPhone).trim())) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "guardianPhone must be a valid Bangladesh number (01XXXXXXXXX)",
+        });
+      }
+    }
+
     const distributor = await ensureDistributorProfile(req.user);
     if (!distributor) {
       return res.status(403).json({
@@ -293,9 +298,25 @@ exports.addConsumer = async (req, res) => {
       });
     }
 
-    // Generate unique consumer code and QR token
+    // Generate unique consumer code
     const consumerCode = await generateConsumerCode();
-    const qrToken = generateQRToken();
+    const normalizedWard = normalizeWardNo(
+      ward || distributor.wardNo || distributor.ward,
+    );
+    const normalizedDivision = normalizeDivision(
+      division || distributor.division,
+    );
+
+    const qrDays = await getQrExpiryDays(req.user.userId);
+    const now = new Date();
+    const validTo = new Date(now.getTime() + qrDays * 86400000);
+
+    const qrToken = buildOmsQrPayload({
+      consumerCode,
+      ward: normalizedWard,
+      category,
+      expiryDate: validTo,
+    });
 
     // Create consumer
     const consumer = await Consumer.create({
@@ -307,18 +328,17 @@ exports.addConsumer = async (req, res) => {
       fatherNidFull: normalizedFather,
       motherNidFull: normalizedMother,
       category,
+      guardianPhone: guardianPhone ? String(guardianPhone).trim() : undefined,
+      guardianName: guardianName ? String(guardianName).trim() : undefined,
       status: status || "Inactive",
-      division: normalizeDivision(division || distributor.division),
+      division: normalizedDivision,
       district: district || distributor.district,
       upazila: upazila || distributor.upazila,
       unionName: unionName || distributor.unionName,
-      ward: normalizeWardNo(ward || distributor.wardNo || distributor.ward),
+      ward: normalizedWard,
       createdByDistributor: distributor._id,
     });
 
-    const qrDays = await getQrExpiryDays(req.user.userId);
-    const now = new Date();
-    const validTo = new Date(now.getTime() + qrDays * 86400000);
     const qrStatus =
       consumer.status === "Active"
         ? "Valid"
@@ -402,6 +422,8 @@ exports.addConsumer = async (req, res) => {
           fatherNidFull: decryptNid(consumer.fatherNidFull),
           motherNidFull: decryptNid(consumer.motherNidFull),
           category: consumer.category,
+          guardianPhone: consumer.guardianPhone,
+          guardianName: consumer.guardianName,
           status: consumer.status,
           division: consumer.division,
           district: consumer.district,
@@ -1106,6 +1128,94 @@ exports.getConsumerCard = async (req, res) => {
   }
 };
 
+// @route   DELETE /api/consumers/:id/card
+// @desc    Remove consumer OMS card (admin only)
+// @access  Private (Admin)
+exports.deleteConsumerCard = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin can remove cards",
+      });
+    }
+
+    const consumer = await Consumer.findById(req.params.id)
+      .select("_id consumerCode createdByDistributor")
+      .lean();
+    if (!consumer) {
+      return res.status(404).json({
+        success: false,
+        message: "Consumer not found",
+      });
+    }
+
+    const card = await OMSCard.findOne({ consumerId: consumer._id });
+    if (!card) {
+      return res.status(404).json({
+        success: false,
+        message: "OMS card not found for this consumer",
+      });
+    }
+
+    const previousQrId = card.qrCodeId ? String(card.qrCodeId) : null;
+    if (card.qrCodeId) {
+      await QRCode.findByIdAndUpdate(card.qrCodeId, { status: "Revoked" });
+    }
+
+    await OMSCard.deleteOne({ _id: card._id });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "CONSUMER_CARD_REMOVED",
+      entityType: "Consumer",
+      entityId: String(consumer._id),
+      severity: "Warning",
+      meta: {
+        consumerCode: consumer.consumerCode,
+        cardId: String(card._id),
+        previousQrId,
+      },
+    });
+
+    if (consumer.createdByDistributor) {
+      const createdByDistributor = await Distributor.findById(
+        consumer.createdByDistributor,
+      )
+        .select("userId")
+        .lean();
+
+      if (createdByDistributor?.userId) {
+        await notifyUser(createdByDistributor.userId, {
+          title: "Consumer card removed",
+          message: `OMS card removed for ${consumer.consumerCode}.`,
+          meta: {
+            consumerId: String(consumer._id),
+            consumerCode: consumer.consumerCode,
+          },
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: "Consumer card removed successfully",
+      data: {
+        consumerId: String(consumer._id),
+        consumerCode: consumer.consumerCode,
+        removedCardId: String(card._id),
+      },
+    });
+  } catch (error) {
+    console.error("deleteConsumerCard error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while removing card",
+    });
+  }
+};
+
 // @route   POST /api/consumers/:id/card/reissue
 // @desc    Reissue consumer QR card (admin only)
 // @access  Private (Admin)
@@ -1149,9 +1259,16 @@ exports.reissueConsumerCard = async (req, res) => {
       createdByDistributor?.userId || req.user.userId,
     );
 
-    const newQrToken = generateQRToken();
     const now = new Date();
     const validTo = new Date(now.getTime() + qrDays * 86400000);
+
+    const newQrToken =
+      buildOmsQrPayload({
+        consumerCode: consumer.consumerCode,
+        ward: consumer.ward || consumer.wardNo,
+        category: consumer.category,
+        expiryDate: validTo,
+      }) || generateOpaqueQRToken();
 
     const newQr = await QRCode.create({
       payload: newQrToken,

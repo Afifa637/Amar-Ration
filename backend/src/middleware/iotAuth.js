@@ -1,5 +1,7 @@
 function protectIotDevice(req, res, next) {
-  const providedKey = String(req.headers["x-iot-api-key"] || "").trim();
+  const providedKey = String(
+    req.headers["x-iot-key"] || req.headers["x-iot-api-key"] || "",
+  ).trim();
   const expectedKey = String(process.env.IOT_API_KEY || "").trim();
 
   if (!expectedKey) {
@@ -12,7 +14,8 @@ function protectIotDevice(req, res, next) {
   if (!providedKey || providedKey !== expectedKey) {
     return res.status(401).json({
       success: false,
-      message: "Invalid device key",
+      message: "Invalid IoT key",
+      code: "UNAUTHORIZED",
     });
   }
 

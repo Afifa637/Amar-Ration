@@ -3,11 +3,13 @@ const DistributionRecord = require("../models/DistributionRecord");
 const Distributor = require("../models/Distributor");
 const User = require("../models/User");
 const AuditLog = require("../models/AuditLog");
+const ExcelJS = require("exceljs");
 const {
   normalizeDivision,
   isSameDivision,
+  buildDivisionMatchQuery,
 } = require("../utils/division.utils");
-const { normalizeWardNo } = require("../utils/ward.utils");
+const { normalizeWardNo, buildWardMatchQuery } = require("../utils/ward.utils");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -176,6 +178,14 @@ async function distributionReport(req, res) {
 
     const requestedDivision = String(division || "").trim();
     const requestedWard = normalizeWardNo(wardNo || ward);
+
+    if (requestedWard && !requestedDivision) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
 
     const scopedRows = enriched.filter((row) => {
       if (
@@ -422,9 +432,135 @@ async function reportAuditLogs(req, res) {
   }
 }
 
+// GET /api/reports/export?format=csv&from=2026-04-01&to=2026-04-30&division=Khulna&wardNo=02
+async function exportDistributionReport(req, res) {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const { format = "csv", from, to, division, wardNo, ward } = req.query;
+
+    if ((wardNo || ward) && !division) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const tokenQuery = {};
+    if (from || to) {
+      tokenQuery.issuedAt = {};
+      if (from) tokenQuery.issuedAt.$gte = new Date(from);
+      if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        tokenQuery.issuedAt.$lte = end;
+      }
+    }
+
+    if (division || wardNo || ward) {
+      const distQuery = {};
+      if (division) {
+        distQuery.division =
+          buildDivisionMatchQuery(division) || normalizeDivision(division);
+      }
+
+      const wardInput = wardNo || ward;
+      if (wardInput) {
+        const wardQuery = buildWardMatchQuery(wardInput, ["wardNo", "ward"]);
+        if (wardQuery?.$or) {
+          distQuery.$or = wardQuery.$or;
+        } else {
+          distQuery.wardNo = normalizeWardNo(wardInput);
+        }
+      }
+
+      const distributors = await Distributor.find(distQuery)
+        .select("_id")
+        .lean();
+      tokenQuery.distributorId = { $in: distributors.map((d) => d._id) };
+    }
+
+    const tokens = await Token.find(tokenQuery)
+      .populate(
+        "consumerId",
+        "consumerCode name category ward division nidLast4 guardianPhone",
+      )
+      .populate("distributorId", "wardNo division district")
+      .lean();
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Distribution Report");
+
+    sheet.columns = [
+      { header: "Token Code", key: "tokenCode", width: 18 },
+      { header: "Date", key: "date", width: 14 },
+      { header: "Consumer Code", key: "consumerCode", width: 15 },
+      { header: "Consumer Name", key: "consumerName", width: 20 },
+      { header: "NID Last 4", key: "nidLast4", width: 12 },
+      { header: "Guardian Phone", key: "guardianPhone", width: 16 },
+      { header: "Category", key: "category", width: 10 },
+      { header: "Ward", key: "ward", width: 8 },
+      { header: "Division", key: "division", width: 12 },
+      { header: "Ration (kg)", key: "rationQtyKg", width: 12 },
+      { header: "Status", key: "status", width: 10 },
+    ];
+
+    for (const token of tokens) {
+      const consumer = token.consumerId || {};
+      sheet.addRow({
+        tokenCode: token.tokenCode,
+        date: token.issuedAt
+          ? new Date(token.issuedAt).toLocaleDateString("en-GB")
+          : "",
+        consumerCode: consumer.consumerCode || "",
+        consumerName: consumer.name || "",
+        nidLast4: consumer.nidLast4 || "",
+        guardianPhone: consumer.guardianPhone || "",
+        category: consumer.category || "",
+        ward: consumer.ward || token.distributorId?.wardNo || "",
+        division: consumer.division || token.distributorId?.division || "",
+        rationQtyKg: token.rationQtyKg || 0,
+        status: token.status || "",
+      });
+    }
+
+    sheet.getRow(1).font = { bold: true };
+
+    const filename = `distribution-report-${new Date().toISOString().slice(0, 10)}`;
+
+    if (String(format).toLowerCase() === "xlsx") {
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename=\"${filename}.xlsx\"`,
+      );
+      await workbook.xlsx.write(res);
+    } else {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename=\"${filename}.csv\"`,
+      );
+      await workbook.csv.write(res);
+    }
+
+    return res.end();
+  } catch (error) {
+    console.error("exportDistributionReport error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   reportSummary,
   distributionReport,
   tokenAnalytics,
   reportAuditLogs,
+  exportDistributionReport,
 };

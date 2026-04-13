@@ -49,6 +49,23 @@ function getTransporter() {
   return transporterCache;
 }
 
+function getDistributorLoginUrl() {
+  if (process.env.DISTRIBUTOR_LOGIN_URL) {
+    return String(process.env.DISTRIBUTOR_LOGIN_URL).trim();
+  }
+
+  if (process.env.BACKEND_PUBLIC_URL) {
+    try {
+      const backendUrl = new URL(String(process.env.BACKEND_PUBLIC_URL));
+      return `${backendUrl.origin}/login/distributor`;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 function buildCredentialHtml({
   name,
   loginEmail,
@@ -57,9 +74,7 @@ function buildCredentialHtml({
   wardNo,
   authorityStatus,
 }) {
-  const loginUrl =
-    process.env.DISTRIBUTOR_LOGIN_URL ||
-    "http://localhost:5173/login/distributor";
+  const loginUrl = getDistributorLoginUrl();
 
   return `
     <div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto; color: #111827;">
@@ -85,7 +100,7 @@ function buildCredentialHtml({
         </tr>
       </table>
 
-      <p>লগইন করুন: <a href="${loginUrl}">${loginUrl}</a></p>
+      ${loginUrl ? `<p>লগইন করুন: <a href="${loginUrl}">${loginUrl}</a></p>` : "<p>লগইন URL কনফিগার করা নেই। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।</p>"}
       <p style="color:#b91c1c;"><b>Security:</b> এই লগইন তথ্য অ্যাডমিন-নিয়ন্ত্রিত। পরিবর্তনের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।</p>
       <p style="font-size: 12px; color: #6b7280;">এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে।</p>
     </div>
@@ -141,9 +156,7 @@ async function sendDistributorCredentialEmail({
 }
 
 function buildStatusHtml({ name, loginEmail, ward, wardNo, status, reason }) {
-  const loginUrl =
-    process.env.DISTRIBUTOR_LOGIN_URL ||
-    "http://localhost:5173/login/distributor";
+  const loginUrl = getDistributorLoginUrl();
 
   const statusText =
     status === "Active"
@@ -186,7 +199,7 @@ function buildStatusHtml({ name, loginEmail, ward, wardNo, status, reason }) {
         ${reason ? `<tr><td style="border: 1px solid #e5e7eb; padding: 8px;"><b>Note</b></td><td style="border: 1px solid #e5e7eb; padding: 8px;">${reason}</td></tr>` : ""}
       </table>
 
-      ${status === "Active" ? `<p>লগইন করুন: <a href="${loginUrl}">${loginUrl}</a></p>` : ""}
+      ${status === "Active" ? (loginUrl ? `<p>লগইন করুন: <a href="${loginUrl}">${loginUrl}</a></p>` : "<p>লগইন URL কনফিগার করা নেই। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।</p>") : ""}
       <p style="font-size: 12px; color: #6b7280;">এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে।</p>
     </div>
   `;

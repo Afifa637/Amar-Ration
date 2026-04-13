@@ -5,6 +5,7 @@ const DistributionRecord = require("../models/DistributionRecord");
 const DistributionSession = require("../models/DistributionSession");
 const SystemSetting = require("../models/SystemSetting");
 const Distributor = require("../models/Distributor");
+const Consumer = require("../models/Consumer");
 const { stockOut } = require("../services/stock.service");
 const { writeAudit } = require("../services/audit.service");
 const {
@@ -12,6 +13,14 @@ const {
   notifyUser,
 } = require("../services/notification.service");
 const { checkDistributorMismatchCount } = require("../services/fraud.service");
+const {
+  sendDistributionSms,
+  sendMismatchSms,
+} = require("../services/sms.service");
+const { generateReceipt } = require("../services/receipt.service");
+const { normalizeStockItem } = require("../utils/stock-items.utils");
+
+const lastPollTime = new Map();
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -23,6 +32,12 @@ function parseThreshold(settingValue) {
     return settingValue.maxDiff;
   }
   return 0.05;
+}
+
+function parseThresholdPercent(value) {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return 0.05;
+  return Math.max(0.01, raw > 1 ? raw / 100 : raw);
 }
 
 function parseAutoPause(value) {
@@ -38,14 +53,22 @@ async function resolveDistributionSettings(session) {
       .lean(),
   ]);
 
-  const maxDiff = parseThreshold(
-    weightSetting?.value ?? settingsDoc?.value?.distribution?.weightThresholdKg,
+  const thresholdPercent = parseThresholdPercent(
+    settingsDoc?.value?.distribution?.weightThresholdPercent ??
+      settingsDoc?.value?.distribution?.weightThresholdKg ??
+      weightSetting?.value ??
+      0.05,
+  );
+
+  const absoluteFallbackKg = Math.max(
+    0.05,
+    Number(parseThreshold(weightSetting?.value)) || 0.05,
   );
   const autoPauseOnMismatch = parseAutoPause(
     settingsDoc?.value?.distribution?.autoPauseOnMismatch,
   );
 
-  return { maxDiff, autoPauseOnMismatch };
+  return { thresholdPercent, absoluteFallbackKg, autoPauseOnMismatch };
 }
 
 // POST /api/iot/weight-reading
@@ -60,10 +83,10 @@ async function handleWeightReading(req, res) {
   }
 
   const actual = Number(measuredKg);
-  if (!Number.isFinite(actual) || actual <= 0) {
+  if (!Number.isFinite(actual) || actual <= 0 || !Number.isInteger(actual)) {
     return res.status(400).json({
       success: false,
-      message: "measuredKg must be a positive number",
+      message: "measuredKg must be a positive integer in 1kg step",
     });
   }
 
@@ -74,6 +97,21 @@ async function handleWeightReading(req, res) {
     session.startTransaction();
 
     const token = await Token.findOne({ tokenCode }).session(session);
+    let tokenSession = null;
+    if (token.sessionId) {
+      tokenSession = await DistributionSession.findById(token.sessionId)
+        .session(session)
+        .select("status dateKey")
+        .lean();
+      if (!tokenSession || tokenSession.status !== "Open") {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: "Distribution session is not open",
+        });
+      }
+    }
+
     if (!token) {
       await session.abortTransaction();
       return res
@@ -100,11 +138,21 @@ async function handleWeightReading(req, res) {
       });
     }
 
-    const { maxDiff, autoPauseOnMismatch } =
+    const { thresholdPercent, absoluteFallbackKg, autoPauseOnMismatch } =
       await resolveDistributionSettings(session);
 
     const expected = Number(token.rationQtyKg);
+    const maxDiff = Math.max(absoluteFallbackKg, expected * thresholdPercent);
     const mismatch = Math.abs(actual - expected) > maxDiff;
+    const itemName = normalizeStockItem(token.rationItem);
+    if (!itemName) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid token ration item",
+        code: "VALIDATION_ERROR",
+      });
+    }
 
     await DistributionRecord.create(
       [
@@ -125,9 +173,10 @@ async function handleWeightReading(req, res) {
     await stockOut(
       {
         distributorId: token.distributorId,
-        dateKey: todayKey(),
+        dateKey: tokenSession?.dateKey || token.sessionDateKey || todayKey(),
         qtyKg: actual,
         ref: token.tokenCode,
+        item: itemName,
       },
       session,
     );
@@ -160,6 +209,9 @@ async function handleWeightReading(req, res) {
       );
     }
 
+    token.iotVerified = !mismatch;
+    await token.save({ session });
+
     await session.commitTransaction();
 
     if (mismatch) {
@@ -167,6 +219,11 @@ async function handleWeightReading(req, res) {
         .select("userId")
         .lean();
       distributorIdForFraudCheck = String(token.distributorId);
+
+      const consumer = await Consumer.findById(token.consumerId)
+        .select("_id guardianPhone phone")
+        .lean();
+      void sendMismatchSms(consumer, token.tokenCode, expected, actual);
 
       if (distributor?.userId) {
         await notifyUser(distributor.userId, {
@@ -193,6 +250,19 @@ async function handleWeightReading(req, res) {
           distributorId: String(token.distributorId),
         },
       });
+    } else {
+      const consumer = await Consumer.findById(token.consumerId)
+        .select("_id guardianPhone phone")
+        .lean();
+      void sendDistributionSms(consumer, token.tokenCode, actual, itemName);
+      setImmediate(() => {
+        generateReceipt(token._id).catch((err) =>
+          console.error(
+            "generateReceipt iot success error:",
+            err?.message || err,
+          ),
+        );
+      });
     }
 
     if (distributorIdForFraudCheck) {
@@ -206,6 +276,8 @@ async function handleWeightReading(req, res) {
         expectedKg: expected,
         measuredKg: actual,
         mismatch,
+        maxDiff: Number(maxDiff.toFixed(3)),
+        thresholdPercent: Number((thresholdPercent * 100).toFixed(1)),
       },
     });
   } catch (error) {
@@ -227,8 +299,15 @@ async function getWeightThreshold(req, res) {
       key: "distributor:global:settings",
     }).lean();
 
-    const maxDiff = parseThreshold(
-      setting?.value ?? settingsDoc?.value?.distribution?.weightThresholdKg,
+    const thresholdPercent = parseThresholdPercent(
+      settingsDoc?.value?.distribution?.weightThresholdPercent ??
+        settingsDoc?.value?.distribution?.weightThresholdKg ??
+        setting?.value ??
+        0.05,
+    );
+    const maxDiff = Math.max(
+      0.05,
+      Number(parseThreshold(setting?.value)) || 0.05,
     );
     const autoPauseOnMismatch = parseAutoPause(
       settingsDoc?.value?.distribution?.autoPauseOnMismatch,
@@ -238,6 +317,7 @@ async function getWeightThreshold(req, res) {
       success: true,
       data: {
         weightThresholdKg: maxDiff,
+        weightThresholdPercent: thresholdPercent,
         autoPauseOnMismatch,
       },
     });
@@ -247,7 +327,76 @@ async function getWeightThreshold(req, res) {
   }
 }
 
+// GET /api/iot/pending-token
+async function getPendingToken(req, res) {
+  try {
+    const deviceId = String(req.query?.deviceId || "").trim();
+    const sessionId = String(req.query?.sessionId || "").trim();
+
+    if (!deviceId || !sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: "deviceId and sessionId are required",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const last = lastPollTime.get(deviceId);
+    const now = Date.now();
+    if (last && now - last < 1000) {
+      return res.status(429).json({
+        success: false,
+        message: "Too many requests",
+        code: "RATE_LIMITED",
+      });
+    }
+    lastPollTime.set(deviceId, now);
+
+    const distSession = await DistributionSession.findById(sessionId)
+      .select("_id status")
+      .lean();
+    if (!distSession || distSession.status !== "Open") {
+      return res.status(404).json({
+        success: false,
+        message: "Active session not found",
+        code: "NOT_FOUND",
+      });
+    }
+
+    const token = await Token.findOne({
+      sessionId,
+      status: "Issued",
+      iotVerified: false,
+      issuedAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) },
+    })
+      .sort({ issuedAt: -1 })
+      .populate("consumerId", "consumerCode name category")
+      .lean();
+
+    if (!token) {
+      return res.json({ success: true, data: { found: false } });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        found: true,
+        tokenCode: token.tokenCode,
+        rationQtyKg: Number(token.rationQtyKg),
+        tokenId: String(token._id),
+        consumerName: token?.consumerId?.name || null,
+        consumerCode: token?.consumerId?.consumerCode || null,
+        category: token?.consumerId?.category || null,
+      },
+    });
+  } catch (error) {
+    console.error("getPendingToken error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   handleWeightReading,
   getWeightThreshold,
+  getPendingToken,
 };

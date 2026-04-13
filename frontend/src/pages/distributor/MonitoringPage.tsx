@@ -3,7 +3,6 @@ import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import {
-  createOfflineQueue,
   getBlacklistEntries,
   getMonitoringSummary,
   getOfflineQueue,
@@ -25,9 +24,6 @@ export default function MonitoringPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [offlinePayload, setOfflinePayload] = useState(
-    '{"tokenCode":"T-TEST","consumerCode":"C0001"}',
-  );
 
   const loadData = async () => {
     setLoading(true);
@@ -52,20 +48,6 @@ export default function MonitoringPage() {
   useEffect(() => {
     void loadData();
   }, []);
-
-  const onCreateOfflineQueue = async () => {
-    try {
-      setLoading(true);
-      const payload = JSON.parse(offlinePayload) as Record<string, unknown>;
-      await createOfflineQueue(payload);
-      setMessage("Offline queue item তৈরি হয়েছে");
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "অফলাইন কিউ তৈরি ব্যর্থ");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const onSyncOne = async (itemId: string) => {
     try {
@@ -221,20 +203,9 @@ export default function MonitoringPage() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-3">
-          <input
-            value={offlinePayload}
-            onChange={(e) => setOfflinePayload(e.target.value)}
-            className="border rounded px-3 py-2 text-[13px]"
-            placeholder='{"tokenCode":"T-TEST"}'
-          />
-          <Button
-            variant="secondary"
-            onClick={() => void onCreateOfflineQueue()}
-            disabled={loading}
-          >
-            + কিউ আইটেম
-          </Button>
+        <div className="mb-3 text-[12px] rounded border border-[#e2e8f0] bg-[#f8fafc] text-[#334155] px-3 py-2">
+          এই পেজটি শুধুমাত্র অফলাইন কিউ পর্যবেক্ষণ ও সিঙ্কের জন্য। নতুন কিউ
+          আইটেম অফলাইন স্ক্যান/কমপ্লিট ফ্লো থেকে তৈরি হবে।
         </div>
 
         {offlineQueue.filter((o) => o.status === offlineTab).length === 0 ? (

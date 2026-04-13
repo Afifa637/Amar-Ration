@@ -1,18 +1,77 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const speakeasy = require("speakeasy");
+const QRCodeGen = require("qrcode");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
+const RefreshToken = require("../models/RefreshToken");
 const { writeAudit } = require("../services/audit.service");
 const { notifyAdmins } = require("../services/notification.service");
 const {
   sendDistributorPasswordChangeAlertEmail,
 } = require("../services/email.service");
+const { nextConsumerCode } = require("../services/consumer-code.service");
 const { normalizeDivision } = require("../utils/division.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
 
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+const TWO_FA_SECRET_PREFIX = "2fa:v1:";
+
+function getTwoFAKey() {
+  const raw =
+    process.env.TWO_FA_SECRET_KEY ||
+    process.env.NID_ENCRYPTION_KEY ||
+    process.env.JWT_SECRET;
+  if (!raw) {
+    throw new Error("TWO_FA_SECRET_KEY or JWT_SECRET is required");
+  }
+  return crypto.createHash("sha256").update(String(raw)).digest();
+}
+
+function encryptTwoFASecret(value) {
+  const plain = String(value || "").trim();
+  if (!plain) return "";
+  if (plain.startsWith(TWO_FA_SECRET_PREFIX)) return plain;
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getTwoFAKey(), iv);
+  const encrypted = Buffer.concat([
+    cipher.update(plain, "utf8"),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+
+  return `${TWO_FA_SECRET_PREFIX}${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptTwoFASecret(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!raw.startsWith(TWO_FA_SECRET_PREFIX)) return raw;
+
+  try {
+    const encoded = raw.slice(TWO_FA_SECRET_PREFIX.length);
+    const [ivB64, tagB64, cipherB64] = encoded.split(":");
+    if (!ivB64 || !tagB64 || !cipherB64) return "";
+
+    const iv = Buffer.from(ivB64, "base64");
+    const tag = Buffer.from(tagB64, "base64");
+    const ciphertext = Buffer.from(cipherB64, "base64");
+
+    const decipher = crypto.createDecipheriv("aes-256-gcm", getTwoFAKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 // Generate JWT Token
@@ -22,10 +81,26 @@ const generateToken = (userId, userType, tokenVersion) => {
     { userId, userType, tokenVersion, jti },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "2h",
+      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
     },
   );
 };
+
+async function generateRefreshToken(userId, tokenVersion, userAgent) {
+  const raw = crypto.randomBytes(48).toString("hex");
+  const hash = crypto.createHash("sha256").update(raw).digest("hex");
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 86400000);
+
+  await RefreshToken.create({
+    userId,
+    token: hash,
+    tokenVersion,
+    userAgent: userAgent || "",
+    expiresAt,
+  });
+
+  return raw;
+}
 
 // Generate unique QR token for consumer
 const generateQRToken = () => {
@@ -234,6 +309,273 @@ exports.acknowledgePasswordChange = async (req, res) => {
   }
 };
 
+// @route   GET /api/auth/2fa/setup
+// @desc    Generate TOTP secret + QR for admin
+// @access  Private (Admin)
+exports.setup2FA = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const admin = await User.findById(req.user.userId).select(
+      "+twoFactorSecret +twoFactorTempSecret twoFactorEnabled",
+    );
+    if (!admin) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (admin.twoFactorEnabled) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "2FA already enabled. Disable first if you need to reconfigure.",
+      });
+    }
+
+    let tempSecret = decryptTwoFASecret(admin.twoFactorTempSecret);
+
+    if (!tempSecret) {
+      const generated = speakeasy.generateSecret({
+        name: `AmarRation (${req.user.userId})`,
+        issuer: "Smart OMS",
+        length: 32,
+      });
+      tempSecret = generated.base32;
+
+      await User.findByIdAndUpdate(req.user.userId, {
+        $set: {
+          twoFactorTempSecret: encryptTwoFASecret(tempSecret),
+          twoFactorTempSecretCreatedAt: new Date(),
+          twoFactorEnabled: false,
+        },
+      });
+    }
+
+    const otpauth = speakeasy.otpauthURL({
+      secret: tempSecret,
+      label: `AmarRation (${req.user.userId})`,
+      issuer: "Smart OMS",
+      encoding: "base32",
+    });
+
+    const qrDataUrl = await QRCodeGen.toDataURL(otpauth, {
+      errorCorrectionLevel: "M",
+      width: 256,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        secret: tempSecret,
+        qrDataUrl,
+        message:
+          "Scan this QR with Google Authenticator/Authy and verify to enable 2FA. Pending setup secret is reused until verified or reset.",
+      },
+    });
+  } catch (error) {
+    console.error("setup2FA error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   POST /api/auth/2fa/verify
+// @desc    Verify TOTP and enable 2FA for admin
+// @access  Private (Admin)
+exports.verify2FA = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "TOTP token required" });
+    }
+
+    const user = await User.findById(req.user.userId)
+      .select("+twoFactorSecret +twoFactorTempSecret")
+      .lean();
+
+    const pendingSecret = decryptTwoFASecret(user?.twoFactorTempSecret);
+    const existingSecret = decryptTwoFASecret(user?.twoFactorSecret);
+    const secretForVerification = pendingSecret || existingSecret;
+
+    if (!secretForVerification) {
+      return res.status(400).json({
+        success: false,
+        message: "2FA not set up. Call /2fa/setup first.",
+      });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: secretForVerification,
+      encoding: "base32",
+      token,
+      window: 2,
+    });
+
+    if (!verified) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid TOTP code. Try again." });
+    }
+
+    const backupCodes = Array.from({ length: 8 }, () =>
+      crypto.randomBytes(4).toString("hex").toUpperCase(),
+    );
+    const hashedCodes = await Promise.all(
+      backupCodes.map((code) => bcrypt.hash(code, 10)),
+    );
+
+    await User.findByIdAndUpdate(req.user.userId, {
+      $set: {
+        twoFactorEnabled: true,
+        twoFactorSecret: encryptTwoFASecret(secretForVerification),
+        twoFactorTempSecret: null,
+        twoFactorTempSecretCreatedAt: null,
+        twoFactorBackupCodes: hashedCodes,
+      },
+    });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "2FA_ENABLED",
+      entityType: "User",
+      entityId: String(req.user.userId),
+      severity: "Info",
+    });
+
+    return res.json({
+      success: true,
+      message: "2FA enabled successfully.",
+      data: {
+        backupCodes,
+        warning:
+          "Save these backup codes securely. They cannot be shown again.",
+      },
+    });
+  } catch (error) {
+    console.error("verify2FA error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   POST /api/auth/2fa/setup/reset
+// @desc    Reset pending admin 2FA setup and issue a new temp secret
+// @access  Private (Admin)
+exports.reset2FASetup = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const user = await User.findById(req.user.userId)
+      .select("twoFactorEnabled")
+      .lean();
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "2FA already enabled. Disable it first before resetting setup.",
+      });
+    }
+
+    await User.findByIdAndUpdate(req.user.userId, {
+      $set: {
+        twoFactorTempSecret: null,
+        twoFactorTempSecretCreatedAt: null,
+      },
+    });
+
+    return exports.setup2FA(req, res);
+  } catch (error) {
+    console.error("reset2FASetup error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   POST /api/auth/2fa/disable
+// @desc    Disable admin 2FA
+// @access  Private (Admin)
+exports.disable2FA = async (req, res) => {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    const { password, totpToken } = req.body || {};
+    const user = await User.findById(req.user.userId).select(
+      "+twoFactorSecret +twoFactorBackupCodes",
+    );
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const passwordOk = await bcrypt.compare(
+      String(password || ""),
+      user.passwordHash,
+    );
+    if (!passwordOk) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Incorrect password" });
+    }
+
+    const disableSecret = decryptTwoFASecret(user.twoFactorSecret);
+
+    if (user.twoFactorEnabled && disableSecret) {
+      const totpOk = speakeasy.totp.verify({
+        secret: disableSecret,
+        encoding: "base32",
+        token: String(totpToken || "").trim(),
+        window: 2,
+      });
+      if (!totpOk) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid TOTP code" });
+      }
+    }
+
+    await User.findByIdAndUpdate(req.user.userId, {
+      $set: {
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorTempSecret: null,
+        twoFactorTempSecretCreatedAt: null,
+        twoFactorBackupCodes: [],
+      },
+    });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "2FA_DISABLED",
+      entityType: "User",
+      entityId: String(req.user.userId),
+      severity: "Warning",
+    });
+
+    return res.json({ success: true, message: "2FA disabled." });
+  } catch (error) {
+    console.error("disable2FA error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 // @route   POST /api/auth/signup
 // @desc    Register new user (Admin, Distributor, FieldUser, or Consumer)
 // @access  Public
@@ -242,13 +584,13 @@ exports.signup = async (req, res) => {
     const { userType, name, email, phone, password, ...additionalFields } =
       req.body;
 
-    console.log('🔍 Signup attempt:', { userType, name, email, phone });
+    console.log("🔍 Signup attempt:", { userType, name, email, phone });
 
     // Normalize email and phone
     const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = phone ? String(phone).trim() : null;
 
-    console.log('🔍 Normalized:', { normalizedEmail, normalizedPhone });
+    console.log("🔍 Normalized:", { normalizedEmail, normalizedPhone });
 
     // Validation
     if (!userType || !name || !password) {
@@ -312,16 +654,7 @@ exports.signup = async (req, res) => {
     let consumerCode;
     let qrToken;
     if (userType === "Consumer") {
-      const lastConsumer = await User.findOne({ userType: "Consumer" })
-        .sort({ createdAt: -1 })
-        .select("consumerCode");
-
-      if (lastConsumer && lastConsumer.consumerCode) {
-        const lastNumber = parseInt(lastConsumer.consumerCode.substring(1));
-        consumerCode = `C${String(lastNumber + 1).padStart(4, "0")}`;
-      } else {
-        consumerCode = "C0001";
-      }
+      consumerCode = await nextConsumerCode();
 
       // Generate unique QR token for consumer
       qrToken = generateQRToken();
@@ -371,13 +704,13 @@ exports.signup = async (req, res) => {
     // Save user to database
     const user = await User.create(userData);
 
-    console.log('✅ User saved successfully:', { 
-      id: user._id, 
-      userType, 
-      name, 
-      email: normalizedEmail, 
+    console.log("✅ User saved successfully:", {
+      id: user._id,
+      userType,
+      name,
+      email: normalizedEmail,
       phone: normalizedPhone,
-      authorityStatus: user.authorityStatus || user.status
+      authorityStatus: user.authorityStatus || user.status,
     });
 
     // Generate token
@@ -441,10 +774,10 @@ exports.signup = async (req, res) => {
 // @access  Public
 exports.login = async (req, res) => {
   try {
-    const { identifier, password, userType } = req.body; // identifier can be email, phone, or consumerCode
+    const { identifier, password, userType, totpToken } = req.body; // identifier can be email, phone, or consumerCode
     const normalizedIdentifier = String(identifier || "").trim();
 
-    console.log('🔍 Login attempt:', { identifier, userType });
+    console.log("🔍 Login attempt:", { identifier, userType });
 
     // Validation
     if (!normalizedIdentifier || !password) {
@@ -456,12 +789,16 @@ exports.login = async (req, res) => {
     }
 
     // Normalize identifier for comparison
-    const normalizedIdentifier = String(identifier).trim();
     const isPhone = /^01\d{9}$/.test(normalizedIdentifier);
     const normalizedEmail = isPhone ? null : normalizedIdentifier.toLowerCase();
     const normalizedPhone = isPhone ? normalizedIdentifier : null;
 
-    console.log('🔍 Normalized:', { normalizedIdentifier, isPhone, normalizedEmail, normalizedPhone });
+    console.log("🔍 Normalized:", {
+      normalizedIdentifier,
+      isPhone,
+      normalizedEmail,
+      normalizedPhone,
+    });
 
     // Find user by email, phone, or consumerCode
     const safeIdentifier = escapeRegex(normalizedIdentifier);
@@ -473,7 +810,17 @@ exports.login = async (req, res) => {
       ],
     });
 
-    console.log('🔍 User found:', user ? { id: user._id, email: user.email, phone: user.phone, userType: user.userType } : 'No user found');
+    console.log(
+      "🔍 User found:",
+      user
+        ? {
+            id: user._id,
+            email: user.email,
+            phone: user.phone,
+            userType: user.userType,
+          }
+        : "No user found",
+    );
 
     if (!user) {
       return res.status(401).json({
@@ -506,6 +853,65 @@ exports.login = async (req, res) => {
         success: false,
         message: "Invalid credentials",
       });
+    }
+
+    if (user.userType === "Admin" && user.twoFactorEnabled) {
+      if (!totpToken) {
+        return res.status(200).json({
+          success: true,
+          requires2FA: true,
+          tempUserId: user._id,
+          message: "TOTP verification required",
+        });
+      }
+
+      const user2FA = await User.findById(user._id)
+        .select("+twoFactorSecret +twoFactorBackupCodes")
+        .lean();
+
+      const activeSecret = decryptTwoFASecret(user2FA?.twoFactorSecret);
+
+      if (!activeSecret) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "2FA is enabled but secret is unavailable. Contact administrator.",
+        });
+      }
+
+      const totpOk = speakeasy.totp.verify({
+        secret: activeSecret,
+        encoding: "base32",
+        token: String(totpToken).trim(),
+        window: 2,
+      });
+
+      if (!totpOk) {
+        let backupUsed = false;
+        const backups = user2FA?.twoFactorBackupCodes || [];
+
+        for (let i = 0; i < backups.length; i += 1) {
+          const match = await bcrypt.compare(
+            String(totpToken).trim(),
+            backups[i],
+          );
+          if (match) {
+            const newCodes = [...backups];
+            newCodes.splice(i, 1);
+            await User.findByIdAndUpdate(user._id, {
+              $set: { twoFactorBackupCodes: newCodes },
+            });
+            backupUsed = true;
+            break;
+          }
+        }
+
+        if (!backupUsed) {
+          return res
+            .status(401)
+            .json({ success: false, message: "Invalid 2FA code" });
+        }
+      }
     }
 
     // Distributor/FieldUser must be approved by admin
@@ -549,6 +955,11 @@ exports.login = async (req, res) => {
       user.userType,
       user.tokenVersion || 0,
     );
+    const refreshToken = await generateRefreshToken(
+      user._id,
+      user.tokenVersion || 0,
+      req.headers["user-agent"],
+    );
 
     // Prepare response
     const userResponse = {
@@ -591,6 +1002,7 @@ exports.login = async (req, res) => {
       data: {
         user: userResponse,
         token,
+        refreshToken,
         mustChangePassword: user.mustChangePassword || false,
       },
     });
@@ -600,6 +1012,113 @@ exports.login = async (req, res) => {
       success: false,
       message: "Error logging in",
     });
+  }
+};
+
+// @route   POST /api/auth/refresh
+// @desc    Exchange refresh token for a new access token
+// @access  Public
+exports.refreshAccessToken = async (req, res) => {
+  try {
+    const rawRefreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
+    if (!rawRefreshToken) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Refresh token required" });
+    }
+
+    const hash = crypto
+      .createHash("sha256")
+      .update(String(rawRefreshToken))
+      .digest("hex");
+
+    const stored = await RefreshToken.findOne({ token: hash }).lean();
+    if (
+      !stored ||
+      stored.revokedAt ||
+      new Date(stored.expiresAt) < new Date()
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired refresh token. Please login again.",
+        code: "REFRESH_TOKEN_INVALID",
+      });
+    }
+
+    const user = await User.findById(stored.userId)
+      .select("status authorityStatus userType tokenVersion mustChangePassword")
+      .lean();
+
+    if (!user || user.status !== "Active") {
+      await RefreshToken.findByIdAndUpdate(stored._id, {
+        $set: { revokedAt: new Date() },
+      });
+      return res
+        .status(403)
+        .json({ success: false, message: "Account inactive" });
+    }
+
+    if (Number(stored.tokenVersion) !== Number(user.tokenVersion || 0)) {
+      await RefreshToken.findByIdAndUpdate(stored._id, {
+        $set: { revokedAt: new Date() },
+      });
+      return res.status(401).json({
+        success: false,
+        message: "Session invalidated. Please login again.",
+        code: "TOKEN_INVALIDATED",
+      });
+    }
+
+    const token = generateToken(
+      user._id,
+      user.userType,
+      user.tokenVersion || 0,
+    );
+
+    await RefreshToken.findByIdAndUpdate(stored._id, {
+      $set: { revokedAt: new Date() },
+    });
+    const refreshToken = await generateRefreshToken(
+      user._id,
+      user.tokenVersion || 0,
+      req.headers["user-agent"],
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        token,
+        refreshToken,
+        mustChangePassword: user.mustChangePassword || false,
+      },
+    });
+  } catch (error) {
+    console.error("refreshAccessToken error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// @route   POST /api/auth/logout
+// @desc    Revoke refresh token
+// @access  Private
+exports.logout = async (req, res) => {
+  try {
+    const rawRefreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
+    if (rawRefreshToken) {
+      const hash = crypto
+        .createHash("sha256")
+        .update(String(rawRefreshToken))
+        .digest("hex");
+      await RefreshToken.findOneAndUpdate(
+        { token: hash },
+        { $set: { revokedAt: new Date() } },
+      );
+    }
+
+    return res.json({ success: true, message: "Logged out" });
+  } catch (error) {
+    console.error("logout error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 

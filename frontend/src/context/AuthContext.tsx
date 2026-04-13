@@ -44,8 +44,10 @@ type AuthContextType = {
     email: string,
     password: string,
     role: UserRole,
+    options?: { totpToken?: string },
   ) => Promise<{
     success: boolean;
+    requires2FA?: boolean;
     mustChangePassword?: boolean;
     reason?: "pending-approval" | "blocked" | "authority-expired";
     message?: string;
@@ -112,8 +114,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     email: string,
     password: string,
     role: UserRole,
+    options?: { totpToken?: string },
   ): Promise<{
     success: boolean;
+    requires2FA?: boolean;
     mustChangePassword?: boolean;
     reason?: "pending-approval" | "blocked" | "authority-expired";
     message?: string;
@@ -127,11 +131,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         identifier: email,
         password,
         userType,
+        totpToken: options?.totpToken,
       });
+
+      if (response.data?.requires2FA) {
+        return {
+          success: false,
+          requires2FA: true,
+          message: response.data?.message || "2FA code required",
+        };
+      }
 
       if (response.data.success) {
         const {
           token,
+          refreshToken,
           user: backendUser,
           mustChangePassword,
         } = response.data.data;
@@ -159,7 +173,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // Store in localStorage
         localStorage.setItem(
           AUTH_STORAGE_KEY,
-          JSON.stringify({ user: frontendUser, token }),
+          JSON.stringify({ user: frontendUser, token, refreshToken }),
         );
 
         // Set token in api headers for subsequent requests
@@ -235,6 +249,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const parsed = JSON.parse(storedAuth) as {
           user?: AuthUser;
           token?: string;
+          refreshToken?: string;
         };
         parsedToken = parsed?.token || "";
       } catch {
@@ -246,9 +261,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const nextUser = user ? { ...user, ...(userPatch || {}) } : null;
 
     if (nextUser && nextToken) {
+      let refreshToken = "";
+      if (storedAuth) {
+        try {
+          const parsed = JSON.parse(storedAuth) as { refreshToken?: string };
+          refreshToken = parsed.refreshToken || "";
+        } catch {
+          // ignore malformed storage
+        }
+      }
       localStorage.setItem(
         AUTH_STORAGE_KEY,
-        JSON.stringify({ user: nextUser, token: nextToken }),
+        JSON.stringify({ user: nextUser, token: nextToken, refreshToken }),
       );
       api.defaults.headers.common.Authorization = `Bearer ${nextToken}`;
     }

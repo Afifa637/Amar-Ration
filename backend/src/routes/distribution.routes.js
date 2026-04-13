@@ -1,5 +1,10 @@
 const router = require("express").Router();
 const { protect, authorize } = require("../middleware/auth");
+const { validate } = require("../middleware/validate");
+const {
+  scanSchema,
+  completeDistributionSchema,
+} = require("../validation/schemas");
 const {
   createDistributionSession,
   startDistributionSession,
@@ -31,12 +36,14 @@ router.post(
   "/scan",
   protect,
   authorize("Distributor", "FieldUser"),
+  validate(scanSchema),
   scanAndIssueToken,
 );
 router.post(
   "/complete",
   protect,
   authorize("Distributor", "FieldUser"),
+  validate(completeDistributionSchema),
   completeDistribution,
 );
 router.get(

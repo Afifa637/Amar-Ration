@@ -15,10 +15,10 @@ export default function LoginPage() {
 
   const isAdminLogin = role === "central-admin";
 
-  const [email, setEmail] = useState(
-    isAdminLogin ? "admin@amar-ration.local" : "",
-  );
-  const [password, setPassword] = useState(isAdminLogin ? "admin123" : "");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [totpToken, setTotpToken] = useState("");
+  const [requires2FA, setRequires2FA] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -33,6 +33,12 @@ export default function LoginPage() {
       return;
     }
 
+    if (requires2FA && !totpToken.trim()) {
+      setError("২FA কোড দিন");
+      setIsLoading(false);
+      return;
+    }
+
     if (!role || !auth) {
       setError("Invalid role or auth context");
       setIsLoading(false);
@@ -40,9 +46,19 @@ export default function LoginPage() {
     }
 
     try {
-      const result = await auth.login(email, password, role as UserRole);
+      const result = await auth.login(email, password, role as UserRole, {
+        totpToken: requires2FA ? totpToken.trim() : undefined,
+      });
+
+      if (result.requires2FA) {
+        setRequires2FA(true);
+        setError(result.message || "২FA কোড প্রয়োজন");
+        return;
+      }
 
       if (result.success) {
+        setRequires2FA(false);
+        setTotpToken("");
         if (result.mustChangePassword) {
           navigate("/force-password-change");
           return;
@@ -94,7 +110,7 @@ export default function LoginPage() {
         </h1>
         <p className="text-sm text-white/80 text-center mb-4">
           {isAdminLogin
-            ? "অ্যাডমিন প্যানেলে প্রবেশ করতে নির্ধারিত ক্রেডেনশিয়াল ব্যবহার করুন"
+            ? "অ্যাডমিন প্যানেলে প্রবেশ করতে আপনার বরাদ্দকৃত ক্রেডেনশিয়াল ব্যবহার করুন"
             : "আপনার অ্যাকাউন্টে লগইন করুন"}
         </p>
 
@@ -131,16 +147,22 @@ export default function LoginPage() {
             />
           </div>
 
-          {isAdminLogin && (
-            <div className="rounded-lg border border-white/20 bg-white/10 p-3 text-sm text-white/90">
-              <div>
-                Fixed admin email:{" "}
-                <span className="font-semibold">admin@amar-ration.local</span>
-              </div>
-              <div>
-                Fixed admin password:{" "}
-                <span className="font-semibold">admin123</span>
-              </div>
+          {requires2FA && (
+            <div>
+              <label className="text-sm font-medium text-white block mb-1">
+                ২FA কোড (TOTP)
+              </label>
+              <input
+                type="text"
+                value={totpToken}
+                onChange={(e) =>
+                  setTotpToken(e.target.value.replace(/\s/g, ""))
+                }
+                className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
+                placeholder="৬-ডিজিট কোড"
+                inputMode="numeric"
+                maxLength={12}
+              />
             </div>
           )}
 
@@ -159,7 +181,11 @@ export default function LoginPage() {
             disabled={isLoading}
             className="w-full bg-white/90 backdrop-blur-sm text-[#16679c] py-2.5 rounded-lg hover:bg-white transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? "লগইন হচ্ছে..." : "সাইন ইন"}
+            {isLoading
+              ? "লগইন হচ্ছে..."
+              : requires2FA
+                ? "২FA ভেরিফাই করুন"
+                : "সাইন ইন"}
           </button>
         </form>
 

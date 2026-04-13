@@ -25,6 +25,13 @@ type CreateDistributorForm = {
   authorityMonths: number;
 };
 
+type BulkDistributorResult = {
+  total: number;
+  inserted: number;
+  skipped: number;
+  errors: Array<{ row: number; reason: string; email?: string }>;
+};
+
 const emptyCreateForm: CreateDistributorForm = {
   name: "",
   email: "",
@@ -62,6 +69,13 @@ export default function AdminDistributorsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [openCreate, setOpenCreate] = useState(false);
+  const [filterDivision, setFilterDivision] = useState("");
+  const [filterWard, setFilterWard] = useState("");
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkDistributorResult | null>(
+    null,
+  );
   const [createForm, setCreateForm] =
     useState<CreateDistributorForm>(emptyCreateForm);
 
@@ -76,7 +90,10 @@ export default function AdminDistributorsPage() {
     setError("");
     setMessage("");
     try {
-      const data = await getAdminDistributors();
+      const data = await getAdminDistributors({
+        division: filterDivision || undefined,
+        ward: filterWard || undefined,
+      });
       setRows(data.rows || []);
     } catch (err) {
       setError(
@@ -118,6 +135,88 @@ export default function AdminDistributorsPage() {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const parseCsv = async (file: File) => {
+    const text = await file.text();
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length < 2) return [] as Array<Record<string, string>>;
+    const headers = lines[0].split(",").map((h) => h.trim());
+    return lines.slice(1).map((line) => {
+      const cols = line.split(",").map((c) => c.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h, idx) => {
+        row[h] = cols[idx] || "";
+      });
+      return row;
+    });
+  };
+
+  const uploadBulkDistributors = async () => {
+    if (!bulkFile) {
+      setError("বাল্ক CSV নির্বাচন করুন");
+      return;
+    }
+
+    try {
+      setBulkLoading(true);
+      setError("");
+      const rows = await parseCsv(bulkFile);
+      let inserted = 0;
+      let skipped = 0;
+      const errors: Array<{ row: number; reason: string; email?: string }> = [];
+
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        try {
+          if (!row.name || !row.email || !row.division || !row.wardNo) {
+            skipped += 1;
+            errors.push({
+              row: i + 2,
+              email: row.email,
+              reason: "name/email/division/wardNo বাধ্যতামূলক",
+            });
+            continue;
+          }
+
+          await createAdminDistributor({
+            name: row.name,
+            email: row.email,
+            phone: row.phone || "",
+            wardNo: normalizeWardNo(row.wardNo),
+            ward: row.ward || row.wardNo || "",
+            division: row.division,
+            district: row.district || "",
+            upazila: row.upazila || "",
+            unionName: row.unionName || "",
+            officeAddress: row.officeAddress || "",
+            authorityMonths: Math.max(1, Number(row.authorityMonths || 6)),
+          });
+          inserted += 1;
+        } catch (err) {
+          skipped += 1;
+          errors.push({
+            row: i + 2,
+            email: row.email,
+            reason: err instanceof Error ? err.message : "insert ব্যর্থ",
+          });
+        }
+      }
+
+      setBulkResult({ total: rows.length, inserted, skipped, errors });
+      setMessage(
+        `বাল্ক আপলোড সম্পন্ন: ${inserted}টি যুক্ত, ${skipped}টি স্কিপ`,
+      );
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "বাল্ক আপলোড ব্যর্থ");
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -168,7 +267,8 @@ export default function AdminDistributorsPage() {
 
   useEffect(() => {
     void loadData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterDivision, filterWard]);
 
   const stats = useMemo(() => {
     const base = { pending: 0, Active: 0, Suspended: 0, Revoked: 0 } as Record<
@@ -278,6 +378,66 @@ export default function AdminDistributorsPage() {
         )}
       </SectionCard>
 
+      <SectionCard title="ডিস্ট্রিবিউটর বাল্ক CSV রেজিস্ট্রেশন">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <select
+            value={filterDivision}
+            onChange={(e) => setFilterDivision(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব বিভাগ</option>
+            {BANGLADESH_DIVISIONS.map((division) => (
+              <option key={division} value={division}>
+                {division}
+              </option>
+            ))}
+          </select>
+          <input
+            value={filterWard}
+            onChange={(e) => setFilterWard(normalizeWardNo(e.target.value))}
+            placeholder="ওয়ার্ড (যেমন 01)"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          />
+          <Button
+            onClick={() => void uploadBulkDistributors()}
+            disabled={bulkLoading}
+          >
+            {bulkLoading ? "আপলোড হচ্ছে..." : "CSV বাল্ক আপলোড"}
+          </Button>
+        </div>
+        <div className="mt-2 text-[12px] text-[#6b7280]">
+          CSV কলাম:
+          name,email,phone,division,wardNo,ward,district,upazila,unionName,officeAddress,authorityMonths
+        </div>
+        {bulkFile && (
+          <div className="mt-2 rounded border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[13px] text-[#1e3a8a]">
+            নির্বাচিত ফাইল: <strong>{bulkFile.name}</strong>
+          </div>
+        )}
+        {bulkResult && (
+          <div className="mt-3 rounded border border-[#e5e7eb] p-3 text-[13px]">
+            <div>মোট: {bulkResult.total}</div>
+            <div>ইনসার্ট: {bulkResult.inserted}</div>
+            <div>স্কিপ: {bulkResult.skipped}</div>
+            {bulkResult.errors.length > 0 && (
+              <div className="mt-2 space-y-1 text-[#991b1b]">
+                {bulkResult.errors.slice(0, 8).map((err, idx) => (
+                  <div key={`${err.row}-${idx}`}>
+                    Row {err.row} ({err.email || "-"}): {err.reason}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </SectionCard>
+
       <SectionCard title="ডিস্ট্রিবিউটর রেকর্ড">
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
@@ -378,7 +538,7 @@ export default function AdminDistributorsPage() {
       <SectionCard title="অ্যাডমিন নীতিমালা">
         <ul className="space-y-2 text-sm text-[#374151]">
           <li>• ডিস্ট্রিবিউটর সেলফ-অ্যাক্টিভেশন বন্ধ।</li>
-          <li>• অনুমোদন ওয়ার্ড-ভিত্তিক এবং বাতিলযোগ্য।</li>
+          <li>• অনুমোদন বিভাগ+ওয়ার্ড-ভিত্তিক এবং বাতিলযোগ্য।</li>
           <li>• ফ্রড/রিকনসিলিয়েশন ব্যর্থতায় স্থগিত করা যাবে।</li>
           <li>• প্রতিটি অ্যাকশন অডিট লগে নথিভুক্ত হবে।</li>
         </ul>

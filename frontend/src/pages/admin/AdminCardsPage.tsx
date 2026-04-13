@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
+  deleteConsumerCard,
   getConsumerCard,
   getConsumerCards,
   getAdminCardsSummary,
@@ -93,6 +94,33 @@ export default function AdminCardsPage() {
     }
   };
 
+  const onRemoveCard = async (consumerId: string) => {
+    const confirmed = window.confirm(
+      "এই OMS কার্ড মুছে ফেলতে চান? এই অ্যাকশনে কার্ড কাউন্ট আপডেট হবে।",
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      setError("");
+      const result = await deleteConsumerCard(consumerId);
+      setMessage(`কার্ড অপসারণ সফল: ${result.consumerCode}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "কার্ড অপসারণ ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statusText = (status?: string) => {
+    if (status === "Active" || status === "Valid") return "সক্রিয়";
+    if (status === "Inactive" || status === "Invalid") return "নিষ্ক্রিয়";
+    if (status === "Revoked") return "বাতিল";
+    if (status === "Expired") return "মেয়াদোত্তীর্ণ";
+    return status || "—";
+  };
+
   const printCard = (card: ConsumerCardDetail) => {
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
@@ -155,9 +183,16 @@ export default function AdminCardsPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           {[
             ["ইস্যুকৃত কার্ড", String(summary?.issuedCards ?? 0)],
-            ["সক্রিয় QR", String(summary?.activeQR ?? 0)],
-            ["নিষ্ক্রিয় / বাতিল", String(summary?.inactiveRevoked ?? 0)],
+            ["সক্রিয় কার্ড", String(summary?.activeCards ?? 0)],
+            ["সক্রিয় QR", String(summary?.validQR ?? summary?.activeQR ?? 0)],
+            [
+              "নিষ্ক্রিয়/বাতিল QR",
+              String(
+                summary?.revokedOrInvalidQR ?? summary?.inactiveRevoked ?? 0,
+              ),
+            ],
             ["রোটেশনের জন্য বাকি", String(summary?.dueForRotation ?? 0)],
+            ["অপসারিত কার্ড", String(summary?.removedCards ?? 0)],
           ].map(([label, value]) => (
             <div
               key={label}
@@ -193,9 +228,9 @@ export default function AdminCardsPage() {
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
           >
             <option value="সব">সব কার্ড স্ট্যাটাস</option>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-            <option value="Revoked">Revoked</option>
+            <option value="Active">সক্রিয়</option>
+            <option value="Inactive">নিষ্ক্রিয়</option>
+            <option value="Revoked">বাতিল</option>
           </select>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => void load()}>
@@ -223,7 +258,7 @@ export default function AdminCardsPage() {
                   "ওয়ার্ড",
                   "কার্ড",
                   "QR",
-                  "Valid To",
+                  "মেয়াদ",
                   "অ্যাকশন",
                 ].map((head) => (
                   <th key={head} className="p-2 border border-[#d7dde6]">
@@ -255,7 +290,7 @@ export default function AdminCardsPage() {
                             : "yellow"
                       }
                     >
-                      {card.cardStatus}
+                      {statusText(card.cardStatus)}
                     </Badge>
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
@@ -268,7 +303,7 @@ export default function AdminCardsPage() {
                             : "yellow"
                       }
                     >
-                      {card.qrStatus}
+                      {statusText(card.qrStatus)}
                     </Badge>
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
@@ -289,6 +324,12 @@ export default function AdminCardsPage() {
                         onClick={() => void onReissue(card.consumerId)}
                       >
                         ♻️
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() => void onRemoveCard(card.consumerId)}
+                      >
+                        🗑️
                       </Button>
                     </div>
                   </td>
