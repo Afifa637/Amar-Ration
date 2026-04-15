@@ -12,57 +12,60 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   @override
-  Future<void> initState() async {
+  void initState() {
     super.initState();
+    _loadAndRedirect();
+  }
+
+  Future<void> _loadAndRedirect() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('amar_ration_auth');
 
-    // Simulate a delay for the splash screen
     await Future.delayed(const Duration(seconds: 2));
 
-    if (token != null) {
-      // Navigate to HomeScreen if token exists
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-      );
-    } else {
-      // Navigate to LoginScreen if no token
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+    if (!mounted) {
+      return;
     }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => token != null ? const HomeScreen() : const LoginScreen(),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'assets/images/bg-2',
-              fit: BoxFit.cover,
-            ),
-            Image.asset(
-              'assets/images/app_logo.png', // Replace with your app logo path
-              width: 100,
-              height: 100,
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'আমার রেশন',
-              style: TextStyle(
-                fontFamily: 'BanglaFont',
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1f77b4),
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/bg-2.jpg'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                'assets/images/app_logo.png', // Replace with your app logo path
+                width: 100,
+                height: 100,
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              const Text(
+                'আমার রেশন',
+                style: TextStyle(
+                  fontFamily: 'BanglaFont',
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1f77b4),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
