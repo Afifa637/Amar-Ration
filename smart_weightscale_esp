@@ -26,10 +26,12 @@ float target_p1 = 0.0, target_p2 = 0.0, target_p3 = 0.0;
 int selected_product = 0; 
 float tolerance_g = 10.0; 
 float cal_factor = 2280.0; 
-String backend_base_url = "http://192.169.1.110:5000/api";
+String backend_base_url = "http://192.168.11.1:5000/api";
 String backend_api_key = "amar_ration_iot_device_key_2026";
 String last_sync_message = "Never synced";
 int last_sync_http_code = -1;
+const char* DEFAULT_WIFI_SSID = "KUET_LR_ROOM";
+const char* DEFAULT_WIFI_PASSWORD = "25052023";
 
 // ডাটা সেভ করার জন্য
 String saved_data_html = ""; 
@@ -90,6 +92,22 @@ bool syncTargetsFromBackend() {
   return true;
 }
 
+bool connectToWifi(const char* ssid, const char* password) {
+  if (!ssid || String(ssid).length() == 0) return false;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password ? password : "");
+
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 20) {
+    delay(500);
+    Serial.print(".");
+    retries++;
+  }
+
+  return WiFi.status() == WL_CONNECTED;
+}
+
 // ================== গ্লাসমরফিজম ওয়েব UI ==================
 const char index_html[] PROGMEM = R"=====(
 <!DOCTYPE html>
@@ -124,7 +142,7 @@ const char index_html[] PROGMEM = R"=====(
     </div>
 
     <div id="dashboard-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('wifi')">WiFi</a> | <a onclick="nav('ota')">OTA</a></div>
+        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
         <h2>Ration Targets</h2>
       <p style="font-size:12px; color:#d6e4ff; margin-top:-4px;">Targets are managed from the admin web app and synced to this device.</p>
         <input type="text" id="cust_name" placeholder="Customer Name">
@@ -136,13 +154,13 @@ const char index_html[] PROGMEM = R"=====(
     </div>
 
     <div id="table-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('wifi')">WiFi</a> | <a onclick="nav('ota')">OTA</a></div>
+      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
         <h2>Saved Records</h2>
         <div id="table-content" style="max-height: 300px; overflow-y: auto;">Loading data...</div>
     </div>
 
     <div id="settings-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('wifi')">WiFi</a> | <a onclick="nav('ota')">OTA</a></div>
+      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
         <h2>Calibration & Tolerance</h2>
         <button onclick="fetch('/zero').then(r=>r.text()).then(alert)" style="background:#ff9800;">1. Zero Scale (Empty)</button>
         <div class="row" style="margin-top:20px;">
@@ -156,24 +174,8 @@ const char index_html[] PROGMEM = R"=====(
         </div>
     </div>
 
-    <div id="wifi-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('wifi')">WiFi</a> | <a onclick="nav('ota')">OTA</a></div>
-        <h2>WiFi Setup</h2>
-        <button onclick="scanWifi()" style="background:#17a2b8; margin-bottom:10px;">Scan WiFi Networks</button>
-        <select id="wifi_list"><option value="">Select a Network</option></select>
-      <input type="text" id="wifi_ssid" placeholder="Or type SSID manually (2.4GHz)">
-        <input type="text" id="wifi_pass" placeholder="WiFi Password">
-        <button onclick="saveWifi()" style="background:#28a745;">Save & Restart</button>
-      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); margin:20px 0;">
-      <h3 style="margin-bottom:10px;">Backend Sync</h3>
-      <input type="text" id="backend_url" placeholder="Backend URL (e.g. http://192.168.1.10:5000/api)">
-      <input type="password" id="backend_key" placeholder="IoT API Key">
-      <button onclick="saveBackend()" style="background:#6f42c1;">Save Backend Config</button>
-      <button onclick="syncTargets()" style="background:#ff9800; margin-top:10px;">Sync Product Targets</button>
-    </div>
-
     <div id="ota-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('wifi')">WiFi</a> | <a onclick="nav('ota')">OTA</a></div>
+        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
         <h2>Firmware Update</h2>
         <form method='POST' action='/update' enctype='multipart/form-data'>
             <input type='file' name='update' accept='.bin' required>
@@ -187,15 +189,15 @@ const char index_html[] PROGMEM = R"=====(
             else alert("Wrong Login!");
         }
         function nav(p) { 
-            document.querySelectorAll('.page').forEach(e => e.style.display = 'none'); 
-            document.getElementById(p+'-page').style.display = 'block'; 
+          document.querySelectorAll('.page').forEach(e => e.style.display = 'none'); 
+          document.getElementById(p+'-page').style.display = 'block'; 
           if(p === 'dashboard') {
             loadCurrentTargets();
           }
-            if(p === 'table') {
-                document.getElementById('table-content').innerHTML = "Loading data...";
-                fetch('/get_table').then(r=>r.text()).then(data => { document.getElementById('table-content').innerHTML = data; });
-            }
+          if(p === 'table') {
+            document.getElementById('table-content').innerHTML = "Loading data...";
+            fetch('/get_table').then(r=>r.text()).then(data => { document.getElementById('table-content').innerHTML = data; });
+          }
         }
         function loadCurrentTargets() {
           fetch('/current_targets').then(r=>r.json()).then(data => {
@@ -211,27 +213,6 @@ const char index_html[] PROGMEM = R"=====(
         }
         function cal() { fetch(`/calibrate?w=${document.getElementById('known_wt').value}`).then(r=>r.text()).then(alert); }
         function setTol() { fetch(`/set_tol?g=${document.getElementById('tol_g').value}`).then(r=>r.text()).then(alert); }
-        function scanWifi() {
-            document.getElementById('wifi_list').innerHTML = "<option>Scanning...</option>";
-            fetch('/scan_wifi').then(r=>r.text()).then(data => { document.getElementById('wifi_list').innerHTML = data; });
-        }
-        function saveWifi() {
-          let s = document.getElementById('wifi_list').value;
-          let manual = document.getElementById('wifi_ssid').value.trim();
-            let p = document.getElementById('wifi_pass').value;
-          if(!s && manual) s = manual;
-            if(!s) { alert("Select a network first!"); return; }
-            fetch(`/save_wifi?s=${encodeURIComponent(s)}&p=${encodeURIComponent(p)}`).then(r=>r.text()).then(res => { alert(res); });
-        }
-        function saveBackend() {
-          const url = document.getElementById('backend_url').value;
-          const key = document.getElementById('backend_key').value;
-          if(!url || !key) { alert("Backend URL and IoT key are required!"); return; }
-          fetch(`/save_backend?url=${encodeURIComponent(url)}&key=${encodeURIComponent(key)}`).then(r=>r.text()).then(res => { alert(res); });
-        }
-        function syncTargets() {
-          fetch('/sync_targets').then(r=>r.text()).then(res => { alert(res); });
-        }
     </script>
 </body>
 </html>
@@ -356,29 +337,35 @@ void setup() {
   scale.tare(); 
 
   // WiFi Connection Logic (AP Mode Fallback)
-  preferences.begin("wifi_creds", true);
-  String saved_ssid = preferences.getString("ssid", "");
-  String saved_pass = preferences.getString("pass", "");
-  preferences.end();
-
   preferences.begin("backend_cfg", true);
-  backend_base_url = preferences.getString("url", "");
-  backend_api_key = preferences.getString("key", "");
+  String stored_backend_url = preferences.getString("url", backend_base_url);
+  String stored_backend_key = preferences.getString("key", backend_api_key);
   preferences.end();
 
-  lcd.setCursor(0, 1); lcd.print("Connecting...   ");
-  
-  if (saved_ssid != "") {
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(saved_ssid.c_str(), saved_pass.c_str());
-      int retries = 0;
-      while (WiFi.status() != WL_CONNECTED && retries < 15) { delay(500); Serial.print("."); retries++; }
+  stored_backend_url.trim();
+  stored_backend_key.trim();
+  if (stored_backend_url.length() > 0) {
+    backend_base_url = stored_backend_url;
+  }
+  if (stored_backend_key.length() > 0) {
+    backend_api_key = stored_backend_key;
   }
 
+  lcd.setCursor(0, 1); lcd.print("Connecting...   ");
+
+      bool wifiConnected = false;
+      if (String(DEFAULT_WIFI_SSID).length() > 0) {
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Try Default WiFi");
+      wifiConnected = connectToWifi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASSWORD);
+    }
+
   lcd.clear();
-  if (WiFi.status() == WL_CONNECTED) {
+    if (wifiConnected && WiFi.status() == WL_CONNECTED) {
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAP("Smart Ration", "12345678");
       lcd.setCursor(0, 0); lcd.print("WiFi Connected!");
-      lcd.setCursor(0, 1); lcd.print("IP:"); lcd.print(WiFi.localIP());
+      lcd.setCursor(0, 1); lcd.print("AP:192.168.4.1");
   } else {
       // যদি কানেক্ট না হয়, তাহলে নিজস্ব হটস্পট (AP Mode) চালু করবে
       WiFi.mode(WIFI_AP_STA);
@@ -395,9 +382,6 @@ void setup() {
   server.on("/zero", handleZero);
   server.on("/calibrate", handleCalibrate);
   server.on("/set_tol", handleTolerance);
-  server.on("/scan_wifi", handleScanWifi);
-  server.on("/save_wifi", handleSaveWifi);
-  server.on("/save_backend", handleSaveBackend);
   server.on("/sync_targets", handleSyncTargets);
 
   // OTA আপডেট হ্যান্ডলার
@@ -427,15 +411,19 @@ void loop() {
   float currentWeightG = currentWeightKg * 1000.0;
 
   if (digitalRead(BTN_TARE) == LOW) {
-    if (currentWeightG > 50.0) { 
-      lcd.clear(); lcd.print("Tare Failed!"); lcd.setCursor(0, 1); lcd.print("Weight > 50g"); delay(2000);
-    } else {
-      scale.tare(); lcd.clear(); lcd.print("Tared Success!"); delay(1000);
-    }
+    cal_factor += 10.0;
+    scale.set_scale(cal_factor);
+    lcd.clear(); lcd.print("Cal+: "); lcd.print(cal_factor, 0);
+    delay(300);
+    lcd.clear();
   }
 
   if (digitalRead(BTN_RESET) == LOW) {
-    selected_product = 0; lcd.clear(); lcd.print("System Reset"); delay(1000); lcd.clear();
+    cal_factor -= 10.0;
+    scale.set_scale(cal_factor);
+    lcd.clear(); lcd.print("Cal-: "); lcd.print(cal_factor, 0);
+    delay(300);
+    lcd.clear();
   }
 
   // --- P1, P2, P3 Buttons (Save Logic) ---
@@ -469,7 +457,7 @@ void loop() {
   }
 
   // --- DISPLAY LOGIC ---
-  if(digitalRead(BTN_TARE) == HIGH && digitalRead(BTN_RESET) == HIGH && btn_pressed == 0) {
+  if(btn_pressed == 0) {
       lcd.setCursor(0, 0);
       float targetKg = 0.0;
       float targetG = 0.0;
@@ -490,6 +478,6 @@ void loop() {
       } else {
           lcd.setCursor(10, 1); lcd.print("      "); 
       }
-      delay(200); 
+      delay(500); 
   }
 }
