@@ -10,7 +10,7 @@ const Token = require("../models/Token");
 const AuditLog = require("../models/AuditLog");
 const { sendQrRegeneratedSms } = require("./sms.service");
 const { writeAudit } = require("./audit.service");
-const { buildOmsQrPayload } = require("../utils/qr-payload.utils");
+const { buildArQrPayload } = require("../utils/qr-payload.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
 
 function monthRange(date = new Date()) {
@@ -39,7 +39,7 @@ function escapeRegex(value) {
 }
 
 function buildStandardQrPayload(consumer, expiryDate) {
-  const payload = buildOmsQrPayload({
+  const payload = buildArQrPayload({
     consumerCode: consumer.consumerCode,
     ward: normalizeWardNo(consumer.ward || consumer.wardNo || "") || "00",
     category: String(consumer.category || "A")

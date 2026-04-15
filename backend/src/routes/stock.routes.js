@@ -5,7 +5,7 @@ const {
   getStockSummary,
 } = require("../controllers/stock.controller");
 
-router.post("/in", protect, authorize("Admin", "Distributor"), addStockIn);
+router.post("/in", protect, authorize("Admin"), addStockIn);
 router.get(
   "/summary",
   protect,

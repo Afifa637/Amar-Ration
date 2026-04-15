@@ -21,8 +21,11 @@ fs.mkdirSync(photosDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, photosDir),
   filename: (req, file, cb) => {
-    const consumerCode = String(req.params.consumerId || "consumer");
-    cb(null, `${consumerCode}-${Date.now()}.jpg`);
+    const safePart = String(req.params.consumerId || "consumer").replace(
+      /[^a-zA-Z0-9_-]/g,
+      "",
+    );
+    cb(null, `${safePart || "consumer"}-${Date.now()}.jpg`);
   },
 });
 
@@ -40,7 +43,7 @@ const upload = multer({
 router.post(
   "/upload/:consumerId",
   protect,
-  authorize("FieldUser", "Admin"),
+  authorize("Distributor", "FieldUser", "Admin"),
   upload.single("photo"),
   uploadPhoto,
 );

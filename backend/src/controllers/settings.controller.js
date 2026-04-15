@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const SystemSetting = require("../models/SystemSetting");
 const Distributor = require("../models/Distributor");
 const User = require("../models/User");
+const RefreshToken = require("../models/RefreshToken");
 const { writeAudit } = require("../services/audit.service");
 const {
   sendDistributorPasswordChangeAlertEmail,
@@ -520,6 +521,10 @@ async function changeMyPassword(req, res) {
     user.mustChangePassword = false;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+    await RefreshToken.updateMany(
+      { userId: user._id, revokedAt: null },
+      { $set: { revokedAt: new Date() } },
+    );
 
     const token = generateToken(user._id, user.userType, user.tokenVersion);
 

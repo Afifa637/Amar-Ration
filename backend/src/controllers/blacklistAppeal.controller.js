@@ -1,13 +1,25 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const BlacklistAppeal = require("../models/BlacklistAppeal");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const Consumer = require("../models/Consumer");
+const Distributor = require("../models/Distributor");
 const { writeAudit } = require("../services/audit.service");
 const { sendAppealResultSms } = require("../services/sms.service");
+const { normalizeDivision } = require("../utils/division.utils");
+const { normalizeWardNo } = require("../utils/ward.utils");
 
 function makeAppealId() {
   return `APL-${Date.now()}`;
+}
+
+function getAppealUploadsDir() {
+  return path.resolve(
+    process.cwd(),
+    process.env.APPEAL_UPLOADS_DIR || "./uploads/appeals",
+  );
 }
 
 async function createAppeal(req, res) {
@@ -15,11 +27,23 @@ async function createAppeal(req, res) {
     const { consumerId, consumerCode, consumerPhone, reason, supportingInfo } =
       req.body || {};
 
-    if ((!consumerId && !consumerCode) || !consumerPhone || !reason) {
+    if ((!consumerId && !consumerCode) || !reason) {
       return res.status(400).json({
         success: false,
-        message: "consumerId/consumerCode, consumerPhone, reason are required",
+        message: "consumerId/consumerCode and reason are required",
         code: "VALIDATION_ERROR",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ userId: req.user.userId })
+      .select("_id division wardNo ward")
+      .lean();
+
+    if (!distributor) {
+      return res.status(403).json({
+        success: false,
+        message: "ডিস্ট্রিবিউটর প্রোফাইল পাওয়া যায়নি",
+        code: "FORBIDDEN",
       });
     }
 
@@ -30,13 +54,37 @@ async function createAppeal(req, res) {
         }).lean();
 
     if (!consumer) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Consumer not found",
-          code: "NOT_FOUND",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "Consumer not found",
+        code: "NOT_FOUND",
+      });
+    }
+
+    const distributorDivision = normalizeDivision(distributor.division || "");
+    const distributorWard =
+      normalizeWardNo(distributor.wardNo || distributor.ward || "") || "";
+    const consumerDivision = normalizeDivision(consumer.division || "");
+    const consumerWard = normalizeWardNo(consumer.ward || "") || "";
+
+    if (
+      distributorDivision &&
+      consumerDivision &&
+      distributorDivision !== consumerDivision
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "এই ভোক্তা আপনার ডিভিশনের বাইরে",
+        code: "OUT_OF_SCOPE",
+      });
+    }
+
+    if (distributorWard && consumerWard && distributorWard !== consumerWard) {
+      return res.status(403).json({
+        success: false,
+        message: "এই ভোক্তা আপনার ওয়ার্ডের বাইরে",
+        code: "OUT_OF_SCOPE",
+      });
     }
 
     const activeEntry = await BlacklistEntry.findOne({
@@ -46,13 +94,11 @@ async function createAppeal(req, res) {
     }).lean();
 
     if (!activeEntry) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "ভোক্তা কালো তালিকায় নেই",
-          code: "VALIDATION_ERROR",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "ভোক্তা কালো তালিকায় নেই",
+        code: "VALIDATION_ERROR",
+      });
     }
 
     const pending = await BlacklistAppeal.findOne({
@@ -68,13 +114,41 @@ async function createAppeal(req, res) {
       });
     }
 
+    const files = Array.isArray(req.files) ? req.files : [];
+    const attachments = files.map((file) => ({
+      originalName: file.originalname,
+      storedName: file.filename,
+      mimeType: file.mimetype,
+      size: file.size,
+      relativePath: path
+        .join("uploads", "appeals", file.filename)
+        .replace(/\\/g, "/"),
+    }));
+
+    const normalizedPhone = String(
+      consumerPhone || consumer.guardianPhone || "",
+    ).trim();
+
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "consumerPhone is required",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
     const appeal = await BlacklistAppeal.create({
       appealId: makeAppealId(),
       consumerId: consumer._id,
-      consumerPhone,
+      consumerPhone: normalizedPhone,
       blacklistEntryId: activeEntry._id,
+      distributorUserId: req.user.userId,
+      distributorRefId: distributor._id,
+      division: consumerDivision || distributorDivision || "",
+      ward: consumerWard || distributorWard || "",
       reason,
       supportingInfo,
+      attachments,
     });
 
     return res.status(201).json({
@@ -96,6 +170,13 @@ async function listAppeals(req, res) {
 
     const query = {};
     if (req.query.status) query.status = String(req.query.status);
+    if (req.query.division) {
+      query.division = normalizeDivision(String(req.query.division));
+    }
+    if (req.query.ward) {
+      query.ward =
+        normalizeWardNo(String(req.query.ward)) || String(req.query.ward);
+    }
     if (req.query.startDate || req.query.endDate) {
       query.createdAt = {};
       if (req.query.startDate)
@@ -106,6 +187,9 @@ async function listAppeals(req, res) {
     const [total, items] = await Promise.all([
       BlacklistAppeal.countDocuments(query),
       BlacklistAppeal.find(query)
+        .populate("consumerId", "consumerCode name division ward")
+        .populate("distributorUserId", "name phone")
+        .populate("blacklistEntryId", "reason blockType")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -132,6 +216,63 @@ async function listAppeals(req, res) {
   }
 }
 
+async function downloadAppealFile(req, res) {
+  try {
+    const { appealId, fileId } = req.params;
+
+    const appeal = await BlacklistAppeal.findOne({ appealId })
+      .select("appealId distributorUserId attachments")
+      .lean();
+
+    if (!appeal) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Appeal not found",
+          code: "NOT_FOUND",
+        });
+    }
+
+    if (
+      req.user.userType === "Distributor" &&
+      String(appeal.distributorUserId) !== String(req.user.userId)
+    ) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const fileMeta = (appeal.attachments || []).find(
+      (item) => String(item._id) === String(fileId),
+    );
+
+    if (!fileMeta) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Attachment not found",
+          code: "NOT_FOUND",
+        });
+    }
+
+    const baseDir = getAppealUploadsDir();
+    const absolutePath = path.resolve(process.cwd(), fileMeta.relativePath);
+
+    if (!absolutePath.startsWith(baseDir) || !fs.existsSync(absolutePath)) {
+      return res
+        .status(404)
+        .json({ success: false, message: "File not found", code: "NOT_FOUND" });
+    }
+
+    return res.download(absolutePath, fileMeta.originalName);
+  } catch (error) {
+    console.error("downloadAppealFile error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", code: "SERVER_ERROR" });
+  }
+}
+
 async function reviewAppeal(req, res) {
   try {
     const { decision, adminNote } = req.body || {};
@@ -147,13 +288,11 @@ async function reviewAppeal(req, res) {
       appealId: req.params.appealId,
     }).lean();
     if (!appeal) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Appeal not found",
-          code: "NOT_FOUND",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "Appeal not found",
+        code: "NOT_FOUND",
+      });
     }
 
     const update = {
@@ -212,5 +351,6 @@ async function reviewAppeal(req, res) {
 module.exports = {
   createAppeal,
   listAppeals,
+  downloadAppealFile,
   reviewAppeal,
 };

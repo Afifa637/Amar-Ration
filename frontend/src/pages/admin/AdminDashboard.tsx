@@ -460,7 +460,7 @@ export default function AdminDashboard() {
           <ul className="space-y-2 text-sm text-[#374151]">
             <li>• NID + পিতার NID + মাতার NID মিল যাচাই</li>
             <li>• একই পরিবারে একাধিক দাবিতে ডুপ্লিকেট ফ্ল্যাগ</li>
-            <li>• যাচাইকৃত উপকারভোগী OMS QR কার্ড পায়</li>
+            <li>• যাচাইকৃত উপকারভোগী AR QR কার্ড পায়</li>
             <li>• নিষ্ক্রিয়/বাতিল কার্ড স্ক্যানে ব্যর্থ</li>
           </ul>
         </SectionCard>

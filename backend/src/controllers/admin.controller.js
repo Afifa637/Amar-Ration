@@ -35,6 +35,12 @@ const {
   STOCK_ITEMS,
   normalizeStockItem,
 } = require("../utils/stock-items.utils");
+const {
+  mapSingleItemQty,
+  normalizeQtyByItem,
+  hydrateRecordItemFields,
+  roundKg,
+} = require("../services/distributionRecord.service");
 
 function generateStrongPassword(length = 14) {
   const charset =
@@ -164,6 +170,99 @@ async function getAdminSummary(req, res) {
         .lean(),
     ]);
 
+    const metaDistributorIds = Array.from(
+      new Set(
+        recentAlerts
+          .map((a) => String(a?.meta?.distributorId || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const metaSessionIds = Array.from(
+      new Set(
+        recentAlerts
+          .map((a) => String(a?.meta?.sessionId || "").trim())
+          .filter(Boolean),
+      ),
+    );
+
+    const alertSessions = metaSessionIds.length
+      ? await DistributionSession.find({ _id: { $in: metaSessionIds } })
+          .select("_id distributorId")
+          .lean()
+      : [];
+    const sessionToDistributorId = new Map(
+      alertSessions
+        .filter((s) => s?._id && s?.distributorId)
+        .map((s) => [String(s._id), String(s.distributorId)]),
+    );
+
+    const allDistributorIds = Array.from(
+      new Set([
+        ...metaDistributorIds,
+        ...Array.from(sessionToDistributorId.values()),
+      ]),
+    );
+
+    const alertDistributors = allDistributorIds.length
+      ? await Distributor.find({ _id: { $in: allDistributorIds } })
+          .select("_id userId division wardNo ward")
+          .lean()
+      : [];
+    const distributorById = new Map(
+      alertDistributors.map((d) => [String(d._id), d]),
+    );
+    const alertUserIds = Array.from(
+      new Set(
+        alertDistributors
+          .map((d) => String(d.userId || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const alertUsers = alertUserIds.length
+      ? await User.find({ _id: { $in: alertUserIds } })
+          .select("_id name")
+          .lean()
+      : [];
+    const alertUserNameById = new Map(
+      alertUsers.map((u) => [String(u._id), u.name || "অজানা"]),
+    );
+
+    const enrichedAlerts = recentAlerts.map((alert) => {
+      const directDistributorId = String(
+        alert?.meta?.distributorId || "",
+      ).trim();
+      const sessionId = String(alert?.meta?.sessionId || "").trim();
+      const distributorId =
+        directDistributorId || sessionToDistributorId.get(sessionId) || "";
+      const distributor = distributorById.get(distributorId);
+      const division = normalizeDivision(
+        alert?.meta?.division || distributor?.division || "",
+      );
+      const ward =
+        normalizeWardNo(
+          alert?.meta?.ward || distributor?.wardNo || distributor?.ward,
+        ) || "";
+      const distributorName = distributor?.userId
+        ? alertUserNameById.get(String(distributor.userId)) || "অজানা"
+        : "";
+
+      return {
+        ...alert,
+        meta: {
+          ...(alert.meta || {}),
+          division,
+          ward,
+          distributorId: distributorId || undefined,
+          distributorName,
+          sessionId: sessionId || undefined,
+          actionable:
+            !!(distributorId || sessionId) &&
+            ["Warning", "Critical"].includes(String(alert?.severity || "")) &&
+            String(alert?.action || "") !== "ADMIN_ALERT_ACTION_APPLIED",
+        },
+      };
+    });
+
     res.json({
       success: true,
       data: {
@@ -182,7 +281,7 @@ async function getAdminSummary(req, res) {
           stockOutKg: stockOutAgg[0]?.totalKg || 0,
           offlineQueue: offlinePending,
         },
-        alerts: recentAlerts,
+        alerts: enrichedAlerts,
       },
     });
   } catch (error) {
@@ -970,8 +1069,9 @@ async function getAdminCardsSummary(req, res) {
 async function getAdminDistributionMonitoring(req, res) {
   try {
     const viewRaw = String(req.query.view || "live").toLowerCase();
-    const view = ["live", "history", "mismatch"].includes(viewRaw)
-      ? viewRaw
+    const viewAlias = viewRaw === "history" ? "recent" : viewRaw;
+    const view = ["live", "recent", "planned", "mismatch"].includes(viewAlias)
+      ? viewAlias
       : "live";
 
     const page = Math.max(1, Number(req.query.page) || 1);
@@ -1041,8 +1141,10 @@ async function getAdminDistributionMonitoring(req, res) {
       sessionQuery.status = sessionStatus;
     } else if (view === "live") {
       sessionQuery.status = { $in: ["Open", "Paused"] };
-    } else if (view === "history") {
+    } else if (view === "recent") {
       sessionQuery.status = "Closed";
+    } else if (view === "planned") {
+      sessionQuery.status = "Planned";
     }
 
     const dateKey = String(req.query.dateKey || "").trim();
@@ -1058,7 +1160,7 @@ async function getAdminDistributionMonitoring(req, res) {
       .select("_id distributorId dateKey status openedAt closedAt updatedAt")
       .lean();
 
-    if (view === "history") {
+    if (view === "recent" || view === "planned") {
       sessionsQuery = sessionsQuery.skip((safePage - 1) * limit).limit(limit);
     } else {
       sessionsQuery = sessionsQuery.limit(250);
@@ -1092,14 +1194,18 @@ async function getAdminDistributionMonitoring(req, res) {
 
     const sessionIdList = sessions.map((s) => String(s._id));
     const tokens = await Token.find({ sessionId: { $in: sessionIdList } })
-      .select("_id sessionId rationItem")
+      .select(
+        "_id sessionId consumerId rationItem rationQtyKg entitlementByItem status",
+      )
       .lean();
     const tokenIdList = tokens.map((t) => String(t._id));
     const tokenById = new Map(tokens.map((t) => [String(t._id), t]));
 
     const rawRecords = tokenIdList.length
       ? await DistributionRecord.find({ tokenId: { $in: tokenIdList } })
-          .select("_id tokenId expectedKg actualKg mismatch createdAt")
+          .select(
+            "_id tokenId item expectedKg actualKg expectedByItem actualByItem mismatch createdAt",
+          )
           .sort({ createdAt: -1 })
           .lean()
       : [];
@@ -1110,7 +1216,6 @@ async function getAdminDistributionMonitoring(req, res) {
       },
       dateKey: { $in: Array.from(new Set(sessions.map((s) => s.dateKey))) },
     };
-    if (itemFilter) stockQuery.item = itemFilter;
 
     const stockRows = await StockLedger.find(stockQuery)
       .select("distributorId dateKey item type qtyKg")
@@ -1123,19 +1228,24 @@ async function getAdminDistributionMonitoring(req, res) {
       }, {});
 
     const stockByDistributorDate = new Map();
+    const stockInByDistributorDate = new Map();
     for (const row of stockRows) {
       const itemName = normalizeStockItem(row.item);
       if (!itemName) continue;
 
       const key = `${String(row.distributorId)}::${row.dateKey}`;
       const current = stockByDistributorDate.get(key) || emptyStockByItem();
+      const plannedCurrent =
+        stockInByDistributorDate.get(key) || emptyStockByItem();
       const qty = Number(row.qtyKg || 0);
 
       if (row.type === "IN") current[itemName] += qty;
       if (row.type === "OUT") current[itemName] -= qty;
       if (row.type === "ADJUST") current[itemName] += qty;
+      if (row.type === "IN") plannedCurrent[itemName] += qty;
 
       stockByDistributorDate.set(key, current);
+      stockInByDistributorDate.set(key, plannedCurrent);
     }
 
     for (const stock of stockByDistributorDate.values()) {
@@ -1148,13 +1258,66 @@ async function getAdminDistributionMonitoring(req, res) {
       sessions.map((s) => [
         String(s._id),
         {
+          assignedUsers: 0,
+          permittedUsers: 0,
+          scannedUsers: 0,
+          matchedUsers: 0,
+          mismatchUsers: 0,
+          pendingUsers: 0,
+          noShowUsers: 0,
+          plannedKg: 0,
           expectedKg: 0,
           actualKg: 0,
+          shortfallKg: 0,
+          mismatchKg: 0,
+          criticalAlertsCount: 0,
+          itemBreakdown: STOCK_ITEMS.reduce((acc, itemName) => {
+            acc[itemName] = {
+              plannedKg: 0,
+              scanExpectedKg: 0,
+              actualKg: 0,
+              remainingKg: 0,
+              mismatchKg: 0,
+            };
+            return acc;
+          }, {}),
+          _scannedTokenIds: new Set(),
+          _mismatchTokenIds: new Set(),
           mismatchCount: 0,
           rows: [],
         },
       ]),
     );
+
+    for (const token of tokens) {
+      const sessionId = String(token.sessionId || "");
+      const stats = sessionStats.get(sessionId);
+      if (!stats) continue;
+      const rowItem = normalizeStockItem(token.rationItem);
+      if (!rowItem) continue;
+
+      const tokenEntitlementByItem = normalizeQtyByItem(
+        token.entitlementByItem,
+      );
+      const hasEntitlementMap = STOCK_ITEMS.some(
+        (itemName) => Number(tokenEntitlementByItem[itemName] || 0) > 0,
+      );
+      const legacyQty = Number(token.rationQtyKg || 0);
+      const plannedByItem = hasEntitlementMap
+        ? tokenEntitlementByItem
+        : mapSingleItemQty(rowItem, legacyQty);
+
+      if (itemFilter && Number(plannedByItem[itemFilter] || 0) <= 0) continue;
+
+      const qty = STOCK_ITEMS.reduce(
+        (sum, itemName) => sum + Number(plannedByItem[itemName] || 0),
+        0,
+      );
+
+      stats.assignedUsers += 1;
+      stats.permittedUsers += 1;
+      stats.plannedKg += qty;
+    }
 
     for (const record of rawRecords) {
       const token = tokenById.get(String(record.tokenId));
@@ -1162,26 +1325,109 @@ async function getAdminDistributionMonitoring(req, res) {
       const sessionId = String(token.sessionId);
       const stats = sessionStats.get(sessionId);
       if (!stats) continue;
-
-      const rowItem = normalizeStockItem(token.rationItem);
-      if (!rowItem) continue;
-      if (itemFilter && rowItem !== itemFilter) continue;
       if (mismatchOnly && !record.mismatch) continue;
 
-      const expected = Number(record.expectedKg || 0);
-      const actual = Number(record.actualKg || 0);
+      const hydrated = hydrateRecordItemFields({
+        item: record.item || token.rationItem,
+        expectedKg: record.expectedKg || token.rationQtyKg,
+        actualKg: record.actualKg,
+        expectedByItem: record.expectedByItem,
+        actualByItem: record.actualByItem,
+      });
+
+      let items = STOCK_ITEMS.filter(
+        (itemName) =>
+          Number(hydrated.expectedByItem[itemName] || 0) > 0 ||
+          Number(hydrated.actualByItem[itemName] || 0) > 0,
+      );
+
+      if (!items.length) {
+        items = [hydrated.item].filter(Boolean);
+      }
+
+      if (itemFilter) {
+        items = items.filter((itemName) => itemName === itemFilter);
+        if (!items.length) continue;
+      }
+
+      const expected = items.reduce(
+        (sum, itemName) => sum + Number(hydrated.expectedByItem[itemName] || 0),
+        0,
+      );
+      const actual = items.reduce(
+        (sum, itemName) => sum + Number(hydrated.actualByItem[itemName] || 0),
+        0,
+      );
 
       stats.expectedKg += expected;
       stats.actualKg += actual;
+      stats._scannedTokenIds.add(String(record.tokenId));
       if (record.mismatch) stats.mismatchCount += 1;
-      stats.rows.push({
-        recordId: String(record._id),
-        item: rowItem,
-        expectedKg: expected,
-        actualKg: actual,
-        mismatch: !!record.mismatch,
-        createdAt: record.createdAt,
-      });
+      if (record.mismatch) {
+        stats._mismatchTokenIds.add(String(record.tokenId));
+        stats.mismatchKg += Math.abs(expected - actual);
+      }
+      for (const itemName of items) {
+        if (stats.itemBreakdown[itemName]) {
+          const itemExpected = Number(hydrated.expectedByItem[itemName] || 0);
+          const itemActual = Number(hydrated.actualByItem[itemName] || 0);
+          stats.itemBreakdown[itemName].scanExpectedKg += itemExpected;
+          stats.itemBreakdown[itemName].actualKg += itemActual;
+          if (record.mismatch) {
+            stats.itemBreakdown[itemName].mismatchKg += Math.abs(
+              itemExpected - itemActual,
+            );
+          }
+        }
+      }
+
+      for (const itemName of items) {
+        stats.rows.push({
+          recordId: String(record._id),
+          item: itemName,
+          expectedKg: Number(hydrated.expectedByItem[itemName] || 0),
+          actualKg: Number(hydrated.actualByItem[itemName] || 0),
+          mismatch: !!record.mismatch,
+          createdAt: record.createdAt,
+        });
+      }
+    }
+
+    const alertLogs = await AuditLog.find({
+      severity: { $in: ["Warning", "Critical"] },
+      $or: [
+        { "meta.sessionId": { $in: sessionIdList } },
+        { "meta.distributorId": { $in: distributorIds } },
+      ],
+    })
+      .select("createdAt meta")
+      .lean();
+
+    const sessionIdsByDistributorDate = new Map();
+    for (const session of sessions) {
+      const key = `${String(session.distributorId)}::${session.dateKey}`;
+      if (!sessionIdsByDistributorDate.has(key)) {
+        sessionIdsByDistributorDate.set(key, []);
+      }
+      sessionIdsByDistributorDate.get(key).push(String(session._id));
+    }
+
+    for (const log of alertLogs) {
+      const directSessionId = String(log?.meta?.sessionId || "").trim();
+      if (directSessionId && sessionStats.has(directSessionId)) {
+        sessionStats.get(directSessionId).criticalAlertsCount += 1;
+        continue;
+      }
+
+      const metaDistributorId = String(log?.meta?.distributorId || "").trim();
+      if (!metaDistributorId || !log.createdAt) continue;
+      const dk = new Date(log.createdAt).toISOString().slice(0, 10);
+      const key = `${metaDistributorId}::${dk}`;
+      const sessionIds = sessionIdsByDistributorDate.get(key) || [];
+      for (const sid of sessionIds) {
+        const stats = sessionStats.get(sid);
+        if (stats) stats.criticalAlertsCount += 1;
+      }
     }
 
     const distributorById = new Map(
@@ -1209,6 +1455,45 @@ async function getAdminDistributionMonitoring(req, res) {
       const stockKey = `${distributorIdStr}::${session.dateKey}`;
       const stockBalanceByItem =
         stockByDistributorDate.get(stockKey) || emptyStockByItem();
+      const stockInByItem =
+        stockInByDistributorDate.get(stockKey) || emptyStockByItem();
+
+      stats.scannedUsers = stats._scannedTokenIds.size;
+      stats.mismatchUsers = stats._mismatchTokenIds.size;
+      stats.matchedUsers = Math.max(
+        stats.scannedUsers - stats.mismatchUsers,
+        0,
+      );
+      stats.pendingUsers = Math.max(
+        stats.assignedUsers - stats.scannedUsers,
+        0,
+      );
+      stats.noShowUsers = session.status === "Closed" ? stats.pendingUsers : 0;
+      stats.shortfallKg = stats.expectedKg - stats.actualKg;
+      stats.plannedKg = roundKg(stats.plannedKg);
+      stats.expectedKg = roundKg(stats.expectedKg);
+      stats.actualKg = roundKg(stats.actualKg);
+      stats.shortfallKg = roundKg(stats.shortfallKg);
+      stats.mismatchKg = roundKg(stats.mismatchKg);
+
+      for (const itemName of STOCK_ITEMS) {
+        if (!stats.itemBreakdown[itemName]) continue;
+        stats.itemBreakdown[itemName].plannedKg = Number(
+          Number(stockInByItem[itemName] || 0).toFixed(3),
+        );
+        stats.itemBreakdown[itemName].remainingKg = Number(
+          Number(stockBalanceByItem[itemName] || 0).toFixed(3),
+        );
+        stats.itemBreakdown[itemName].scanExpectedKg = Number(
+          Number(stats.itemBreakdown[itemName].scanExpectedKg || 0).toFixed(3),
+        );
+        stats.itemBreakdown[itemName].actualKg = Number(
+          Number(stats.itemBreakdown[itemName].actualKg || 0).toFixed(3),
+        );
+        stats.itemBreakdown[itemName].mismatchKg = Number(
+          Number(stats.itemBreakdown[itemName].mismatchKg || 0).toFixed(3),
+        );
+      }
 
       if (!groupsMap.has(distributorIdStr)) {
         const ward =
@@ -1226,8 +1511,17 @@ async function getAdminDistributionMonitoring(req, res) {
           ward,
           sessions: [],
           totals: {
+            assignedUsers: 0,
+            scannedUsers: 0,
+            matchedUsers: 0,
+            mismatchUsers: 0,
+            pendingUsers: 0,
+            noShowUsers: 0,
+            plannedKg: 0,
             expectedKg: 0,
             actualKg: 0,
+            shortfallKg: 0,
+            criticalAlertsCount: 0,
             mismatchCount: 0,
           },
         });
@@ -1241,22 +1535,52 @@ async function getAdminDistributionMonitoring(req, res) {
         openedAt: session.openedAt || null,
         closedAt: session.closedAt || null,
         updatedAt: session.updatedAt,
+        assignedUsers: stats.assignedUsers,
+        permittedUsers: stats.permittedUsers,
+        scannedUsers: stats.scannedUsers,
+        matchedUsers: stats.matchedUsers,
+        mismatchUsers: stats.mismatchUsers,
+        pendingUsers: stats.pendingUsers,
+        noShowUsers: stats.noShowUsers,
+        plannedKg: Number(stats.plannedKg.toFixed(3)),
         expectedKg: Number(stats.expectedKg.toFixed(3)),
         actualKg: Number(stats.actualKg.toFixed(3)),
+        shortfallKg: Number(stats.shortfallKg.toFixed(3)),
+        mismatchKg: Number(stats.mismatchKg.toFixed(3)),
         mismatchCount: stats.mismatchCount,
+        criticalAlertsCount: stats.criticalAlertsCount,
+        itemBreakdown: stats.itemBreakdown,
         stockBalanceByItem,
         rows: stats.rows,
       });
+      group.totals.assignedUsers += stats.assignedUsers;
+      group.totals.scannedUsers += stats.scannedUsers;
+      group.totals.matchedUsers += stats.matchedUsers;
+      group.totals.mismatchUsers += stats.mismatchUsers;
+      group.totals.pendingUsers += stats.pendingUsers;
+      group.totals.noShowUsers += stats.noShowUsers;
+      group.totals.plannedKg += stats.plannedKg;
       group.totals.expectedKg += stats.expectedKg;
       group.totals.actualKg += stats.actualKg;
+      group.totals.shortfallKg += stats.shortfallKg;
+      group.totals.criticalAlertsCount += stats.criticalAlertsCount;
       group.totals.mismatchCount += stats.mismatchCount;
     }
 
     const groups = Array.from(groupsMap.values()).map((group) => ({
       ...group,
       totals: {
+        assignedUsers: group.totals.assignedUsers,
+        scannedUsers: group.totals.scannedUsers,
+        matchedUsers: group.totals.matchedUsers,
+        mismatchUsers: group.totals.mismatchUsers,
+        pendingUsers: group.totals.pendingUsers,
+        noShowUsers: group.totals.noShowUsers,
+        plannedKg: Number(group.totals.plannedKg.toFixed(3)),
         expectedKg: Number(group.totals.expectedKg.toFixed(3)),
         actualKg: Number(group.totals.actualKg.toFixed(3)),
+        shortfallKg: Number(group.totals.shortfallKg.toFixed(3)),
+        criticalAlertsCount: group.totals.criticalAlertsCount,
         mismatchCount: group.totals.mismatchCount,
       },
       sessions: group.sessions.sort(
@@ -1276,9 +1600,19 @@ async function getAdminDistributionMonitoring(req, res) {
         sessionStatus: s.sessionStatus,
         expectedKg: s.expectedKg,
         actualKg: s.actualKg,
+        shortfallKg: s.shortfallKg,
+        assignedUsers: s.assignedUsers,
+        scannedUsers: s.scannedUsers,
+        matchedUsers: s.matchedUsers,
+        mismatchUsers: s.mismatchUsers,
+        pendingUsers: s.pendingUsers,
+        noShowUsers: s.noShowUsers,
+        criticalAlertsCount: s.criticalAlertsCount,
+        plannedKg: s.plannedKg,
         mismatchCount: s.mismatchCount,
         status: s.mismatchCount > 0 ? "Mismatch" : "Matched",
         action: s.mismatchCount > 0 ? "Pause + Alert" : "Continue",
+        itemBreakdown: s.itemBreakdown,
         stockBalanceByItem: s.stockBalanceByItem,
       })),
     );
@@ -1308,6 +1642,214 @@ async function getAdminDistributionMonitoring(req, res) {
   } catch (error) {
     console.error("getAdminDistributionMonitoring error:", error);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function applyAdminAlertAction(req, res) {
+  try {
+    const alertId = String(req.params.id || "").trim();
+    const actionType = String(req.body?.action || "").trim();
+    const note = String(req.body?.note || "").trim();
+
+    const allowed = [
+      "acknowledge",
+      "under_review",
+      "pause_session",
+      "stop_session",
+      "request_audit",
+    ];
+    if (!allowed.includes(actionType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported alert action",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const alert = await AuditLog.findById(alertId);
+    if (!alert) {
+      return res.status(404).json({
+        success: false,
+        message: "Alert not found",
+        code: "NOT_FOUND",
+      });
+    }
+
+    let sourceAlert = alert;
+    if (
+      alert.action === "ADMIN_ALERT_ACTION_APPLIED" &&
+      alert.entityType === "AuditLog" &&
+      alert.entityId
+    ) {
+      const parent = await AuditLog.findById(alert.entityId).lean();
+      if (parent) {
+        sourceAlert = parent;
+      }
+    }
+
+    const sourceMeta = sourceAlert?.meta || {};
+    const meta = alert.meta || {};
+    const sessionId = String(
+      sourceMeta.sessionId || meta.sessionId || req.body?.sessionId || "",
+    ).trim();
+    let distributorId = String(
+      sourceMeta.distributorId ||
+        meta.distributorId ||
+        req.body?.distributorId ||
+        "",
+    ).trim();
+
+    let session = null;
+    if (sessionId) {
+      session = await DistributionSession.findById(sessionId);
+      if (!distributorId && session?.distributorId) {
+        distributorId = String(session.distributorId);
+      }
+    }
+
+    if (!session && distributorId) {
+      session = await DistributionSession.findOne({
+        distributorId,
+        status: { $in: ["Open", "Paused", "Planned"] },
+      })
+        .sort({ updatedAt: -1 })
+        .lean();
+      if (session?._id) {
+        session = await DistributionSession.findById(session._id);
+      }
+    }
+
+    if (actionType === "pause_session") {
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          message: "No session found to pause",
+          code: "NOT_FOUND",
+        });
+      }
+      if (session.status === "Open") {
+        session.status = "Paused";
+        await session.save();
+      }
+    }
+
+    if (actionType === "stop_session") {
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          message: "No session found to stop",
+          code: "NOT_FOUND",
+        });
+      }
+      if (session.status !== "Closed") {
+        session.status = "Closed";
+        session.closedAt = new Date();
+        await session.save();
+      }
+    }
+
+    if (actionType === "request_audit") {
+      let distributor = null;
+      if (distributorId) {
+        distributor = await Distributor.findById(distributorId)
+          .select("_id userId division wardNo ward")
+          .lean();
+      }
+      if (!distributor && session?.distributorId) {
+        distributor = await Distributor.findById(session.distributorId)
+          .select("_id userId division wardNo ward")
+          .lean();
+      }
+
+      if (!distributor?.userId) {
+        return res.status(400).json({
+          success: false,
+          message: "Distributor mapping missing for audit request",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      await AuditReportRequest.create({
+        distributorUserId: distributor.userId,
+        requestedByAdminId: req.user.userId,
+        auditLogId: sourceAlert?._id || alert._id,
+        note:
+          note ||
+          `Critical alert audit request (${normalizeDivision(distributor.division) || "Unknown"}/${normalizeWardNo(distributor.wardNo || distributor.ward) || "--"})`,
+        status: "Requested",
+      });
+    }
+
+    const distributorDoc = distributorId
+      ? await Distributor.findById(distributorId)
+          .select("_id userId division wardNo ward")
+          .lean()
+      : null;
+    const resolvedDivision = normalizeDivision(
+      sourceMeta.division || meta.division || distributorDoc?.division || "",
+    );
+    const resolvedWard =
+      normalizeWardNo(
+        sourceMeta.ward ||
+          meta.ward ||
+          distributorDoc?.wardNo ||
+          distributorDoc?.ward,
+      ) || "";
+    const distributorUser = distributorDoc?.userId
+      ? await User.findById(distributorDoc.userId).select("name").lean()
+      : null;
+
+    alert.meta = {
+      ...meta,
+      division: resolvedDivision || undefined,
+      ward: resolvedWard || undefined,
+      distributorId: distributorId || undefined,
+      sessionId: session ? String(session._id) : sessionId || undefined,
+      adminAction: {
+        action: actionType,
+        note,
+        actorUserId: String(req.user.userId),
+        actedAt: new Date().toISOString(),
+      },
+    };
+    await alert.save();
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "ADMIN_ALERT_ACTION_APPLIED",
+      entityType: "AuditLog",
+      entityId: String(alert._id),
+      severity: actionType === "stop_session" ? "Critical" : "Warning",
+      meta: {
+        actionType,
+        sourceAction: sourceAlert?.action || alert.action,
+        sessionId: session ? String(session._id) : undefined,
+        distributorId: distributorId || undefined,
+        division: resolvedDivision || undefined,
+        ward: resolvedWard || undefined,
+        distributorName: distributorUser?.name || undefined,
+        actionable: false,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        alertId: String(alert._id),
+        action: actionType,
+        session: session
+          ? {
+              id: String(session._id),
+              status: session.status,
+              dateKey: session.dateKey,
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("applyAdminAlertAction error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 }
 
@@ -1579,10 +2121,71 @@ async function getAdminAuditLogs(req, res) {
         .lean(),
     ]);
 
+    const actorUserIds = Array.from(
+      new Set(logs.map((log) => String(log.actorUserId || "")).filter(Boolean)),
+    );
+    const [actorUsers, actorDistributors] = await Promise.all([
+      actorUserIds.length
+        ? User.find({ _id: { $in: actorUserIds } })
+            .select("_id name")
+            .lean()
+        : [],
+      actorUserIds.length
+        ? Distributor.find({ userId: { $in: actorUserIds } })
+            .select("_id userId division wardNo ward")
+            .lean()
+        : [],
+    ]);
+
+    const actorUserMap = new Map(actorUsers.map((u) => [String(u._id), u]));
+    const actorDistributorMap = new Map(
+      actorDistributors.map((d) => [String(d.userId), d]),
+    );
+
+    const enrichedLogs = logs.map((log) => {
+      const actorId = String(log.actorUserId || "");
+      const actor = actorUserMap.get(actorId);
+      const actorDistributor = actorDistributorMap.get(actorId);
+
+      const division =
+        normalizeDivision(
+          log.meta?.division || actorDistributor?.division || "",
+        ) || "";
+      const ward =
+        normalizeWardNo(
+          log.meta?.ward || actorDistributor?.wardNo || actorDistributor?.ward,
+        ) || "";
+
+      return {
+        ...log,
+        actorName: actor?.name || "",
+        division,
+        ward,
+        sessionId: String(log.meta?.sessionId || ""),
+        sessionCode: String(log.meta?.sessionCode || ""),
+        consumerCode: String(log.meta?.consumerCode || ""),
+        consumerName: String(log.meta?.consumerName || ""),
+        distributorId:
+          String(log.meta?.distributorId || "") ||
+          (actorDistributor?._id ? String(actorDistributor._id) : ""),
+        distributorCode:
+          String(log.meta?.distributorCode || "") ||
+          (actorDistributor?._id
+            ? `DST-${String(actorDistributor._id).slice(-6).toUpperCase()}`
+            : ""),
+        distributorName: String(log.meta?.distributorName || ""),
+        tokenCode: String(log.meta?.tokenCode || ""),
+        item: String(log.meta?.item || log.meta?.rationItem || ""),
+        mismatchReason: String(
+          log.meta?.mismatchReason || log.meta?.reason || "",
+        ),
+      };
+    });
+
     return res.json({
       success: true,
       data: {
-        logs,
+        logs: enrichedLogs,
         pagination: {
           total,
           page,
@@ -1663,4 +2266,5 @@ module.exports = {
   getAdminAuditLogs,
   getAdminAuditDetail,
   forceCloseSession,
+  applyAdminAlertAction,
 };

@@ -10,6 +10,8 @@ const Consumer = require("../models/Consumer");
 const Token = require("../models/Token");
 const { writeAudit } = require("../services/audit.service");
 const { sendSms } = require("../services/sms.service");
+const { normalizeDivision } = require("../utils/division.utils");
+const { normalizeWardNo } = require("../utils/ward.utils");
 
 async function triggerRotation(req, res) {
   try {
@@ -72,12 +74,24 @@ async function listInactive(req, res) {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const division = normalizeDivision(req.query.division);
+    const ward = normalizeWardNo(req.query.ward || req.query.wardNo);
+
+    if (ward && !division) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
 
     const query = { status: "inactive_review" };
+    if (division) query.division = division;
+    if (ward) query.ward = ward;
     const [total, rows] = await Promise.all([
       Consumer.countDocuments(query),
       Consumer.find(query)
-        .select("name consumerCode ward flaggedInactiveAt")
+        .select("name consumerCode division ward flaggedInactiveAt")
         .sort({ flaggedInactiveAt: -1, createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -212,12 +226,33 @@ async function deactivate(req, res) {
 
 async function eligibilityStats(req, res) {
   try {
+    const division = normalizeDivision(req.query.division);
+    const ward = normalizeWardNo(req.query.ward || req.query.wardNo);
+
+    if (ward && !division) {
+      return res.status(400).json({
+        success: false,
+        message: "ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ একসাথে দিতে হবে",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    const base = {};
+    if (division) base.division = division;
+    if (ward) base.ward = ward;
+
     const [active, inactive_review, suspended, blacklisted] = await Promise.all(
       [
-        Consumer.countDocuments({ status: "Active" }),
-        Consumer.countDocuments({ status: "inactive_review" }),
-        Consumer.countDocuments({ status: "suspended" }),
-        Consumer.countDocuments({ status: "blacklisted" }),
+        Consumer.countDocuments({ ...base, status: "Active" }),
+        Consumer.countDocuments({ ...base, status: "inactive_review" }),
+        Consumer.countDocuments({ ...base, status: "suspended" }),
+        Consumer.countDocuments({
+          ...base,
+          $or: [
+            { status: "blacklisted" },
+            { blacklistStatus: { $in: ["Temp", "Permanent"] } },
+          ],
+        }),
       ],
     );
 

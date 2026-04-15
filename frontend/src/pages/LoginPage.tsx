@@ -3,17 +3,17 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AuthContext, type UserRole } from "../context/AuthContext";
 
 const roleNames: Record<UserRole, string> = {
-  "central-admin": "কেন্দ্রীয় অ্যাডমিন",
+  "central-admin": "ডিস্ট্রিবিউটর / অ্যাডমিন",
   distributor: "ডিস্ট্রিবিউটর",
-  "field-distributor": "ফিল্ড ডিস্ট্রিবিউটর",
 };
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { role } = useParams<{ role: UserRole }>();
+  const { role } = useParams<{ role?: string }>();
   const auth = useContext(AuthContext);
 
-  const isAdminLogin = role === "central-admin";
+  const normalizedRole: UserRole =
+    role === "central-admin" ? "central-admin" : "distributor";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,18 +41,18 @@ export default function LoginPage() {
       return;
     }
 
-    if (!role || !auth) {
-      setError("Invalid role or auth context");
+    if (!auth) {
+      setError("Auth context unavailable");
       setIsLoading(false);
       return;
     }
 
     try {
-      const result = await auth.login(email, password, role as UserRole, {
+      const result = await auth.login(email, password, normalizedRole, {
         totpToken: requires2FA ? totpToken.trim() : undefined,
       });
 
-      if (result.requires2FA && isAdminLogin) {
+      if (result.requires2FA) {
         setRequires2FA(true);
         setTwoStepNotice(
           "পাসওয়ার্ড যাচাই হয়েছে। এখন Authenticator App-এর OTP দিন।",
@@ -68,7 +68,7 @@ export default function LoginPage() {
           navigate("/force-password-change");
           return;
         }
-        if (role === "central-admin") {
+        if (result.loggedInRole === "central-admin") {
           navigate("/admin/dashboard");
         } else {
           navigate("/dashboard");
@@ -111,14 +111,12 @@ export default function LoginPage() {
         </div>
 
         <h1 className="text-xl font-bold mb-1 text-center text-white">
-          {roleNames[role as UserRole] || "লগইন"}
+          {roleNames[normalizedRole] || "লগইন"}
         </h1>
         <p className="text-sm text-white/80 text-center mb-4">
-          {isAdminLogin
-            ? requires2FA
-              ? "Step 2 of 2: OTP ভেরিফাই করুন"
-              : "Step 1 of 2: ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন"
-            : "আপনার অ্যাকাউন্টে লগইন করুন"}
+          {requires2FA
+            ? "Step 2 of 2: OTP ভেরিফাই করুন"
+            : "Step 1 of 2: ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন"}
         </p>
 
         {twoStepNotice && (
@@ -219,11 +217,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {role !== "central-admin" && (
-          <div className="mt-4 text-center text-sm text-white/90 border border-white/20 rounded-lg p-2 bg-white/10">
-            ডিস্ট্রিবিউটর/ফিল্ড ইউজার অ্যাকাউন্ট শুধুমাত্র অ্যাডমিন ইস্যু করে।
-          </div>
-        )}
+        <div className="mt-4 text-center text-sm text-white/90 border border-white/20 rounded-lg p-2 bg-white/10">
+          ডিস্ট্রিবিউটর ও অ্যাডমিন লগইন একই পোর্টাল থেকে হবে।
+        </div>
 
         <div className="mt-3 text-center">
           <button

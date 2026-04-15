@@ -5,6 +5,7 @@ import Badge from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
 import { useAuth } from "../../context/useAuth";
 import {
+  type BulkRegisterUploadResponse,
   bulkRegisterTemplate,
   bulkRegisterUpload,
   createConsumer,
@@ -14,6 +15,7 @@ import {
   type Consumer,
   type ConsumerCategory,
   type ConsumerStatus,
+  uploadConsumerPhoto,
   updateConsumer,
 } from "../../services/api";
 
@@ -58,7 +60,11 @@ export default function BeneficiariesPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<Consumer | null>(null);
   const [bulkFile, setBulkFile] = useState<File | null>(null);
-  const [bulkDryRun, setBulkDryRun] = useState(true);
+  const [bulkDryRun, setBulkDryRun] = useState(false);
+  const [bulkResult, setBulkResult] =
+    useState<BulkRegisterUploadResponse | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
 
   const normalizeNid = (value: string) => value.replace(/\D/g, "");
   const isValidNid = (value: string) =>
@@ -92,6 +98,10 @@ export default function BeneficiariesPage() {
     void loadData();
   }, []);
 
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [q, status, tab, consumers]);
+
   const filtered = useMemo(() => {
     return consumers.filter((c) => {
       const matchQ =
@@ -120,7 +130,7 @@ export default function BeneficiariesPage() {
       !isValidNid(fatherNid) ||
       !isValidNid(motherNid)
     ) {
-      setError("নাম এবং নিজ/পিতা/মাতার NID ১০/১৩/১৭ ডিজিট হতে হবে");
+      setError("নাম এবং নিজ/পিতা/মাতার এনআইডি ১০/১৩/১৭ ডিজিট হতে হবে");
       return;
     }
 
@@ -139,9 +149,18 @@ export default function BeneficiariesPage() {
           category: form.category,
           status: form.status,
         });
+
+        if (photoFile) {
+          if (photoFile.type !== "image/png") {
+            setError("ছবি অবশ্যই PNG ফরম্যাটের হতে হবে");
+            return;
+          }
+          await uploadConsumerPhoto(editing._id, photoFile);
+        }
+
         setMessage("উপকারভোগীর তথ্য আপডেট হয়েছে");
       } else {
-        await createConsumer({
+        const created = await createConsumer({
           name: form.name,
           nidFull: consumerNid,
           fatherNidFull: fatherNid,
@@ -151,12 +170,27 @@ export default function BeneficiariesPage() {
           category: form.category,
           status: "Inactive",
         });
+
+        if (photoFile) {
+          if (photoFile.type !== "image/png") {
+            setError("ছবি অবশ্যই PNG ফরম্যাটের হতে হবে");
+            return;
+          }
+          const createdConsumerId = created?.consumer?._id;
+          if (!createdConsumerId) {
+            setError("নতুন উপকারভোগীর ছবি সংযুক্ত করা যায়নি");
+            return;
+          }
+          await uploadConsumerPhoto(createdConsumerId, photoFile);
+        }
+
         setMessage("নতুন উপকারভোগী যুক্ত হয়েছে");
       }
 
       setOpenAdd(false);
       setEditing(null);
       setForm(emptyForm);
+      setPhotoFile(null);
       await loadData();
     } catch (err) {
       const messageText =
@@ -185,6 +219,92 @@ export default function BeneficiariesPage() {
     }
   };
 
+  const selectedRows = useMemo(
+    () => filtered.filter((c) => selectedIds.includes(c._id)),
+    [filtered, selectedIds],
+  );
+
+  const toggleSelectAllFiltered = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(filtered.map((c) => c._id));
+      return;
+    }
+    setSelectedIds([]);
+  };
+
+  const toggleRowSelection = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      return;
+    }
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
+  };
+
+  const printRows = (rows: Consumer[]) => {
+    if (!rows.length) {
+      setError("প্রিন্টের জন্য কোনো সারি নেই");
+      return;
+    }
+
+    const win = window.open("", "_blank", "width=1100,height=800");
+    if (!win) {
+      setError("প্রিন্ট উইন্ডো খোলা যায়নি");
+      return;
+    }
+
+    win.document.write(`
+      <html>
+        <head>
+          <title>উপকারভোগী প্রিন্ট</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 24px; }
+            h2 { margin: 0 0 10px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px; text-align: left; }
+            th { background: #f1f5f9; }
+            .meta { font-size: 12px; color: #475569; margin-bottom: 12px; }
+          </style>
+        </head>
+        <body>
+          <h2>উপকারভোগী তালিকা</h2>
+          <div class="meta">মোট প্রিন্ট: ${rows.length} | সময়: ${new Date().toLocaleString("bn-BD")}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>কোড</th>
+                <th>নাম</th>
+                <th>এনআইডি</th>
+                <th>বিভাগ</th>
+                <th>ওয়ার্ড</th>
+                <th>স্ট্যাটাস</th>
+                <th>পরিবার ফ্ল্যাগ</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows
+                .map(
+                  (c) => `
+                  <tr>
+                    <td>${c.consumerCode}</td>
+                    <td>${c.name}</td>
+                    <td>****${c.nidLast4 || ""}</td>
+                    <td>${c.division || "—"}</td>
+                    <td>${c.ward || "—"}</td>
+                    <td>${c.status === "Active" ? "সক্রিয়" : c.status === "Revoked" ? "বাতিল" : "নিষ্ক্রিয়"}</td>
+                    <td>${c.familyFlag ? "ফ্ল্যাগড" : "না"}</td>
+                  </tr>
+                `,
+                )
+                .join("")}
+            </tbody>
+          </table>
+          <script>window.onload = () => window.print();</script>
+        </body>
+      </html>
+    `);
+    win.document.close();
+  };
+
   return (
     <div className="space-y-3">
       <PortalSection title="বাল্ক নিবন্ধন (ডিস্ট্রিবিউটর)">
@@ -201,7 +321,7 @@ export default function BeneficiariesPage() {
               checked={bulkDryRun}
               onChange={(e) => setBulkDryRun(e.target.checked)}
             />
-            ড্রাই-রান
+            ড্রাই-রান (প্রিভিউ)
           </label>
           <div className="flex gap-2">
             <Button
@@ -229,14 +349,20 @@ export default function BeneficiariesPage() {
                   }
                   try {
                     setLoading(true);
+                    setError("");
                     const result = await bulkRegisterUpload(
                       bulkFile,
                       bulkDryRun,
                     );
+                    setBulkResult(result);
                     setMessage(
-                      `${result.inserted} টি সফল, ${result.skipped} টি স্কিপ হয়েছে`,
+                      result.dryRun
+                        ? `পরীক্ষামূলক চালনা সম্পন্ন: সম্ভাব্য ${result.inserted} টি যুক্ত হবে, ${result.skipped} টি স্কিপ`
+                        : `${result.inserted} টি সফলভাবে যোগ হয়েছে, ${result.skipped} টি স্কিপ`,
                     );
-                    await loadData();
+                    if (!result.dryRun && result.inserted > 0) {
+                      await loadData();
+                    }
                   } catch (err) {
                     setError(
                       err instanceof Error ? err.message : "বাল্ক আপলোড ব্যর্থ",
@@ -252,22 +378,84 @@ export default function BeneficiariesPage() {
           </div>
         </div>
         <p className="text-[12px] text-[#6b7280] mt-2">
-          নোট: আপনি কেবল আপনার নিজস্ব division/ward এর ভোক্তাদের বাল্ক নিবন্ধন
-          করতে পারবেন। guardianName কলাম না থাকলেও আপলোড হবে।
+          নোট: আপনি কেবল আপনার নিজস্ব বিভাগ/ওয়ার্ডের ভোক্তাদের বাল্ক নিবন্ধন
+          করতে পারবেন। অভিভাবকের নাম কলাম না থাকলেও আপলোড হবে।
         </p>
+
+        {bulkResult && (
+          <div className="mt-3 rounded border border-[#dbeafe] bg-[#eff6ff] p-3 text-[12px]">
+            <div className="font-semibold text-[#1e3a8a] mb-1">
+              বাল্ক রিপোর্ট (
+              {bulkResult.dryRun ? "পরীক্ষামূলক চালনা" : "সংরক্ষিত"})
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div>
+                মোট: <b>{bulkResult.summary?.total ?? bulkResult.total}</b>
+              </div>
+              <div>
+                বৈধ: <b>{bulkResult.summary?.valid ?? 0}</b>
+              </div>
+              <div>
+                সফল: <b>{bulkResult.inserted}</b>
+              </div>
+              <div>
+                স্কিপ: <b>{bulkResult.skipped}</b>
+              </div>
+              <div>
+                ডুপ্লিকেট: <b>{bulkResult.summary?.duplicate ?? 0}</b>
+              </div>
+              <div>
+                অবৈধ: <b>{bulkResult.summary?.invalid ?? 0}</b>
+              </div>
+              <div>
+                সীমার বাইরে: <b>{bulkResult.summary?.ignoredOutOfScope ?? 0}</b>
+              </div>
+              <div>
+                ফেল: <b>{bulkResult.summary?.failed ?? 0}</b>
+              </div>
+            </div>
+            {!!bulkResult.errors?.length && (
+              <div className="mt-2 max-h-36 overflow-auto rounded border border-[#bfdbfe] bg-white p-2">
+                {bulkResult.errors.slice(0, 25).map((e) => (
+                  <div
+                    key={`${e.row}-${e.nid}-${e.code || ""}`}
+                    className="text-[11px] text-[#334155]"
+                  >
+                    সারি {e.row}: {e.name || "—"} ({e.nid || "—"}) — {e.reason}
+                  </div>
+                ))}
+                {bulkResult.errors.length > 25 && (
+                  <div className="text-[11px] text-[#64748b] mt-1">
+                    আরও {bulkResult.errors.length - 25} টি সমস্যা আছে
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </PortalSection>
 
       <PortalSection
         title="উপকারভোগী ব্যবস্থাপনা"
         right={
           <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={() => window.print()}>
-              🖨️ প্রিন্ট
+            <Button
+              variant="ghost"
+              onClick={() =>
+                printRows(selectedRows.length > 0 ? selectedRows : filtered)
+              }
+            >
+              🖨️ প্রিন্ট (
+              {selectedRows.length > 0
+                ? `নির্বাচিত ${selectedRows.length}`
+                : `ফিল্টার ${filtered.length}`}
+              )
             </Button>
             <Button
               onClick={() => {
                 setEditing(null);
                 setForm(emptyForm);
+                setPhotoFile(null);
                 setOpenAdd(true);
               }}
             >
@@ -329,7 +517,7 @@ export default function BeneficiariesPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="সার্চ: ID / নাম / NID (শেষ ৪ ডিজিট)"
+            placeholder="সার্চ: কার্ড নম্বর / নাম / এনআইডি (শেষ ৪ ডিজিট)"
           />
           <select
             value={status}
@@ -338,9 +526,9 @@ export default function BeneficiariesPage() {
             disabled={tab === "flags"}
           >
             <option value="সব">সব স্ট্যাটাস</option>
-            <option>Active</option>
-            <option>Inactive</option>
-            <option>Revoked</option>
+            <option value="Active">সক্রিয়</option>
+            <option value="Inactive">নিষ্ক্রিয়</option>
+            <option value="Revoked">বাতিল</option>
           </select>
 
           <div className="flex gap-2">
@@ -376,15 +564,28 @@ export default function BeneficiariesPage() {
             <table className="w-full min-w-225 text-[12px] border-collapse">
               <thead>
                 <tr className="bg-[#f8fafc]">
-                  <th className="border border-[#cfd6e0] p-2">ID</th>
+                  <th className="border border-[#cfd6e0] p-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filtered.length > 0 &&
+                        selectedRows.length === filtered.length
+                      }
+                      onChange={(e) =>
+                        toggleSelectAllFiltered(e.target.checked)
+                      }
+                      aria-label="select all filtered"
+                    />
+                  </th>
+                  <th className="border border-[#cfd6e0] p-2">কার্ড নম্বর</th>
                   <th className="border border-[#cfd6e0] p-2">নাম</th>
-                  <th className="border border-[#cfd6e0] p-2">NID</th>
+                  <th className="border border-[#cfd6e0] p-2">এনআইডি</th>
                   <th className="border border-[#cfd6e0] p-2">
                     বিভাগ / ওয়ার্ড
                   </th>
                   <th className="border border-[#cfd6e0] p-2">স্ট্যাটাস</th>
                   <th className="border border-[#cfd6e0] p-2">
-                    ফ্যামিলি ফ্ল্যাগ
+                    পরিবার ফ্ল্যাগ
                   </th>
                   <th className="border border-[#cfd6e0] p-2">অ্যাকশন</th>
                 </tr>
@@ -392,6 +593,16 @@ export default function BeneficiariesPage() {
               <tbody>
                 {filtered.map((c) => (
                   <tr key={c._id} className="odd:bg-white even:bg-[#f8fafc]">
+                    <td className="border border-[#cfd6e0] p-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(c._id)}
+                        onChange={(e) =>
+                          toggleRowSelection(c._id, e.target.checked)
+                        }
+                        aria-label={`${c.consumerCode} নির্বাচন`}
+                      />
+                    </td>
                     <td className="border border-[#cfd6e0] p-2 text-center">
                       {c.consumerCode}
                     </td>
@@ -429,6 +640,7 @@ export default function BeneficiariesPage() {
                           variant="ghost"
                           onClick={() => {
                             setEditing(c);
+                            setPhotoFile(null);
                             setForm({
                               name: c.name,
                               nidFull: c.nidFull || "",
@@ -442,7 +654,7 @@ export default function BeneficiariesPage() {
                             setOpenAdd(true);
                           }}
                         >
-                          ✏️ এডিট
+                          ✏️ সম্পাদনা
                         </Button>
                         <Button
                           variant="danger"
@@ -456,7 +668,7 @@ export default function BeneficiariesPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-4 text-center text-[#6b7280]">
+                    <td colSpan={8} className="p-4 text-center text-[#6b7280]">
                       {loading ? "লোড হচ্ছে..." : "কোনো ডেটা পাওয়া যায়নি।"}
                     </td>
                   </tr>
@@ -470,7 +682,10 @@ export default function BeneficiariesPage() {
       <Modal
         open={openAdd}
         title={editing ? "উপকারভোগী আপডেট" : "নতুন উপকারভোগী নিবন্ধন"}
-        onClose={() => setOpenAdd(false)}
+        onClose={() => {
+          setOpenAdd(false);
+          setPhotoFile(null);
+        }}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
@@ -485,7 +700,7 @@ export default function BeneficiariesPage() {
             />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">নিজের NID</div>
+            <div className="text-[12px] mb-1 font-medium">নিজের এনআইডি</div>
             <input
               value={form.nidFull}
               onChange={(e) =>
@@ -499,7 +714,7 @@ export default function BeneficiariesPage() {
             />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">পিতার NID</div>
+            <div className="text-[12px] mb-1 font-medium">পিতার এনআইডি</div>
             <input
               value={form.fatherNidFull}
               onChange={(e) =>
@@ -513,7 +728,7 @@ export default function BeneficiariesPage() {
             />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">মাতার NID</div>
+            <div className="text-[12px] mb-1 font-medium">মাতার এনআইডি</div>
             <input
               value={form.motherNidFull}
               onChange={(e) =>
@@ -542,6 +757,23 @@ export default function BeneficiariesPage() {
               <option value="B">B</option>
               <option value="C">C</option>
             </select>
+          </div>
+          <div>
+            <div className="text-[12px] mb-1 font-medium">
+              ছবি (PNG)
+              <span className="text-gray-400"> — নিবন্ধনের সময় আপলোড</span>
+            </div>
+            <input
+              type="file"
+              accept="image/png"
+              onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
+              className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            />
+            <div className="text-[11px] text-[#6b7280] mt-1">
+              {photoFile
+                ? `নির্বাচিত: ${photoFile.name}`
+                : "কোনো ছবি নির্বাচন করা হয়নি"}
+            </div>
           </div>
           <div>
             <div className="text-[12px] mb-1 font-medium">অভিভাবকের মোবাইল</div>
@@ -603,7 +835,7 @@ export default function BeneficiariesPage() {
               <>
                 <div className="text-[12px] mb-1 font-medium">স্ট্যাটাস</div>
                 <input
-                  value="Inactive — অ্যাডমিন সক্রিয় করবেন"
+                  value="নিষ্ক্রিয় — অ্যাডমিন সক্রিয় করবেন"
                   readOnly
                   className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-gray-100 text-gray-500"
                 />

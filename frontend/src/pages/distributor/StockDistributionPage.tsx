@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import PortalSection from "../../components/PortalSection";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
@@ -18,7 +19,6 @@ import {
   getDistributionTokens,
   joinQueue,
   markNotificationAsRead,
-  recordStockIn,
   startDistributionSession,
   uploadConsumerPhoto,
   type NotificationItem,
@@ -27,11 +27,21 @@ import {
   type DistributionToken,
 } from "../../services/api";
 
+const STOCK_ITEMS = ["চাল", "ডাল", "পেঁয়াজ"] as const;
+
+function itemQtyText(map?: Record<string, number>) {
+  if (!map) return "চাল: 0, ডাল: 0, পেঁয়াজ: 0";
+  return STOCK_ITEMS.map(
+    (item) => `${item}: ${(map[item] || 0).toFixed(2)} kg`,
+  ).join(" | ");
+}
+
 function todayDateKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
 export default function StockDistributionPage() {
+  const navigate = useNavigate();
   const [records, setRecords] = useState<DistributionRecord[]>([]);
   const [tokens, setTokens] = useState<DistributionToken[]>([]);
   const [stats, setStats] = useState({
@@ -43,6 +53,13 @@ export default function StockDistributionPage() {
     completedRecords: 0,
     expectedKg: 0,
     actualKg: 0,
+    byItem: {} as Record<
+      string,
+      { expectedKg: number; actualKg: number; mismatchCount: number }
+    >,
+    totals: undefined as
+      | { expectedKg: number; actualKg: number; label?: string }
+      | undefined,
   });
   const [stockOutKg, setStockOutKg] = useState(0);
   const [stockInKg, setStockInKg] = useState(0);
@@ -53,9 +70,6 @@ export default function StockDistributionPage() {
   const [sessions, setSessions] = useState<DistributionSession[]>([]);
   const [openSession, setOpenSession] = useState<DistributionSession | null>(
     null,
-  );
-  const [stockInItem, setStockInItem] = useState<"চাল" | "ডাল" | "পেঁয়াজ">(
-    "চাল",
   );
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"সব" | "Issued" | "Used" | "Cancelled">(
@@ -71,24 +85,26 @@ export default function StockDistributionPage() {
   const [actualKg, setActualKg] = useState(0);
   const [mismatchAlerts, setMismatchAlerts] = useState<NotificationItem[]>([]);
   const [sessionStatus, setSessionStatus] = useState<string>("");
-  const [stockInQty, setStockInQty] = useState<number>(1);
-  const [submittingStock, setSubmittingStock] = useState(false);
   const [todayStockTotal, setTodayStockTotal] = useState<number>(0);
+  const [statsByItem, setStatsByItem] = useState<
+    Record<
+      string,
+      { expectedKg: number; actualKg: number; mismatchCount: number }
+    >
+  >({});
+  const [stockContext, setStockContext] = useState<{
+    division?: string;
+    ward?: string;
+    sessionId?: string | null;
+    sessionCode?: string;
+    sessionStatus?: string | null;
+  }>({});
   const [refreshing, setRefreshing] = useState(false);
   const [plannedDateKey, setPlannedDateKey] = useState(todayDateKey());
-  const [plannedStartAt, setPlannedStartAt] = useState("");
-  const [plannedRationItem, setPlannedRationItem] = useState<
-    "চাল" | "ডাল" | "পেঁয়াজ"
-  >("চাল");
   const [photoVerified, setPhotoVerified] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [queueMsg, setQueueMsg] = useState("");
-
-  const stockInQtyError =
-    Number.isFinite(stockInQty) && stockInQty < 1
-      ? "সর্বনিম্ন ১ কেজি প্রয়োজন"
-      : "";
 
   const loadMismatchAlerts = async () => {
     try {
@@ -145,7 +161,7 @@ export default function StockDistributionPage() {
             { tokens: [] },
             {
               records: [],
-              stock: { dateKey: stockData.dateKey, stockOutKg: 0 },
+              stock: { dateKey: stockData.dateKey, stockOutKg: 0, byItem: {} },
             },
             {
               totalTokens: 0,
@@ -156,16 +172,24 @@ export default function StockDistributionPage() {
               completedRecords: 0,
               expectedKg: 0,
               actualKg: 0,
+              byItem: {},
             },
           ];
 
       setTokens(tokenData.tokens);
       setRecords(recordData.records);
-      setStats(statData);
+      setStats((prev) => ({
+        ...prev,
+        ...statData,
+        byItem: statData.byItem || {},
+        totals: statData.totals,
+      }));
       setStockOutKg(recordData.stock.stockOutKg);
       setStockInKg(stockData.summary.stockInKg);
       setStockBalanceKg(stockData.summary.balanceKg);
       setStockByItem(stockData.byItem || {});
+      setStatsByItem(statData.byItem || {});
+      setStockContext(stockData.context || {});
       setOpenSession(currentSession);
       setSessionStatus(currentSession?.status || "");
       setTodayStockTotal(Number(stockData.summary.stockInKg || 0));
@@ -322,37 +346,6 @@ export default function StockDistributionPage() {
 
   const delta = Number((stats.expectedKg - stats.actualKg).toFixed(2));
 
-  const handleStockIn = async () => {
-    if (
-      sessionStatus === "Open" ||
-      sessionStatus === "Paused" ||
-      sessionStatus === "Closed"
-    ) {
-      setError("সেশন চলছে — মজুদ পরিবর্তন বন্ধ");
-      return;
-    }
-    if (!Number.isFinite(stockInQty) || stockInQty < 1) {
-      setError("সর্বনিম্ন ১ কেজি মজুদ দিন");
-      return;
-    }
-
-    try {
-      setSubmittingStock(true);
-      setError("");
-      await recordStockIn({ qtyKg: stockInQty, item: stockInItem });
-      setMessage("মজুদ সফলভাবে যোগ করা হয়েছে");
-      await loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "মজুদ যোগ ব্যর্থ";
-      setError(msg);
-      if (msg.includes("সেশন") || msg.toLowerCase().includes("session")) {
-        setSessionStatus("Open");
-      }
-    } finally {
-      setSubmittingStock(false);
-    }
-  };
-
   const onCloseSession = async () => {
     if (!openSession || openSession.status === "Planned") {
       setError("ক্লোজ করার জন্য ওপেন সেশন পাওয়া যায়নি");
@@ -392,10 +385,6 @@ export default function StockDistributionPage() {
       setError("");
       await createDistributionSession({
         dateKey: plannedDateKey,
-        rationItem: plannedRationItem,
-        scheduledStartAt: plannedStartAt
-          ? new Date(plannedStartAt).toISOString()
-          : undefined,
       });
       setMessage("সেশন পরিকল্পনা করা হয়েছে");
       await loadData();
@@ -451,86 +440,36 @@ export default function StockDistributionPage() {
 
         <div className="mb-3 border rounded p-3 bg-[#f9fafb]">
           <div className="font-semibold mb-2">আজকের মজুদ নিবন্ধন</div>
-          {sessionStatus === "Open" ||
-          sessionStatus === "Paused" ||
-          sessionStatus === "Closed" ? (
-            <div className="bg-orange-50 border border-orange-300 rounded-lg p-4">
-              <p className="text-orange-700 font-medium">
-                🔒 সেশন শুরু/শেষ হয়েছে — মজুদ পরিবর্তন বন্ধ
-              </p>
-              <p className="text-orange-600 text-sm">
-                আজকের মোট মজুদ: {todayStockTotal} কেজি
-              </p>
-            </div>
-          ) : (
-            <div>
-              <label className="text-[13px]">আজকের মজুদ পরিমাণ</label>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={stockInQty}
-                  onChange={(e) => setStockInQty(Number(e.target.value || 0))}
-                  className="border rounded px-3 py-2 w-32"
-                />
-                <select
-                  value={stockInItem}
-                  onChange={(e) =>
-                    setStockInItem(e.target.value as "চাল" | "ডাল" | "পেঁয়াজ")
-                  }
-                  className="border rounded px-3 py-2"
-                >
-                  <option value="চাল">চাল</option>
-                  <option value="ডাল">ডাল</option>
-                  <option value="পেঁয়াজ">পেঁয়াজ</option>
-                </select>
-                <span className="text-gray-600 font-medium">কেজি</span>
-              </div>
-              {stockInQtyError && (
-                <p className="text-xs text-red-600 mt-1">{stockInQtyError}</p>
-              )}
-              <p className="text-xs text-gray-400 mt-1">
-                সর্বনিম্ন ১ কেজি। আজকের মোট: {todayStockTotal} কেজি
-              </p>
-              <Button
-                onClick={() => void handleStockIn()}
-                disabled={submittingStock || !!stockInQtyError}
-              >
-                {submittingStock ? "লোড হচ্ছে..." : "মজুদ যোগ করুন"}
-              </Button>
-            </div>
-          )}
+          <div className="bg-orange-50 border border-orange-300 rounded-lg p-4 text-sm">
+            <p className="text-orange-700 font-medium">
+              🔒 Stock IN শুধুমাত্র Admin বরাদ্দ করতে পারবেন
+            </p>
+            <p className="text-orange-700">
+              Distributor এখানে শুধু ট্র্যাক/মনিটর করতে পারবেন
+            </p>
+            <p className="text-orange-700 mt-1">
+              মোট বরাদ্দ (derived): {todayStockTotal.toFixed(2)} কেজি
+            </p>
+            <p className="text-orange-700">
+              এলাকা: {stockContext.division || "—"} / ওয়ার্ড{" "}
+              {stockContext.ward || "—"}
+            </p>
+            <p className="text-orange-700">
+              সেশন:{" "}
+              {stockContext.sessionCode || openSession?.sessionCode || "—"}
+            </p>
+          </div>
         </div>
 
         <div className="mb-3 border rounded p-3 bg-[#f8fafc]">
           <div className="font-semibold mb-2">সেশন পরিকল্পনা ও শুরু</div>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
             <input
               type="date"
               value={plannedDateKey}
               onChange={(e) => setPlannedDateKey(e.target.value)}
               className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
             />
-            <input
-              type="datetime-local"
-              value={plannedStartAt}
-              onChange={(e) => setPlannedStartAt(e.target.value)}
-              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            />
-            <select
-              value={plannedRationItem}
-              onChange={(e) =>
-                setPlannedRationItem(
-                  e.target.value as "চাল" | "ডাল" | "পেঁয়াজ",
-                )
-              }
-              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-            >
-              <option value="চাল">চাল</option>
-              <option value="ডাল">ডাল</option>
-              <option value="পেঁয়াজ">পেঁয়াজ</option>
-            </select>
             <Button onClick={() => void onPlanSession()} disabled={loading}>
               📅 সেশন প্ল্যান করুন
             </Button>
@@ -566,7 +505,7 @@ export default function StockDistributionPage() {
                       key={s._id}
                       className="px-2 py-1 rounded border bg-white text-[11px]"
                     >
-                      {s.dateKey} · {s.status} · {s.rationItem || "চাল"}
+                      {s.dateKey} · {s.status} · {s.sessionCode || s._id}
                     </span>
                   ))}
               </div>
@@ -625,35 +564,69 @@ export default function StockDistributionPage() {
             মিসম্যাচ: <b>{stats.mismatches}</b>
           </div>
           <div className="border rounded p-2 text-[12px]">
-            Actual বিতরণ (kg): <b>{stats.actualKg}</b>
+            মোট Actual বিতরণ (derived): <b>{stats.actualKg.toFixed(2)} kg</b>
           </div>
           <div className="border rounded p-2 text-[12px]">
-            স্টক IN (kg): <b>{stockInKg}</b>
+            মোট স্টক IN (derived): <b>{stockInKg.toFixed(2)} kg</b>
           </div>
           <div className="border rounded p-2 text-[12px]">
-            স্টক OUT (kg): <b>{stockOutKg}</b>
+            মোট স্টক OUT (derived): <b>{stockOutKg.toFixed(2)} kg</b>
           </div>
           <div className="border rounded p-2 text-[12px]">
-            ব্যালেন্স (kg): <b>{stockBalanceKg}</b>
+            ব্যালেন্স (derived): <b>{stockBalanceKg.toFixed(2)} kg</b>
           </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+          {STOCK_ITEMS.map((item) => (
+            <div
+              key={item}
+              className="border rounded p-2 text-[12px] bg-[#fafafa]"
+            >
+              <div className="font-semibold">Actual বিতরণ — {item}</div>
+              <div>{(statsByItem[item]?.actualKg || 0).toFixed(2)} kg</div>
+              <div className="text-[#6b7280]">
+                Expected: {(statsByItem[item]?.expectedKg || 0).toFixed(2)} kg
+              </div>
+            </div>
+          ))}
         </div>
         {Object.keys(stockByItem).length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            {(["চাল", "ডাল", "পেঁয়াজ"] as const).map((item) => (
+            {STOCK_ITEMS.map((item) => (
               <div
                 key={item}
                 className="border rounded p-2 text-[12px] bg-white"
               >
                 <div className="font-semibold">{item}</div>
-                <div>IN: {stockByItem[item]?.stockInKg ?? 0} kg</div>
-                <div>OUT: {stockByItem[item]?.stockOutKg ?? 0} kg</div>
-                <div>ব্যালেন্স: {stockByItem[item]?.balanceKg ?? 0} kg</div>
+                <div>
+                  IN: {(stockByItem[item]?.stockInKg ?? 0).toFixed(2)} kg
+                </div>
+                <div>
+                  OUT: {(stockByItem[item]?.stockOutKg ?? 0).toFixed(2)} kg
+                </div>
+                <div>
+                  ব্যালেন্স: {(stockByItem[item]?.balanceKg ?? 0).toFixed(2)} kg
+                </div>
               </div>
             ))}
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (!openSession?._id) {
+                setError("লাইভ কিউ খুলতে সেশন নির্বাচন/শুরু করুন");
+                return;
+              }
+              navigate(
+                `/queue?sessionId=${encodeURIComponent(openSession._id)}`,
+              );
+            }}
+          >
+            🧾 সেশনভিত্তিক লাইভ কিউ
+          </Button>
           <Button
             variant="secondary"
             onClick={() => void onCloseSession()}
@@ -667,8 +640,8 @@ export default function StockDistributionPage() {
 
         {openSession && (
           <div className="mb-3 text-[12px] rounded border border-[#fde68a] bg-[#fffbeb] text-[#92400e] px-3 py-2">
-            সেশন শুরু হওয়ার পর স্টক IN লক থাকে। তাই সেশন শুরু করার আগে স্টক
-            দিন।
+            Session ID: {openSession.sessionCode || openSession._id} | সেশন শুরু
+            হলে Stock IN lock থাকে (Admin only)
           </div>
         )}
 
@@ -708,9 +681,16 @@ export default function StockDistributionPage() {
               <thead>
                 <tr className="bg-[#f8fafc]">
                   <th className="border border-[#cfd6e0] p-2">টোকেন</th>
+                  <th className="border border-[#cfd6e0] p-2">সেশন আইডি</th>
                   <th className="border border-[#cfd6e0] p-2">উপকারভোগী</th>
                   <th className="border border-[#cfd6e0] p-2">নাম</th>
-                  <th className="border border-[#cfd6e0] p-2">প্রত্যাশিত</th>
+                  <th className="border border-[#cfd6e0] p-2">
+                    প্রত্যাশিত (item-wise)
+                  </th>
+                  <th className="border border-[#cfd6e0] p-2">
+                    বাস্তব (item-wise)
+                  </th>
+                  <th className="border border-[#cfd6e0] p-2">মিসম্যাচ কারণ</th>
                   <th className="border border-[#cfd6e0] p-2">স্ট্যাটাস</th>
                   <th className="border border-[#cfd6e0] p-2">অ্যাকশন</th>
                 </tr>
@@ -730,13 +710,29 @@ export default function StockDistributionPage() {
                         {token.tokenCode}
                       </td>
                       <td className="border border-[#cfd6e0] p-2 text-center">
+                        {token.sessionCode ||
+                          token.session?.sessionCode ||
+                          token.sessionId ||
+                          "—"}
+                      </td>
+                      <td className="border border-[#cfd6e0] p-2 text-center">
                         {consumer?.consumerCode || "—"}
                       </td>
                       <td className="border border-[#cfd6e0] p-2">
                         {consumer?.name || "—"}
                       </td>
-                      <td className="border border-[#cfd6e0] p-2 text-center">
-                        {token.rationQtyKg.toFixed(2)} kg
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {itemQtyText(token.expectedByItem)}
+                      </td>
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {itemQtyText(token.actualByItem)}
+                      </td>
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {token.mismatchDetails?.length
+                          ? token.mismatchDetails
+                              .map((m) => m.reason)
+                              .join("; ")
+                          : "—"}
                       </td>
                       <td className="border border-[#cfd6e0] p-2 text-center">
                         {token.status === "Issued" && (
@@ -781,7 +777,7 @@ export default function StockDistributionPage() {
                 })}
                 {filteredTokens.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-4 text-center text-[#6b7280]">
+                    <td colSpan={9} className="p-4 text-center text-[#6b7280]">
                       {loading
                         ? "লোড হচ্ছে..."
                         : sessionStatus === "Open" || sessionStatus === "Paused"
@@ -818,12 +814,16 @@ export default function StockDistributionPage() {
             <table className="w-full min-w-250 text-[12px] border-collapse">
               <thead>
                 <tr className="bg-[#f8fafc]">
+                  <th className="border border-[#cfd6e0] p-2">সেশন আইডি</th>
                   <th className="border border-[#cfd6e0] p-2">টোকেন কোড</th>
                   <th className="border border-[#cfd6e0] p-2">ভোক্তা কোড</th>
                   <th className="border border-[#cfd6e0] p-2">
-                    প্রত্যাশিত (কেজি)
+                    প্রত্যাশিত (item-wise)
                   </th>
-                  <th className="border border-[#cfd6e0] p-2">প্রকৃত (কেজি)</th>
+                  <th className="border border-[#cfd6e0] p-2">
+                    প্রকৃত (item-wise)
+                  </th>
+                  <th className="border border-[#cfd6e0] p-2">মিসম্যাচ কারণ</th>
                   <th className="border border-[#cfd6e0] p-2">সময়</th>
                   <th className="border border-[#cfd6e0] p-2">অবস্থা</th>
                 </tr>
@@ -833,7 +833,7 @@ export default function StockDistributionPage() {
                   records.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={8}
                         className="p-4 text-center text-[#6b7280]"
                       >
                         সেশন সক্রিয় নেই
@@ -850,16 +850,26 @@ export default function StockDistributionPage() {
                       className={record.mismatch ? "bg-red-50" : "bg-green-50"}
                     >
                       <td className="border border-[#cfd6e0] p-2 text-center">
+                        {record.sessionCode || record.sessionId || "—"}
+                      </td>
+                      <td className="border border-[#cfd6e0] p-2 text-center">
                         {token?._id ? token.tokenCode : "—"}
                       </td>
                       <td className="border border-[#cfd6e0] p-2 text-center">
                         {consumer?.consumerCode || "—"}
                       </td>
-                      <td className="border border-[#cfd6e0] p-2 text-center">
-                        {record.expectedKg.toFixed(2)}
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {itemQtyText(record.expectedByItem)}
                       </td>
-                      <td className="border border-[#cfd6e0] p-2 text-center">
-                        {record.actualKg.toFixed(2)}
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {itemQtyText(record.actualByItem)}
+                      </td>
+                      <td className="border border-[#cfd6e0] p-2 text-left">
+                        {record.mismatchDetails?.length
+                          ? record.mismatchDetails
+                              .map((m) => m.reason)
+                              .join("; ")
+                          : "—"}
                       </td>
                       <td className="border border-[#cfd6e0] p-2 text-center">
                         {new Date(record.createdAt).toLocaleString()}
@@ -881,10 +891,10 @@ export default function StockDistributionPage() {
                 {records.length > 0 && (
                   <tr className="bg-gray-50 font-semibold">
                     <td
-                      colSpan={3}
+                      colSpan={4}
                       className="border border-[#cfd6e0] p-2 text-center"
                     >
-                      মোট বিতরণ
+                      মোট Actual বিতরণ (derived)
                     </td>
                     <td className="border border-[#cfd6e0] p-2 text-center">
                       {records
@@ -893,25 +903,17 @@ export default function StockDistributionPage() {
                       কেজি
                     </td>
                     <td
-                      colSpan={2}
+                      colSpan={3}
                       className="border border-[#cfd6e0] p-2 text-center"
                     >
-                      অবশিষ্ট:{" "}
-                      {Math.max(
-                        0,
-                        todayStockTotal -
-                          records.reduce(
-                            (sum, r) => sum + (Number(r.actualKg) || 0),
-                            0,
-                          ),
-                      ).toFixed(1)}{" "}
-                      কেজি
+                      ব্যালেন্স (derived from stock ledger):{" "}
+                      {stockBalanceKg.toFixed(1)} কেজি
                     </td>
                   </tr>
                 )}
                 {records.length === 0 && sessionStatus && (
                   <tr>
-                    <td colSpan={6} className="p-4 text-center text-[#6b7280]">
+                    <td colSpan={8} className="p-4 text-center text-[#6b7280]">
                       কোনো বিতরণ রেকর্ড নেই
                     </td>
                   </tr>
@@ -932,7 +934,7 @@ export default function StockDistributionPage() {
             টোকেন: <b>{selectedToken?.tokenCode}</b>
           </div>
           <div className="text-[13px]">
-            প্রত্যাশিত: <b>{selectedToken?.rationQtyKg.toFixed(2)} kg</b>
+            প্রত্যাশিত: <b>{itemQtyText(selectedToken?.expectedByItem)}</b>
           </div>
           <input
             type="number"

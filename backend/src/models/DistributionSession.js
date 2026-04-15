@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const { STOCK_ITEMS } = require("../utils/stock-items.utils");
 
+const qtyByItemSchema = STOCK_ITEMS.reduce((acc, item) => {
+  acc[item] = { type: Number, default: 0 };
+  return acc;
+}, {});
+
 const DistributionSessionSchema = new mongoose.Schema(
   {
     distributorId: {
@@ -10,6 +15,8 @@ const DistributionSessionSchema = new mongoose.Schema(
     },
     dateKey: { type: String, required: true }, // YYYY-MM-DD
     rationItem: { type: String, enum: STOCK_ITEMS, default: "চাল" },
+    plannedAllocationByItem: { type: qtyByItemSchema, default: () => ({}) },
+    distributedByItem: { type: qtyByItemSchema, default: () => ({}) },
     status: {
       type: String,
       enum: ["Planned", "Open", "Paused", "Closed"],

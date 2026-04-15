@@ -22,6 +22,24 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function toDateKey(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
+function lastNDates(n = 7) {
+  const out = [];
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 function buildWardQuery(distributor) {
   const query = {};
 
@@ -82,36 +100,41 @@ async function getDistributorDashboard(req, res) {
     }
 
     const tokenDocs = await Token.find({ distributorId: distributor._id })
-      .select("_id status rationQtyKg")
+      .select("_id status rationQtyKg issuedAt usedAt sessionId")
       .lean();
 
     const tokenIds = tokenDocs.map((t) => t._id);
+    const last7 = lastNDates(7);
+    const last7Set = new Set(last7);
 
     const wardQuery = buildWardQuery(distributor);
 
     const [
+      mismatchDocs,
+      recentSessions,
+      sessionStatsAgg,
+      stockOutTodayAgg,
+      stockTodayByItemAgg,
+      stockLast7OutAgg,
       totalConsumers,
       activeConsumers,
       pendingOffline,
       recentAudit,
-      stockOutTodayAgg,
-      mismatchCount,
     ] = await Promise.all([
-      Consumer.countDocuments(wardQuery),
-      Consumer.countDocuments({
-        ...wardQuery,
-        status: "Active",
-      }),
-      OfflineQueue.countDocuments({
-        distributorId: distributor._id,
-        status: "Pending",
-      }),
-      AuditLog.find({
-        $or: [{ actorUserId: req.user.userId }, { actorType: "Distributor" }],
+      DistributionRecord.find({
+        tokenId: { $in: tokenIds },
+        mismatch: true,
       })
-        .sort({ createdAt: -1 })
-        .limit(10)
+        .select("tokenId createdAt")
         .lean(),
+      DistributionSession.find({ distributorId: distributor._id })
+        .sort({ dateKey: -1, createdAt: -1 })
+        .limit(6)
+        .lean(),
+      DistributionSession.aggregate([
+        { $match: { distributorId: distributor._id } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
       StockLedger.aggregate([
         {
           $match: {
@@ -127,14 +150,168 @@ async function getDistributorDashboard(req, res) {
           },
         },
       ]),
-      DistributionRecord.countDocuments({
-        tokenId: { $in: tokenIds },
-        mismatch: true,
+      StockLedger.aggregate([
+        {
+          $match: {
+            distributorId: distributor._id,
+            dateKey: todayKey(),
+          },
+        },
+        {
+          $group: {
+            _id: { item: "$item", type: "$type" },
+            qtyKg: { $sum: "$qtyKg" },
+          },
+        },
+      ]),
+      StockLedger.aggregate([
+        {
+          $match: {
+            distributorId: distributor._id,
+            dateKey: { $in: last7 },
+            type: "OUT",
+          },
+        },
+        {
+          $group: {
+            _id: "$dateKey",
+            qtyKg: { $sum: "$qtyKg" },
+          },
+        },
+      ]),
+      Consumer.countDocuments(wardQuery),
+      Consumer.countDocuments({
+        ...wardQuery,
+        status: "Active",
       }),
+      OfflineQueue.countDocuments({
+        distributorId: distributor._id,
+        status: "Pending",
+      }),
+      AuditLog.find({
+        $or: [{ actorUserId: req.user.userId }, { actorType: "Distributor" }],
+      })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
     ]);
+
+    const mismatchCount = mismatchDocs.length;
 
     const issuedTokens = tokenDocs.length;
     const usedTokens = tokenDocs.filter((t) => t.status === "Used").length;
+    const cancelledTokens = tokenDocs.filter(
+      (t) => t.status === "Cancelled",
+    ).length;
+    const expiredTokens = tokenDocs.filter(
+      (t) => t.status === "Expired",
+    ).length;
+
+    const sessionStats = {
+      planned: 0,
+      open: 0,
+      paused: 0,
+      closed: 0,
+    };
+    sessionStatsAgg.forEach((row) => {
+      if (row._id === "Planned") sessionStats.planned = row.count;
+      if (row._id === "Open") sessionStats.open = row.count;
+      if (row._id === "Paused") sessionStats.paused = row.count;
+      if (row._id === "Closed") sessionStats.closed = row.count;
+    });
+
+    const stockTodayByItem = {};
+    for (const row of stockTodayByItemAgg) {
+      const item = String(row?._id?.item || "");
+      const type = String(row?._id?.type || "");
+      if (!item) continue;
+      if (!stockTodayByItem[item]) {
+        stockTodayByItem[item] = {
+          inKg: 0,
+          outKg: 0,
+          adjustKg: 0,
+          balanceKg: 0,
+        };
+      }
+      if (type === "IN") stockTodayByItem[item].inKg += Number(row.qtyKg || 0);
+      if (type === "OUT")
+        stockTodayByItem[item].outKg += Number(row.qtyKg || 0);
+      if (type === "ADJUST")
+        stockTodayByItem[item].adjustKg += Number(row.qtyKg || 0);
+    }
+    Object.values(stockTodayByItem).forEach((row) => {
+      row.balanceKg = Number((row.inKg + row.adjustKg - row.outKg).toFixed(2));
+    });
+
+    const trendMap = new Map(
+      last7.map((dateKey) => [
+        dateKey,
+        {
+          dateKey,
+          issuedTokens: 0,
+          usedTokens: 0,
+          mismatchCount: 0,
+          stockOutKg: 0,
+        },
+      ]),
+    );
+
+    tokenDocs.forEach((token) => {
+      const issuedKey = toDateKey(token.issuedAt);
+      if (last7Set.has(issuedKey)) {
+        trendMap.get(issuedKey).issuedTokens += 1;
+      }
+
+      if (token.status === "Used") {
+        const usedKey = toDateKey(token.usedAt || token.issuedAt);
+        if (last7Set.has(usedKey)) {
+          trendMap.get(usedKey).usedTokens += 1;
+        }
+      }
+    });
+
+    mismatchDocs.forEach((record) => {
+      const key = toDateKey(record.createdAt);
+      if (last7Set.has(key)) {
+        trendMap.get(key).mismatchCount += 1;
+      }
+    });
+
+    stockLast7OutAgg.forEach((row) => {
+      const key = String(row._id || "");
+      if (!last7Set.has(key)) return;
+      trendMap.get(key).stockOutKg = Number(row.qtyKg || 0);
+    });
+
+    const recentSessionRows = recentSessions.map((session) => {
+      const sessionTokens = tokenDocs.filter(
+        (t) => String(t.sessionId) === String(session._id),
+      );
+      return {
+        id: String(session._id),
+        dateKey: session.dateKey,
+        status: session.status,
+        rationItem: session.rationItem || "চাল",
+        openedAt: session.openedAt || null,
+        closedAt: session.closedAt || null,
+        issuedTokens: sessionTokens.length,
+        usedTokens: sessionTokens.filter((t) => t.status === "Used").length,
+        cancelledTokens: sessionTokens.filter((t) => t.status === "Cancelled")
+          .length,
+      };
+    });
+
+    const latestSession = recentSessions[0] || null;
+    const todayIssued = tokenDocs.filter(
+      (t) => last7[6] === toDateKey(t.issuedAt),
+    ).length;
+    const todayUsed = tokenDocs.filter(
+      (t) =>
+        t.status === "Used" && last7[6] === toDateKey(t.usedAt || t.issuedAt),
+    ).length;
+    const todayMismatch = mismatchDocs.filter(
+      (r) => last7[6] === toDateKey(r.createdAt),
+    ).length;
 
     res.json({
       distributor: {
@@ -152,9 +329,55 @@ async function getDistributorDashboard(req, res) {
         activeConsumers,
         issuedTokens,
         usedTokens,
+        cancelledTokens,
+        expiredTokens,
         mismatchCount,
         pendingOffline,
         stockOutTodayKg: stockOutTodayAgg[0]?.totalKg || 0,
+      },
+      session: latestSession
+        ? {
+            id: String(latestSession._id),
+            dateKey: latestSession.dateKey,
+            status: latestSession.status,
+            rationItem: latestSession.rationItem || "চাল",
+            openedAt: latestSession.openedAt || null,
+            closedAt: latestSession.closedAt || null,
+          }
+        : null,
+      sessions: {
+        total:
+          sessionStats.planned +
+          sessionStats.open +
+          sessionStats.paused +
+          sessionStats.closed,
+        ...sessionStats,
+        recent: recentSessionRows,
+      },
+      stock: {
+        today: {
+          outKg: stockOutTodayAgg[0]?.totalKg || 0,
+          byItem: stockTodayByItem,
+        },
+      },
+      trends: {
+        today: {
+          issuedTokens: todayIssued,
+          usedTokens: todayUsed,
+          mismatchCount: todayMismatch,
+          stockOutKg: stockOutTodayAgg[0]?.totalKg || 0,
+        },
+        last7Days: Array.from(trendMap.values()),
+      },
+      quality: {
+        mismatchRate:
+          issuedTokens > 0
+            ? Number(((mismatchCount / issuedTokens) * 100).toFixed(2))
+            : 0,
+        fulfilmentRate:
+          issuedTokens > 0
+            ? Number(((usedTokens / issuedTokens) * 100).toFixed(2))
+            : 0,
       },
       recentAudit,
     });

@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const Consumer = require("../models/Consumer");
+const { assertConsumerAccess } = require("../services/access-control.service");
 
 function photosDir() {
   return path.resolve(
@@ -14,6 +15,13 @@ function photosDir() {
 
 function ensureDir() {
   fs.mkdirSync(photosDir(), { recursive: true });
+}
+
+function isPathInside(baseDir, targetPath) {
+  const base = path.resolve(baseDir);
+  const target = path.resolve(targetPath);
+  const rel = path.relative(base, target);
+  return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 function loadSharp() {
@@ -27,7 +35,7 @@ function loadSharp() {
 async function uploadPhoto(req, res) {
   try {
     const consumer = await Consumer.findById(req.params.consumerId)
-      .select("consumerCode")
+      .select("consumerCode division ward wardNo createdByDistributor")
       .lean();
     if (!consumer) {
       return res.status(404).json({
@@ -36,6 +44,8 @@ async function uploadPhoto(req, res) {
         code: "NOT_FOUND",
       });
     }
+
+    await assertConsumerAccess(req.user, consumer);
 
     if (!req.file?.path) {
       return res.status(400).json({
@@ -76,6 +86,11 @@ async function uploadPhoto(req, res) {
       data: { photoUrl: `/api/photos/${consumer.consumerCode}` },
     });
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("uploadPhoto error:", error);
     return res
       .status(500)
@@ -88,8 +103,12 @@ async function streamPhotoByConsumerCode(req, res) {
     const consumer = await Consumer.findOne({
       consumerCode: req.params.consumerCode,
     })
-      .select("photoPath")
+      .select("photoPath division ward wardNo createdByDistributor")
       .lean();
+
+    if (consumer) {
+      await assertConsumerAccess(req.user, consumer);
+    }
 
     if (!consumer?.photoPath || !fs.existsSync(consumer.photoPath)) {
       return res
@@ -97,8 +116,29 @@ async function streamPhotoByConsumerCode(req, res) {
         .json({ success: false, message: "ছবি নেই", code: "NOT_FOUND" });
     }
 
-    return res.sendFile(path.resolve(consumer.photoPath));
+    const resolvedPhotoPath = path.resolve(consumer.photoPath);
+    if (!isPathInside(photosDir(), resolvedPhotoPath)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid photo path",
+        code: "INVALID_FILE_PATH",
+      });
+    }
+
+    const ext = path.extname(resolvedPhotoPath).toLowerCase();
+    if (ext === ".png") {
+      res.type("image/png");
+    } else {
+      res.type("image/jpeg");
+    }
+
+    return res.sendFile(resolvedPhotoPath);
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("streamPhotoByConsumerCode error:", error);
     return res
       .status(500)
@@ -109,7 +149,9 @@ async function streamPhotoByConsumerCode(req, res) {
 async function verifyPhotoInfo(req, res) {
   try {
     const consumer = await Consumer.findById(req.params.consumerId)
-      .select("name consumerCode category ward photoPath")
+      .select(
+        "name consumerCode category ward photoPath division wardNo createdByDistributor",
+      )
       .lean();
 
     if (!consumer) {
@@ -119,6 +161,8 @@ async function verifyPhotoInfo(req, res) {
         code: "NOT_FOUND",
       });
     }
+
+    await assertConsumerAccess(req.user, consumer);
 
     const hasPhoto = Boolean(
       consumer.photoPath && fs.existsSync(consumer.photoPath),
@@ -136,6 +180,11 @@ async function verifyPhotoInfo(req, res) {
       },
     });
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("verifyPhotoInfo error:", error);
     return res
       .status(500)

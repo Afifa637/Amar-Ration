@@ -36,7 +36,7 @@ const storage = multer.diskStorage({
 
 const uploadAuditFiles = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024, files: 5 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
 });
 
 router.use(protect, authorize("Distributor", "Admin"));
@@ -51,7 +51,7 @@ router.get("/settings", getDistributorSettings);
 router.get("/audit-requests", listMyAuditReportRequests);
 router.post(
   "/audit-requests/:id/submit",
-  uploadAuditFiles.array("files", 5),
+  uploadAuditFiles.array("files", 10),
   submitAuditReport,
 );
 router.get("/audit-requests/:id/files/:fileId", downloadAuditReportFile);

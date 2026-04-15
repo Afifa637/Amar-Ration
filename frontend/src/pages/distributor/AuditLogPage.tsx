@@ -48,7 +48,16 @@ export default function AuditLogPage() {
   const [reportText, setReportText] = useState("");
   const [reportFiles, setReportFiles] = useState<File[]>([]);
 
-  const loadData = async (targetPage = page) => {
+  const loadData = async (
+    targetPage = page,
+    override?: Partial<{
+      search: string;
+      action: string;
+      severity: AuditSeverity | "";
+      from: string;
+      to: string;
+    }>,
+  ) => {
     setLoading(true);
     setError("");
     setMessage("");
@@ -57,11 +66,11 @@ export default function AuditLogPage() {
         getAuditLogs({
           page: targetPage,
           limit: DEFAULT_LIMIT,
-          search: search.trim() || undefined,
-          action: action.trim() || undefined,
-          severity: severity || undefined,
-          from: from || undefined,
-          to: to || undefined,
+          search: (override?.search ?? search).trim() || undefined,
+          action: (override?.action ?? action).trim() || undefined,
+          severity: (override?.severity ?? severity) || undefined,
+          from: (override?.from ?? from) || undefined,
+          to: (override?.to ?? to) || undefined,
         }),
         getDistributorAuditRequests(),
       ]);
@@ -83,9 +92,30 @@ export default function AuditLogPage() {
   }, []);
 
   const uniqueActions = useMemo(
-    () => Array.from(new Set(logs.map((log) => log.action))).slice(0, 50),
+    () =>
+      Array.from(
+        new Set([
+          ...logs.map((log) => log.action),
+          "TOKEN_ISSUED",
+          "WEIGHT_MISMATCH",
+          "TOKEN_CANCELLED",
+          "DISTRIBUTION_SESSION_STARTED",
+          "DISTRIBUTION_SESSION_CLOSED",
+          "BLACKLIST_CREATED",
+          "OFFLINE_QUEUE_SYNC_FAILED",
+          "OFFLINE_QUEUE_SYNCED",
+        ]),
+      ).slice(0, 100),
     [logs],
   );
+
+  const auditSummary = useMemo(() => {
+    const total = logs.length;
+    const critical = logs.filter((log) => log.severity === "Critical").length;
+    const warning = logs.filter((log) => log.severity === "Warning").length;
+    const info = logs.filter((log) => log.severity === "Info").length;
+    return { total, critical, warning, info };
+  }, [logs]);
 
   const onExport = async () => {
     setError("");
@@ -111,6 +141,73 @@ export default function AuditLogPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "CSV এক্সপোর্ট ব্যর্থ");
     }
+  };
+
+  const onPrint = () => {
+    const win = window.open("", "_blank", "width=1200,height=820");
+    if (!win) return;
+
+    const filters = [
+      search ? `Search: ${search}` : "",
+      action ? `Action: ${action}` : "",
+      severity ? `Severity: ${severity}` : "",
+      from ? `From: ${from}` : "",
+      to ? `To: ${to}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    win.document.write(`
+      <html>
+      <head>
+        <title>Amar Ration Audit Log</title>
+        <style>
+          body{font-family:Arial,sans-serif;margin:0;background:#f1f5f9;color:#0f172a}
+          .wrap{padding:20px}
+          .card{background:#fff;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden}
+          .head{padding:14px 16px;background:linear-gradient(120deg,#0b4f88,#0284c7,#14b8a6);color:#fff}
+          .head h2{margin:0;font-size:20px}
+          .meta{padding:10px 16px;font-size:12px;color:#475569;border-bottom:1px solid #e2e8f0}
+          table{width:100%;border-collapse:collapse;font-size:11px}
+          th,td{border:1px solid #cbd5e1;padding:6px;vertical-align:top}
+          th{background:#f1f5f9}
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="card">
+            <div class="head"><h2>আমার রেশন — ডিস্ট্রিবিউটর অডিট লগ</h2></div>
+            <div class="meta">Rows: ${logs.length} | Printed: ${new Date().toLocaleString("bn-BD")}</div>
+            <div class="meta">Filters: ${filters || "None"}</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>সময়</th><th>ইভেন্ট</th><th>এলাকা/সেশন</th><th>কনজিউমার/টোকেন</th><th>অ্যাক্টর</th><th>রেফারেন্স</th><th>গুরুত্ব</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs
+                  .map(
+                    (log) => `<tr>
+                      <td>${new Date(log.createdAt).toLocaleString("bn-BD")}</td>
+                      <td>${log.action}</td>
+                      <td>${log.division || "—"} / ${log.ward || "—"}<br/>${log.sessionCode || ""}</td>
+                      <td>${log.consumerCode || "—"}<br/>${log.tokenCode || ""}</td>
+                      <td>${log.actorName || log.actorType || "—"}<br/>${log.distributorName || ""}</td>
+                      <td>${log.entityType || "—"} / ${log.entityId || "—"}</td>
+                      <td>${log.severity}</td>
+                    </tr>`,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <script>window.onload=()=>window.print()</script>
+      </body>
+      </html>
+    `);
+    win.document.close();
   };
 
   const onSubmitReport = async () => {
@@ -156,6 +253,9 @@ export default function AuditLogPage() {
         title="অডিট লগ (Immutable)"
         right={
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={onPrint}>
+              🖨️ প্রিন্ট প্রিভিউ
+            </Button>
             <Button variant="secondary" onClick={() => void onExport()}>
               ⬇️ এক্সপোর্ট CSV
             </Button>
@@ -225,11 +325,32 @@ export default function AuditLogPage() {
                 setSeverity("");
                 setFrom("");
                 setTo("");
-                void loadData(1);
+                void loadData(1, {
+                  search: "",
+                  action: "",
+                  severity: "",
+                  from: "",
+                  to: "",
+                });
               }}
             >
               রিসেট
             </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-[12px]">
+          <div className="border rounded p-2 bg-[#f8fafc]">
+            মোট: <b>{auditSummary.total}</b>
+          </div>
+          <div className="border rounded p-2 bg-[#fef2f2]">
+            Critical: <b>{auditSummary.critical}</b>
+          </div>
+          <div className="border rounded p-2 bg-[#fffbeb]">
+            Warning: <b>{auditSummary.warning}</b>
+          </div>
+          <div className="border rounded p-2 bg-[#ecfdf5]">
+            Info: <b>{auditSummary.info}</b>
           </div>
         </div>
 
@@ -256,7 +377,9 @@ export default function AuditLogPage() {
               <tr>
                 <th className="border p-2">সময়</th>
                 <th className="border p-2">ইভেন্ট</th>
-                <th className="border p-2">এনটিটি</th>
+                <th className="border p-2">এলাকা/সেশন</th>
+                <th className="border p-2">কনজিউমার/টোকেন</th>
+                <th className="border p-2">অ্যাক্টর/ডিস্ট্রিবিউটর</th>
                 <th className="border p-2">রেফারেন্স</th>
                 <th className="border p-2">গুরুত্ব</th>
               </tr>
@@ -269,10 +392,25 @@ export default function AuditLogPage() {
                   </td>
                   <td className="border p-2">{log.action}</td>
                   <td className="border p-2 text-center">
-                    {log.entityType || "—"}
+                    {(log.division || "—") + " / " + (log.ward || "—")}
+                    <div className="text-[10px] text-[#64748b]">
+                      {log.sessionCode || ""}
+                    </div>
                   </td>
                   <td className="border p-2 text-center">
-                    {log.entityId || "—"}
+                    {log.consumerCode || "—"}
+                    <div className="text-[10px] text-[#64748b]">
+                      {log.tokenCode || ""}
+                    </div>
+                  </td>
+                  <td className="border p-2 text-center">
+                    {log.actorName || log.actorType || "—"}
+                    <div className="text-[10px] text-[#64748b]">
+                      {log.distributorName || ""}
+                    </div>
+                  </td>
+                  <td className="border p-2 text-center">
+                    {log.entityType || "—"} / {log.entityId || "—"}
                   </td>
                   <td className="border p-2 text-center">
                     <Badge tone={severityTone(log.severity)}>
@@ -284,7 +422,7 @@ export default function AuditLogPage() {
               {logs.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={7}
                     className="border p-4 text-center text-[#6b7280]"
                   >
                     {loading ? "লোড হচ্ছে..." : "কোনো অডিট লগ নেই"}
@@ -358,7 +496,8 @@ export default function AuditLogPage() {
                         >
                           রিপোর্ট জমা দিন
                         </Button>
-                      ) : req.attachments && req.attachments.length > 0 ? (
+                      ) : req.reportText?.trim() ||
+                        (req.attachments && req.attachments.length > 0) ? (
                         <Button
                           variant="secondary"
                           onClick={() => {
@@ -400,13 +539,13 @@ export default function AuditLogPage() {
 
           <div className="space-y-2">
             <div className="text-[12px] text-[#6b7280]">
-              সহায়ক ডকুমেন্ট (সর্বোচ্চ ৫টি, প্রতিটি ১০MB)
+              সহায়ক ডকুমেন্ট (সর্বোচ্চ ১০টি, প্রতিটি ১০MB)
             </div>
             <input
               type="file"
               multiple
               onChange={(e) =>
-                setReportFiles(Array.from(e.target.files || []).slice(0, 5))
+                setReportFiles(Array.from(e.target.files || []).slice(0, 10))
               }
               className="w-full border rounded px-3 py-2 text-[12px] bg-white"
             />

@@ -8,8 +8,6 @@ export default function ComplaintSubmitPage() {
     description: "",
     consumerCode: "",
     tokenCode: "",
-    distributorId: "",
-    sessionId: "",
   });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
@@ -27,8 +25,6 @@ export default function ComplaintSubmitPage() {
         description: form.description,
         consumerCode: form.consumerCode || undefined,
         tokenCode: form.tokenCode || undefined,
-        distributorId: form.distributorId || undefined,
-        sessionId: form.sessionId || undefined,
       });
       setSuccess("আপনার অভিযোগ জমা হয়েছে। দ্রুত সমাধানের চেষ্টা করা হবে।");
       setForm({
@@ -37,8 +33,6 @@ export default function ComplaintSubmitPage() {
         description: "",
         consumerCode: "",
         tokenCode: "",
-        distributorId: "",
-        sessionId: "",
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "অভিযোগ জমা ব্যর্থ হয়েছে");
@@ -108,22 +102,11 @@ export default function ComplaintSubmitPage() {
                 setForm((p) => ({ ...p, tokenCode: e.target.value }))
               }
             />
-            <input
-              className="border border-gray-200 rounded-lg px-3 py-2"
-              placeholder="ডিস্ট্রিবিউটর আইডি (ঐচ্ছিক)"
-              value={form.distributorId}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, distributorId: e.target.value }))
-              }
-            />
-            <input
-              className="border border-gray-200 rounded-lg px-3 py-2"
-              placeholder="সেশন আইডি (ঐচ্ছিক)"
-              value={form.sessionId}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, sessionId: e.target.value }))
-              }
-            />
+          </div>
+
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            টিপস: কনজিউমার কোড এবং/অথবা টোকেন কোড দিলে সিস্টেম স্বয়ংক্রিয়ভাবে
+            Division, Ward, Session, Distributor কনটেক্সট বের করবে।
           </div>
 
           <textarea

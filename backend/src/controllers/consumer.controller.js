@@ -28,7 +28,8 @@ const {
   isSameDivision,
   buildDivisionMatchQuery,
 } = require("../utils/division.utils");
-const { buildOmsQrPayload } = require("../utils/qr-payload.utils");
+const { buildArQrPayload } = require("../utils/qr-payload.utils");
+const { buildContainsRegex } = require("../utils/regex.utils");
 
 async function ensureDistributorProfile(reqUser) {
   if (reqUser.userType === "Admin") return null;
@@ -96,11 +97,6 @@ function canAccessConsumerByScope(distributor, consumer) {
 // Generate unique consumer code
 const generateConsumerCode = async () => nextConsumerCode();
 
-// Generate fallback opaque QR token
-const generateOpaqueQRToken = () => {
-  return crypto.randomBytes(32).toString("hex");
-};
-
 const NID_LENGTHS = new Set([10, 13, 17]);
 
 function isValidNid(value) {
@@ -111,13 +107,35 @@ function getLast4(value) {
   return value.slice(-4);
 }
 
-function withDecryptedNids(consumer) {
+function maskNid(value) {
+  const plain = normalizeNid(String(value || ""));
+  if (!plain) return null;
+  return `******${plain.slice(-4)}`;
+}
+
+function withDecryptedNids(consumer, { includeSensitive = false } = {}) {
   if (!consumer) return consumer;
+  const nid = decryptNid(consumer.nidFull);
+  const fatherNid = decryptNid(consumer.fatherNidFull);
+  const motherNid = decryptNid(consumer.motherNidFull);
+
+  if (includeSensitive) {
+    return {
+      ...consumer,
+      nidFull: nid,
+      fatherNidFull: fatherNid,
+      motherNidFull: motherNid,
+    };
+  }
+
   return {
     ...consumer,
-    nidFull: decryptNid(consumer.nidFull),
-    fatherNidFull: decryptNid(consumer.fatherNidFull),
-    motherNidFull: decryptNid(consumer.motherNidFull),
+    nidFull: undefined,
+    fatherNidFull: undefined,
+    motherNidFull: undefined,
+    nidMasked: maskNid(nid),
+    fatherNidMasked: maskNid(fatherNid),
+    motherNidMasked: maskNid(motherNid),
   };
 }
 
@@ -140,7 +158,7 @@ async function buildQrImageDataUrl(payload) {
 
 function parsePageLimit(query) {
   const page = Math.max(1, Number(query.page) || 1);
-  const limit = Math.min(300, Math.max(1, Number(query.limit) || 20));
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
   return { page, limit };
 }
 
@@ -311,7 +329,7 @@ exports.addConsumer = async (req, res) => {
     const now = new Date();
     const validTo = new Date(now.getTime() + qrDays * 86400000);
 
-    const qrToken = buildOmsQrPayload({
+    const qrToken = buildArQrPayload({
       consumerCode,
       ward: normalizedWard,
       category,
@@ -448,16 +466,8 @@ exports.addConsumer = async (req, res) => {
 // @access  Private (Distributor, Admin)
 exports.getConsumers = async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 10,
-      search,
-      category,
-      status,
-      division,
-      ward,
-      wardNo,
-    } = req.query;
+    const { search, category, status, division, ward, wardNo } = req.query;
+    const { page, limit } = parsePageLimit(req.query);
 
     // Build query
     let query = {};
@@ -498,10 +508,19 @@ exports.getConsumers = async (req, res) => {
 
     // Add search filter
     if (search) {
+      const safeRegex = buildContainsRegex(search);
+      if (!safeRegex) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid search query",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
       const searchOr = [
-        { name: { $regex: search, $options: "i" } },
-        { consumerCode: { $regex: search, $options: "i" } },
-        { nidLast4: { $regex: search, $options: "i" } },
+        { name: safeRegex },
+        { consumerCode: safeRegex },
+        { nidLast4: safeRegex },
       ];
 
       if (query.$or) {
@@ -530,12 +549,16 @@ exports.getConsumers = async (req, res) => {
       .populate("createdByDistributor", "name email")
       .populate("familyId", "flaggedDuplicate")
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
+      .limit(limit)
       .skip((page - 1) * limit)
       .lean();
 
+    const includeSensitive =
+      req.user.userType === "Admin" &&
+      String(req.query.includeSensitive || "") === "true";
+
     const consumersWithFlag = consumers.map((consumer) => ({
-      ...withDecryptedNids(consumer),
+      ...withDecryptedNids(consumer, { includeSensitive }),
       familyFlag: Boolean(consumer.familyId?.flaggedDuplicate),
     }));
 
@@ -545,8 +568,9 @@ exports.getConsumers = async (req, res) => {
         consumers: consumersWithFlag,
         pagination: {
           total,
-          page: parseInt(page),
+          page,
           pages: Math.ceil(total / limit),
+          limit,
         },
       },
     });
@@ -593,9 +617,15 @@ exports.getConsumerById = async (req, res) => {
       }
     }
 
+    const includeSensitive =
+      req.user.userType === "Admin" &&
+      String(req.query.includeSensitive || "") === "true";
+
     res.status(200).json({
       success: true,
-      data: { consumer: withDecryptedNids(consumer.toObject()) },
+      data: {
+        consumer: withDecryptedNids(consumer.toObject(), { includeSensitive }),
+      },
     });
   } catch (error) {
     console.error("Get consumer error:", error);
@@ -830,10 +860,16 @@ exports.updateConsumer = async (req, res) => {
       });
     }
 
+    const includeSensitive =
+      req.user.userType === "Admin" &&
+      String(req.query.includeSensitive || "") === "true";
+
     res.status(200).json({
       success: true,
       message: "Consumer updated successfully",
-      data: { consumer: withDecryptedNids(consumer.toObject()) },
+      data: {
+        consumer: withDecryptedNids(consumer.toObject(), { includeSensitive }),
+      },
     });
   } catch (error) {
     console.error("Update consumer error:", error);
@@ -980,10 +1016,19 @@ exports.listConsumerCards = async (req, res) => {
     }
 
     if (search) {
+      const safeRegex = buildContainsRegex(search);
+      if (!safeRegex) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid search query",
+          code: "VALIDATION_ERROR",
+        });
+      }
+
       const searchOr = [
-        { name: { $regex: search, $options: "i" } },
-        { consumerCode: { $regex: search, $options: "i" } },
-        { nidLast4: { $regex: search, $options: "i" } },
+        { name: safeRegex },
+        { consumerCode: safeRegex },
+        { nidLast4: safeRegex },
       ];
 
       if (query.$or) {
@@ -1034,6 +1079,9 @@ exports.listConsumerCards = async (req, res) => {
         validFrom: qr?.validFrom || null,
         validTo: qr?.validTo || null,
         qrPayload: qr?.payload || consumer.qrToken || "",
+        photoUrl: consumer.photoPath
+          ? `/api/photos/${consumer.consumerCode}`
+          : null,
         createdAt: consumer.createdAt,
       };
     });
@@ -1137,6 +1185,9 @@ exports.getConsumerCard = async (req, res) => {
           validTo: qr?.validTo || null,
           qrPayload,
           qrImageDataUrl,
+          photoUrl: consumer.photoPath
+            ? `/api/photos/${consumer.consumerCode}`
+            : null,
           issuedAt: card.createdAt,
           updatedAt: card.updatedAt,
         },
@@ -1282,13 +1333,12 @@ exports.reissueConsumerCard = async (req, res) => {
     const now = new Date();
     const validTo = new Date(now.getTime() + qrDays * 86400000);
 
-    const newQrToken =
-      buildOmsQrPayload({
-        consumerCode: consumer.consumerCode,
-        ward: consumer.ward || consumer.wardNo,
-        category: consumer.category,
-        expiryDate: validTo,
-      }) || generateOpaqueQRToken();
+    const newQrToken = buildArQrPayload({
+      consumerCode: consumer.consumerCode,
+      ward: consumer.ward || consumer.wardNo,
+      category: consumer.category,
+      expiryDate: validTo,
+    });
 
     const newQr = await QRCode.create({
       payload: newQrToken,

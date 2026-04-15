@@ -7,6 +7,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const SMS_STATUS = {
+  QUEUED: "Queued",
+  SENT: "Sent",
+  FAILED: "Failed",
+};
+
 function normalizeBdPhone(phone) {
   const cleaned = String(phone || "").replace(/\D/g, "");
   if (cleaned.startsWith("880") && cleaned.length === 13) {
@@ -85,14 +91,14 @@ async function sendSms(phone, message, trigger = "GENERIC", consumerId = null) {
           message: text,
           trigger,
           consumerId: consumerId || undefined,
-          status: "sent",
+          status: SMS_STATUS.SENT,
           attemptCount,
           sentAt: new Date(),
           meta: { direct: true, sent },
           retryCount: Math.max(0, attemptCount - 1),
           lastAttemptAt: new Date(),
         });
-        return { success: true, status: "sent", attemptCount };
+        return { success: true, status: SMS_STATUS.SENT, attemptCount };
       } catch (err) {
         lastError = err;
         if (i < 2) await sleep(1000);
@@ -104,7 +110,7 @@ async function sendSms(phone, message, trigger = "GENERIC", consumerId = null) {
       message: text,
       trigger,
       consumerId: consumerId || undefined,
-      status: "failed",
+      status: SMS_STATUS.FAILED,
       attemptCount,
       sentAt: new Date(),
       error: lastError?.message || "SMS send failed",
@@ -115,7 +121,7 @@ async function sendSms(phone, message, trigger = "GENERIC", consumerId = null) {
 
     return {
       success: false,
-      status: "failed",
+      status: SMS_STATUS.FAILED,
       attemptCount,
       message: lastError?.message || "SMS send failed",
     };
@@ -123,7 +129,7 @@ async function sendSms(phone, message, trigger = "GENERIC", consumerId = null) {
     console.error("sendSms fatal error:", fatal?.message || fatal);
     return {
       success: false,
-      status: "failed",
+      status: SMS_STATUS.FAILED,
       attemptCount,
       message: fatal?.message || "SMS service failure",
     };
@@ -199,7 +205,7 @@ async function sendAppealResultSms(phone, approved) {
 
 async function processSmsQueue() {
   const pending = await SmsOutbox.find({
-    status: "Queued",
+    status: { $in: [SMS_STATUS.QUEUED, "queued", "Queued"] },
     retryCount: { $lt: 3 },
   })
     .sort({ createdAt: 1 })
@@ -214,6 +220,7 @@ async function processSmsQueue() {
       await SmsOutbox.findByIdAndUpdate(sms._id, {
         $set: {
           status: "Sent",
+          attemptCount: Number(sms.attemptCount || 0) + 1,
           lastAttemptAt: new Date(),
           error: null,
         },
@@ -222,8 +229,9 @@ async function processSmsQueue() {
       const retryCount = (sms.retryCount || 0) + 1;
       await SmsOutbox.findByIdAndUpdate(sms._id, {
         $set: {
-          status: retryCount >= 3 ? "Failed" : "Queued",
+          status: retryCount >= 3 ? SMS_STATUS.FAILED : SMS_STATUS.QUEUED,
           retryCount,
+          attemptCount: Number(sms.attemptCount || 0) + 1,
           lastAttemptAt: new Date(),
           error: err?.message || "SMS send failed",
         },

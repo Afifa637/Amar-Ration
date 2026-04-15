@@ -29,7 +29,7 @@ const AuditReportRequestSchema = new mongoose.Schema(
     overdueNotified: { type: Boolean, default: false },
     decision: {
       type: String,
-      enum: ["Approved", "Rejected", "Suspended"],
+      enum: ["Approved", "Rejected", "Suspended", "ReRequested"],
     },
     reviewedAt: { type: Date },
     status: {
