@@ -348,9 +348,106 @@ async function sendDistributorPasswordChangeAlertEmail({
   };
 }
 
+function buildFieldUserApprovalHtml({
+  fieldUserName,
+  loginEmail,
+  password,
+  wardNo,
+  ward,
+  division,
+  distributorName,
+}) {
+  return `
+    <div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto; color: #111827;">
+      <h2 style="margin-bottom: 8px; color: #1f77b4;">আমার রেশন — ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত</h2>
+      <p style="margin-top: 0;">প্রিয় ${fieldUserName || "ফিল্ড ডিস্ট্রিবিউটর"},</p>
+      <p>আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন <b>${distributorName || "ডিস্ট্রিবিউটর"}</b> কর্তৃক অনুমোদিত হয়েছে। আপনি এখন নিচের তথ্য দিয়ে লগইন করতে পারবেন:</p>
+
+      <table style="border-collapse: collapse; width: 100%; margin: 12px 0;">
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; width: 160px; background: #f9fafb;"><b>লগইন ইমেইল</b></td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${loginEmail}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>পাসওয়ার্ড</b></td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; font-size: 18px; font-weight: bold; letter-spacing: 2px;">${password}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>বিভাগ</b></td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${division || "—"}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>ওয়ার্ড</b></td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${wardNo || "—"} ${ward ? `(${ward})` : ""}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>অনুমোদনকারী</b></td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${distributorName || "—"}</td>
+        </tr>
+      </table>
+
+      <p style="color:#b91c1c;"><b>গুরুত্বপূর্ণ:</b> প্রথম লগইনের পর আপনার পাসওয়ার্ড পরিবর্তন করুন।</p>
+      <p style="font-size: 12px; color: #6b7280;">এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে।</p>
+    </div>
+  `;
+}
+
+async function sendFieldUserApprovalEmail({
+  to,
+  fromEmail,
+  fieldUserName,
+  loginEmail,
+  password,
+  wardNo,
+  ward,
+  division,
+  distributorName,
+}) {
+  if (!isValidRecipientEmail(to)) {
+    return {
+      sent: false,
+      reason: "INVALID_RECIPIENT_EMAIL",
+    };
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    return {
+      sent: false,
+      reason: "SMTP_NOT_CONFIGURED",
+    };
+  }
+
+  const subject = "আমার রেশন | ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত";
+  const html = buildFieldUserApprovalHtml({
+    fieldUserName,
+    loginEmail,
+    password,
+    wardNo,
+    ward,
+    division,
+    distributorName,
+  });
+
+  const info = await transporter.sendMail({
+    from: fromEmail || process.env.MAIL_FROM,
+    replyTo: fromEmail || undefined,
+    to,
+    subject,
+    html,
+    text: `আমার রেশন ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত\nইমেইল: ${loginEmail}\nপাসওয়ার্ড: ${password}\nওয়ার্ড: ${wardNo || ""} ${ward || ""}\nঅনুমোদনকারী: ${distributorName || ""}`,
+  });
+
+  return {
+    sent: true,
+    messageId: info.messageId,
+  };
+}
+
 module.exports = {
   isEmailConfigured,
   sendDistributorCredentialEmail,
   sendDistributorStatusEmail,
   sendDistributorPasswordChangeAlertEmail,
+  sendFieldUserApprovalEmail,
 };

@@ -12,6 +12,9 @@ const DistributionSession = require("../models/DistributionSession");
 const StockLedger = require("../models/StockLedger");
 const SystemSetting = require("../models/SystemSetting");
 const User = require("../models/User");
+const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const { sendFieldUserApprovalEmail } = require("../services/email.service");
 const { normalizeWardNo, buildWardMatchQuery } = require("../utils/ward.utils");
 const {
   normalizeDivision,
@@ -436,6 +439,209 @@ async function getDistributorSettings(req, res) {
   }
 }
 
+// @desc    Get pending FieldUser applications for this distributor's division+ward
+// @route   GET /api/distributor/field-users/pending
+// @access  Private (Distributor)
+async function getPendingFieldUsers(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(404).json({ success: false, message: "Distributor profile not found" });
+    }
+
+    // Find FieldUsers in same division+ward who are pending
+    const query = {
+      userType: "FieldUser",
+      authorityStatus: "Pending",
+      status: "Inactive",
+    };
+
+    // Match by division
+    const divisionQuery = buildDivisionMatchQuery(distributor.division);
+    if (divisionQuery) {
+      query.division = divisionQuery;
+    }
+
+    // Match by ward
+    const wardInput = distributor.wardNo || distributor.ward;
+    const wardQuery = buildWardMatchQuery(wardInput);
+    if (wardQuery) {
+      Object.assign(query, wardQuery);
+    }
+
+    const pendingUsers = await User.find(query)
+      .select("name email phone wardNo ward division district upazila unionName createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      data: {
+        rows: pendingUsers.map((u) => ({
+          _id: String(u._id),
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          wardNo: u.wardNo,
+          ward: u.ward,
+          division: u.division,
+          district: u.district,
+          upazila: u.upazila,
+          unionName: u.unionName,
+          createdAt: u.createdAt,
+        })),
+        total: pendingUsers.length,
+      },
+    });
+  } catch (err) {
+    console.error("getPendingFieldUsers error:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+}
+
+// @desc    Approve a pending FieldUser — generates 6-digit password and sends email
+// @route   POST /api/distributor/field-users/:id/approve
+// @access  Private (Distributor)
+async function approveFieldUser(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(404).json({ success: false, message: "Distributor profile not found" });
+    }
+
+    const fieldUser = await User.findById(req.params.id);
+    if (!fieldUser) {
+      return res.status(404).json({ success: false, message: "FieldUser not found" });
+    }
+
+    if (fieldUser.userType !== "FieldUser") {
+      return res.status(400).json({ success: false, message: "User is not a FieldUser" });
+    }
+
+    if (fieldUser.authorityStatus !== "Pending") {
+      return res.status(400).json({
+        success: false,
+        message: "এই ফিল্ড ডিস্ট্রিবিউটর ইতিমধ্যে প্রক্রিয়াকৃত হয়েছে",
+      });
+    }
+
+    // Verify the distributor is in the same division+ward
+    const distDiv = normalizeDivision(distributor.division);
+    const fieldDiv = normalizeDivision(fieldUser.division);
+    const distWard = normalizeWardNo(distributor.wardNo || distributor.ward);
+    const fieldWard = normalizeWardNo(fieldUser.wardNo || fieldUser.ward);
+
+    if (distDiv !== fieldDiv || distWard !== fieldWard) {
+      return res.status(403).json({
+        success: false,
+        message: "আপনি শুধুমাত্র আপনার নিজের বিভাগ ও ওয়ার্ডের ফিল্ড ডিস্ট্রিবিউটর অনুমোদন করতে পারবেন",
+      });
+    }
+
+    // Generate random 6-digit password
+    const randomPassword = String(crypto.randomInt(100000, 999999));
+    const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+    // Get the distributor's user record for email
+    const distributorUser = await User.findById(req.user.userId)
+      .select("name email contactEmail")
+      .lean();
+
+    const distributorEmail = distributorUser?.contactEmail || distributorUser?.email;
+
+    // Update FieldUser
+    fieldUser.passwordHash = passwordHash;
+    fieldUser.status = "Active";
+    fieldUser.authorityStatus = "Active";
+    fieldUser.mustChangePassword = true;
+    fieldUser.authorityFrom = new Date();
+    await fieldUser.save();
+
+    // Send approval email from distributor's email to FieldUser
+    const emailResult = await sendFieldUserApprovalEmail({
+      to: fieldUser.email,
+      fromEmail: distributorEmail,
+      fieldUserName: fieldUser.name,
+      loginEmail: fieldUser.email,
+      password: randomPassword,
+      wardNo: fieldUser.wardNo,
+      ward: fieldUser.ward,
+      division: fieldUser.division,
+      distributorName: distributorUser?.name || "ডিস্ট্রিবিউটর",
+    });
+
+    console.log("✅ FieldUser approved:", {
+      fieldUserId: fieldUser._id,
+      approvedBy: req.user.userId,
+      emailSent: emailResult.sent,
+    });
+
+    return res.json({
+      success: true,
+      message: emailResult.sent
+        ? "ফিল্ড ডিস্ট্রিবিউটর অনুমোদিত এবং লগইন তথ্য ইমেইলে পাঠানো হয়েছে"
+        : "ফিল্ড ডিস্ট্রিবিউটর অনুমোদিত, কিন্তু ইমেইল পাঠানো যায়নি",
+      data: {
+        fieldUserId: String(fieldUser._id),
+        emailSent: emailResult.sent,
+        emailReason: emailResult.reason || null,
+      },
+    });
+  } catch (err) {
+    console.error("approveFieldUser error:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+}
+
+// @desc    Reject a pending FieldUser application
+// @route   POST /api/distributor/field-users/:id/reject
+// @access  Private (Distributor)
+async function rejectFieldUser(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(404).json({ success: false, message: "Distributor profile not found" });
+    }
+
+    const fieldUser = await User.findById(req.params.id);
+    if (!fieldUser || fieldUser.userType !== "FieldUser") {
+      return res.status(404).json({ success: false, message: "FieldUser not found" });
+    }
+
+    if (fieldUser.authorityStatus !== "Pending") {
+      return res.status(400).json({
+        success: false,
+        message: "এই ফিল্ড ডিস্ট্রিবিউটর ইতিমধ্যে প্রক্রিয়াকৃত হয়েছে",
+      });
+    }
+
+    // Verify same division+ward
+    const distDiv = normalizeDivision(distributor.division);
+    const fieldDiv = normalizeDivision(fieldUser.division);
+    const distWard = normalizeWardNo(distributor.wardNo || distributor.ward);
+    const fieldWard = normalizeWardNo(fieldUser.wardNo || fieldUser.ward);
+
+    if (distDiv !== fieldDiv || distWard !== fieldWard) {
+      return res.status(403).json({
+        success: false,
+        message: "আপনি শুধুমাত্র আপনার নিজের বিভাগ ও ওয়ার্ডের ফিল্ড ডিস্ট্রিবিউটর প্রত্যাখ্যান করতে পারবেন",
+      });
+    }
+
+    fieldUser.authorityStatus = "Revoked";
+    fieldUser.status = "Inactive";
+    await fieldUser.save();
+
+    return res.json({
+      success: true,
+      message: "ফিল্ড ডিস্ট্রিবিউটর আবেদন প্রত্যাখ্যাত হয়েছে",
+    });
+  } catch (err) {
+    console.error("rejectFieldUser error:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+}
+
 module.exports = {
   getDistributorDashboard,
   getBeneficiaries,
@@ -444,4 +650,7 @@ module.exports = {
   getDistributorReports,
   getDistributorMonitoring,
   getDistributorSettings,
+  getPendingFieldUsers,
+  approveFieldUser,
+  rejectFieldUser,
 };

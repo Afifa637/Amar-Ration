@@ -593,10 +593,18 @@ exports.signup = async (req, res) => {
     console.log("🔍 Normalized:", { normalizedEmail, normalizedPhone });
 
     // Validation
-    if (!userType || !name || !password) {
+    if (!userType || !name) {
       return res.status(400).json({
         success: false,
-        message: "UserType, name, and password are required",
+        message: "UserType and name are required",
+      });
+    }
+
+    // Password is required for all types except FieldUser (which gets password on approval)
+    if (userType !== "FieldUser" && !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required",
       });
     }
 
@@ -616,11 +624,94 @@ exports.signup = async (req, res) => {
       });
     }
 
-    if (userType === "Distributor" || userType === "FieldUser") {
+    // Distributor self-signup is still disabled
+    if (userType === "Distributor") {
       return res.status(403).json({
         success: false,
         message:
-          "Distributor/FieldUser self-signup is disabled. Use admin-assigned email and password.",
+          "Distributor self-signup is disabled. Use admin-assigned email and password.",
+      });
+    }
+
+    // FieldUser signup: no password required, account stays Pending until Distributor approves
+    if (userType === "FieldUser") {
+      if (!normalizedEmail && !normalizedPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "Either email or phone is required",
+        });
+      }
+
+      // Check if user already exists
+      const existingFieldUser = await User.findOne({
+        $or: [
+          normalizedEmail ? { email: normalizedEmail } : null,
+          normalizedPhone ? { phone: normalizedPhone } : null,
+        ].filter(Boolean),
+      });
+
+      if (existingFieldUser) {
+        return res.status(409).json({
+          success: false,
+          message: "এই ইমেইল বা ফোন নম্বরে ইতিমধ্যে একটি অ্যাকাউন্ট আছে",
+        });
+      }
+
+      // Use a random placeholder password (FieldUser will get real password on approval)
+      const placeholderPassword = crypto.randomBytes(32).toString("hex");
+      const placeholderHash = await bcrypt.hash(placeholderPassword, 10);
+
+      const normalizedWard = normalizeWardNo(
+        additionalFields.wardNo || additionalFields.ward,
+      );
+
+      const fieldUserData = {
+        userType: "FieldUser",
+        name,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        passwordHash: placeholderHash,
+        status: "Inactive",
+        authorityStatus: "Pending",
+        wardNo: normalizedWard || additionalFields.wardNo,
+        division: normalizeDivision(additionalFields.division),
+        district: additionalFields.district,
+        upazila: additionalFields.upazila,
+        unionName: additionalFields.unionName,
+        ward: normalizedWard || additionalFields.ward,
+      };
+
+      const fieldUser = await User.create(fieldUserData);
+
+      console.log("✅ FieldUser signup (pending approval):", {
+        id: fieldUser._id,
+        name,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        division: fieldUserData.division,
+        wardNo: fieldUserData.wardNo,
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "আবেদন সফলভাবে জমা হয়েছে। ডিস্ট্রিবিউটরের অনুমোদনের জন্য অপেক্ষা করুন।",
+        data: {
+          user: {
+            _id: fieldUser._id,
+            userType: fieldUser.userType,
+            name: fieldUser.name,
+            email: fieldUser.email,
+            phone: fieldUser.phone,
+            status: fieldUser.status,
+            authorityStatus: fieldUser.authorityStatus,
+            wardNo: fieldUser.wardNo,
+            division: fieldUser.division,
+            district: fieldUser.district,
+            upazila: fieldUser.upazila,
+            unionName: fieldUser.unionName,
+            ward: fieldUser.ward,
+          },
+        },
       });
     }
 

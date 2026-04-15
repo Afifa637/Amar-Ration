@@ -8,6 +8,9 @@ const {
   getDistributorReports,
   getDistributorMonitoring,
   getDistributorSettings,
+  getPendingFieldUsers,
+  approveFieldUser,
+  rejectFieldUser,
 } = require("../controllers/distributor.controller");
 const {
   listMyAuditReportRequests,
@@ -25,5 +28,10 @@ router.get("/monitoring", getDistributorMonitoring);
 router.get("/settings", getDistributorSettings);
 router.get("/audit-requests", listMyAuditReportRequests);
 router.post("/audit-requests/:id/submit", submitAuditReport);
+
+// FieldUser approval routes
+router.get("/field-users/pending", getPendingFieldUsers);
+router.post("/field-users/:id/approve", approveFieldUser);
+router.post("/field-users/:id/reject", rejectFieldUser);
 
 module.exports = router;

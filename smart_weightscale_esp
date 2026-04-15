@@ -1,0 +1,479 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Update.h>
+#include <Preferences.h>
+#include "HX711.h"
+
+WebServer server(80);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Preferences preferences;
+
+const int LOADCELL_DOUT_PIN = 16;
+const int LOADCELL_SCK_PIN = 4;
+HX711 scale;
+
+#define BTN_P1 13
+#define BTN_P2 12
+#define BTN_P3 14
+#define BTN_RESET 27
+#define BTN_TARE 26
+
+// গ্লোবাল ভেরিয়েবল
+float target_p1 = 0.0, target_p2 = 0.0, target_p3 = 0.0; 
+int selected_product = 0; 
+float tolerance_g = 10.0; 
+float cal_factor = 1; 
+String backend_base_url = "http://10.30.4.129:5000/api";
+String backend_api_key = "amar_ration_iot_device_key_2026";
+String last_sync_message = "Never synced";
+int last_sync_http_code = -1;
+const char* DEFAULT_WIFI_SSID = "KUET";
+const char* DEFAULT_WIFI_PASSWORD = "kfh5233f";
+
+// ডাটা সেভ করার জন্য
+String saved_data_html = ""; 
+String current_user = "Unknown";
+String current_id = "N/A";
+
+float extractJsonNumber(const String &body, const String &key, float fallback) {
+  int start = body.indexOf(key);
+  if (start < 0) return fallback;
+  start += key.length();
+  while (start < (int)body.length() && (body[start] == ' ' || body[start] == '"' || body[start] == ':')) start++;
+  int end = start;
+  while (end < (int)body.length()) {
+    char c = body[end];
+    if ((c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') end++;
+    else break;
+  }
+  if (end <= start) return fallback;
+  return body.substring(start, end).toFloat();
+}
+
+bool syncTargetsFromBackend() {
+  if (backend_base_url.length() == 0 || backend_api_key.length() == 0) {
+    last_sync_http_code = -1;
+    last_sync_message = "Missing backend URL or API key";
+    return false;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    last_sync_http_code = -2;
+    last_sync_message = "WiFi not connected (device likely in AP mode)";
+    return false;
+  }
+
+  HTTPClient http;
+  String url = backend_base_url;
+  if (!url.endsWith("/")) url += "/";
+  url += "iot/product-targets";
+
+  http.begin(url);
+  http.addHeader("x-iot-api-key", backend_api_key);
+  int httpCode = http.GET();
+  last_sync_http_code = httpCode;
+  if (httpCode != HTTP_CODE_OK) {
+    String errBody = http.getString();
+    last_sync_message = "HTTP " + String(httpCode) + " from backend: " + errBody;
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  target_p1 = extractJsonNumber(payload, "\"p1Kg\":", target_p1);
+  target_p2 = extractJsonNumber(payload, "\"p2Kg\":", target_p2);
+  target_p3 = extractJsonNumber(payload, "\"p3Kg\":", target_p3);
+  last_sync_message = "Sync OK: P1=" + String(target_p1, 2) + ", P2=" + String(target_p2, 2) + ", P3=" + String(target_p3, 2);
+  return true;
+}
+
+bool connectToWifi(const char* ssid, const char* password) {
+  if (!ssid || String(ssid).length() == 0) return false;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password ? password : "");
+
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 20) {
+    delay(500);
+    Serial.print(".");
+    retries++;
+  }
+
+  return WiFi.status() == WL_CONNECTED;
+}
+
+// ================== গ্লাসমরফিজম ওয়েব UI ==================
+const char index_html[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Ration 3.0</title>
+    <style>
+        body { margin: 0; font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298, #283e51); height: 100vh; display: flex; justify-content: center; align-items: center; color: white; overflow-y: auto; }
+        .glass { background: rgba(255,255,255,0.1); backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 25px; box-shadow: 0 8px 32px rgba(0,0,0,0.37); width: 90%; max-width: 600px; text-align: center; margin-top: 20px;}
+        input, select { width: 90%; padding: 10px; margin: 8px 0; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; color: white; outline: none; }
+        input::placeholder { color: #ddd; }
+        select option { background: #2a5298; color: white; }
+        .row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+        .row input[type="number"] { width: 60%; }
+        button { width: 100%; padding: 12px; margin-top: 10px; background: linear-gradient(135deg, #007bff, #0056b3); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        button:hover { background: linear-gradient(135deg, #0056b3, #004494); }
+        .nav a { color: #00d2ff; cursor: pointer; margin: 0 5px; font-weight: bold; text-decoration: none; font-size: 13px; }
+        .page { display: none; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
+        th, td { border: 1px solid rgba(255,255,255,0.3); padding: 8px; text-align: center; }
+        th { background: rgba(0,123,255,0.5); }
+    </style>
+</head>
+<body>
+
+    <div id="login-page" class="glass page" style="display:block;">
+        <h2>Admin Login</h2>
+        <input type="text" id="user" placeholder="Username">
+        <input type="password" id="pass" placeholder="Password">
+        <button onclick="login()">Login</button>
+    </div>
+
+    <div id="dashboard-page" class="glass page">
+        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
+        <h2>Ration Targets</h2>
+      <p style="font-size:12px; color:#d6e4ff; margin-top:-4px;">Targets are managed from the admin web app and synced to this device.</p>
+        <input type="text" id="cust_name" placeholder="Customer Name">
+        <input type="text" id="cust_id" placeholder="Ration ID">
+      <div class="row"><label>P1 (Rice)</label><input type="number" id="q1" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <div class="row"><label>P2 (Lentil)</label><input type="number" id="q2" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <div class="row"><label>P3 (Onion)</label><input type="number" id="q3" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
+      <button onclick="saveCustomer()">Save Customer</button>
+    </div>
+
+    <div id="table-page" class="glass page">
+      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
+        <h2>Saved Records</h2>
+        <div id="table-content" style="max-height: 300px; overflow-y: auto;">Loading data...</div>
+    </div>
+
+    <div id="settings-page" class="glass page">
+      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
+        <h2>Calibration & Tolerance</h2>
+        <button onclick="fetch('/zero').then(r=>r.text()).then(alert)" style="background:#ff9800;">1. Zero Scale (Empty)</button>
+        <div class="row" style="margin-top:20px;">
+            <input type="number" id="known_wt" placeholder="Weight (Kg)">
+            <button onclick="cal()" style="width:35%; margin:0;">2. Calibrate</button>
+        </div>
+        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); margin:20px 0;">
+        <div class="row">
+            <input type="number" id="tol_g" placeholder="Tolerance (Grams)">
+            <button onclick="setTol()" style="width:35%; margin:0;">Set</button>
+        </div>
+    </div>
+
+    <div id="ota-page" class="glass page">
+        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
+        <h2>Firmware Update</h2>
+        <form method='POST' action='/update' enctype='multipart/form-data'>
+            <input type='file' name='update' accept='.bin' required>
+            <button type='submit' style="background:#28a745;">Upload & Update</button>
+        </form>
+    </div>
+
+    <script>
+        function login() {
+            if(document.getElementById('user').value.trim() === "admin" && document.getElementById('pass').value.trim() === "1234") nav('dashboard');
+            else alert("Wrong Login!");
+        }
+        function nav(p) { 
+          document.querySelectorAll('.page').forEach(e => e.style.display = 'none'); 
+          document.getElementById(p+'-page').style.display = 'block'; 
+          if(p === 'dashboard') {
+            loadCurrentTargets();
+          }
+          if(p === 'table') {
+            document.getElementById('table-content').innerHTML = "Loading data...";
+            fetch('/get_table').then(r=>r.text()).then(data => { document.getElementById('table-content').innerHTML = data; });
+          }
+        }
+        function loadCurrentTargets() {
+          fetch('/current_targets').then(r=>r.json()).then(data => {
+            document.getElementById('q1').value = Math.round((data.p1Kg ?? 0) * 1000);
+            document.getElementById('q2').value = Math.round((data.p2Kg ?? 0) * 1000);
+            document.getElementById('q3').value = Math.round((data.p3Kg ?? 0) * 1000);
+          }).catch(() => {});
+        }
+        function saveCustomer() { 
+            let u = document.getElementById('cust_name').value || "Unknown";
+            let i = document.getElementById('cust_id').value || "N/A";
+          fetch(`/set_targets?u=${encodeURIComponent(u)}&i=${encodeURIComponent(i)}`).then(r=>r.text()).then(alert); 
+        }
+        function cal() { fetch(`/calibrate?w=${document.getElementById('known_wt').value}`).then(r=>r.text()).then(alert); }
+        function setTol() { fetch(`/set_tol?g=${document.getElementById('tol_g').value}`).then(r=>r.text()).then(alert); }
+    </script>
+</body>
+</html>
+)=====";
+
+// ================== সার্ভার হ্যান্ডলার ==================
+void handleRoot() { server.send(200, "text/html", index_html); }
+
+void handleTargets() {
+  if(server.hasArg("u")) current_user = server.arg("u");
+  if(server.hasArg("i")) current_id = server.arg("i");
+  server.send(200, "text/plain", "Customer details updated. Product targets are synced from backend.");
+}
+
+void handleCurrentTargets() {
+  String payload = "{";
+  payload += "\"p1Kg\":" + String(target_p1, 2) + ",";
+  payload += "\"p2Kg\":" + String(target_p2, 2) + ",";
+  payload += "\"p3Kg\":" + String(target_p3, 2) + "}";
+  server.send(200, "application/json", payload);
+}
+
+void handleGetTable() {
+  if(saved_data_html == "") {
+      server.send(200, "text/html", "<p style='color:#ffc107;'>No records found yet.</p>");
+  } else {
+      String table = "<table><tr><th>ID</th><th>Name</th><th>Item</th><th>Wt(g)</th><th>Status</th></tr>";
+      table += saved_data_html;
+      table += "</table>";
+      server.send(200, "text/html", table);
+  }
+}
+
+void handleZero() { scale.tare(); server.send(200, "text/plain", "Scale Zeroed Successfully!"); }
+
+void handleCalibrate() {
+  if(server.hasArg("w")) {
+    float known_weight = server.arg("w").toFloat();
+    if(known_weight > 0) {
+      long reading = scale.get_value(10); 
+      cal_factor = reading / known_weight; 
+      scale.set_scale(cal_factor);
+      server.send(200, "text/plain", "Calibration Successful!");
+    }
+  }
+}
+
+void handleTolerance() {
+  if(server.hasArg("g")) {
+    tolerance_g = max(0.0f, server.arg("g").toFloat());
+    server.send(200, "text/plain", "Tolerance Updated!");
+  }
+}
+
+void handleScanWifi() {
+  // In AP fallback, keep hotspot alive while enabling station scan.
+  WiFi.mode(WIFI_AP_STA);
+  int n = WiFi.scanNetworks(false, true);
+  String options = "<option value=''>Select Network</option>";
+  if (n <= 0) {
+    options += "<option value=''>No 2.4GHz WiFi found</option>";
+  } else {
+    for (int i = 0; i < n; ++i) {
+      String ssid = WiFi.SSID(i);
+      if (ssid.length() == 0) ssid = "(hidden)";
+      options += "<option value='" + ssid + "'>" + ssid + "</option>";
+    }
+  }
+  WiFi.scanDelete();
+  server.send(200, "text/html", options);
+}
+
+void handleSaveWifi() {
+  if(server.hasArg("s") && server.hasArg("p")) {
+    preferences.begin("wifi_creds", false);
+    preferences.putString("ssid", server.arg("s"));
+    preferences.putString("pass", server.arg("p"));
+    preferences.end();
+    server.send(200, "text/plain", "WiFi Saved! ESP is Restarting...");
+    delay(1000); ESP.restart();
+  }
+}
+
+void handleSaveBackend() {
+  if(server.hasArg("url") && server.hasArg("key")) {
+    backend_base_url = server.arg("url");
+    backend_api_key = server.arg("key");
+
+    preferences.begin("backend_cfg", false);
+    preferences.putString("url", backend_base_url);
+    preferences.putString("key", backend_api_key);
+    preferences.end();
+
+    server.send(200, "text/plain", "Backend config saved!");
+  } else {
+    server.send(400, "text/plain", "Backend URL and key are required!");
+  }
+}
+
+void handleSyncTargets() {
+  if (syncTargetsFromBackend()) {
+    server.send(200, "text/plain", last_sync_message);
+  } else {
+    String msg = "Target sync failed. " + last_sync_message;
+    msg += " | Device IP: ";
+    msg += (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "AP mode";
+    server.send(500, "text/plain", msg);
+  }
+}
+
+// ================== SETUP ==================
+void setup() {
+  Serial.begin(115200);
+  lcd.init(); lcd.backlight();
+  lcd.setCursor(0, 0); lcd.print("Smart Ration");
+
+  pinMode(BTN_P1, INPUT_PULLUP); pinMode(BTN_P2, INPUT_PULLUP); pinMode(BTN_P3, INPUT_PULLUP);
+  pinMode(BTN_RESET, INPUT_PULLUP); pinMode(BTN_TARE, INPUT_PULLUP);
+
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.set_scale(cal_factor);
+  scale.tare(); 
+
+  // WiFi Connection Logic (AP Mode Fallback)
+  preferences.begin("backend_cfg", true);
+  String stored_backend_url = preferences.getString("url", backend_base_url);
+  String stored_backend_key = preferences.getString("key", backend_api_key);
+  preferences.end();
+
+  stored_backend_url.trim();
+  stored_backend_key.trim();
+  if (stored_backend_url.length() > 0) {
+    backend_base_url = stored_backend_url;
+  }
+  if (stored_backend_key.length() > 0) {
+    backend_api_key = stored_backend_key;
+  }
+
+  lcd.setCursor(0, 1); lcd.print("Connecting...   ");
+
+      bool wifiConnected = false;
+      if (String(DEFAULT_WIFI_SSID).length() > 0) {
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Try Default WiFi");
+      wifiConnected = connectToWifi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASSWORD);
+    }
+
+  lcd.clear();
+    if (wifiConnected && WiFi.status() == WL_CONNECTED) {
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAP("Smart Ration", "12345678");
+      lcd.setCursor(0, 0); lcd.print("WiFi Connected!");
+      lcd.setCursor(0, 1); lcd.print("AP:192.168.4.1");
+  } else {
+      // যদি কানেক্ট না হয়, তাহলে নিজস্ব হটস্পট (AP Mode) চালু করবে
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAP("Smart Ration", "12345678");
+      lcd.setCursor(0, 0); lcd.print("AP Mode Active!");
+      lcd.setCursor(0, 1); lcd.print("IP:192.168.4.1 ");
+  }
+  
+  // রাউটিং
+  server.on("/", handleRoot);
+  server.on("/set_targets", handleTargets);
+  server.on("/current_targets", handleCurrentTargets);
+  server.on("/get_table", handleGetTable);
+  server.on("/zero", handleZero);
+  server.on("/calibrate", handleCalibrate);
+  server.on("/set_tol", handleTolerance);
+  server.on("/sync_targets", handleSyncTargets);
+
+  // OTA আপডেট হ্যান্ডলার
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "Update Failed" : "Update Success! Restarting...");
+    delay(1000); ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) { if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial); } 
+    else if (upload.status == UPLOAD_FILE_WRITE) { if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) Update.printError(Serial); } 
+    else if (upload.status == UPLOAD_FILE_END) { Update.end(true); }
+  });
+
+  server.begin();
+  delay(3000); lcd.clear();
+
+  if (WiFi.status() == WL_CONNECTED && backend_base_url.length() > 0 && backend_api_key.length() > 0) {
+    syncTargetsFromBackend();
+  }
+}
+
+// ================== MAIN LOOP ==================
+void loop() {
+  server.handleClient(); 
+  float currentWeightKg = scale.get_units(5);
+  float currentWeightG = currentWeightKg * 1000.0;
+
+  if (digitalRead(BTN_TARE) == LOW) {
+    if (currentWeightG > 50.0) { 
+      lcd.clear(); lcd.print("Tare Failed!"); lcd.setCursor(0, 1); lcd.print("Weight > 50g"); delay(2000);
+    } else {
+      scale.tare(); lcd.clear(); lcd.print("Tared Success!"); delay(1000);
+    }
+  }
+
+  if (digitalRead(BTN_RESET) == LOW) {
+    selected_product = 0; lcd.clear(); lcd.print("System Reset"); delay(1000); lcd.clear();
+  }
+
+  // --- P1, P2, P3 Buttons (Save Logic) ---
+  int btn_pressed = 0;
+  if (digitalRead(BTN_P1) == LOW) btn_pressed = 1;
+  else if (digitalRead(BTN_P2) == LOW) btn_pressed = 2;
+  else if (digitalRead(BTN_P3) == LOW) btn_pressed = 3;
+
+  if (btn_pressed > 0) {
+    if (selected_product == btn_pressed) { 
+      float targetKg = (btn_pressed==1) ? target_p1 : (btn_pressed==2) ? target_p2 : target_p3;
+      float targetG = targetKg * 1000.0;
+      float diffG = currentWeightG - targetG;
+        
+      if (abs(diffG) <= tolerance_g) { 
+            lcd.clear(); lcd.print("Data Saved!"); 
+            
+            // ডাটাবেসে (টেবিলে) সেভ হচ্ছে
+            String p_name = (btn_pressed == 1) ? "Rice" : (btn_pressed == 2) ? "Lentil" : "Onion";
+        saved_data_html += "<tr><td>" + current_id + "</td><td>" + current_user + "</td><td>" + p_name + "</td><td>" + String(currentWeightG, 1) + "</td><td style='color:#00ff00;'>Success</td></tr>";
+
+            delay(1500); selected_product = 0; 
+        } else {
+            lcd.clear(); lcd.print("Fix Weight First"); delay(1500);
+        }
+    } else {
+        selected_product = btn_pressed; 
+        lcd.clear(); lcd.print("Selected: P"); lcd.print(btn_pressed); delay(1000);
+    }
+    lcd.clear();
+  }
+
+  // --- DISPLAY LOGIC ---
+  if(digitalRead(BTN_TARE) == HIGH && digitalRead(BTN_RESET) == HIGH && btn_pressed == 0) {
+      lcd.setCursor(0, 0);
+      float targetKg = 0.0;
+      float targetG = 0.0;
+
+      if (selected_product == 1) { targetKg = target_p1; targetG = targetKg * 1000.0; lcd.print("P1:"); lcd.print(targetG, 0); lcd.print("g   "); }
+      else if (selected_product == 2) { targetKg = target_p2; targetG = targetKg * 1000.0; lcd.print("P2:"); lcd.print(targetG, 0); lcd.print("g   "); }
+      else if (selected_product == 3) { targetKg = target_p3; targetG = targetKg * 1000.0; lcd.print("P3:"); lcd.print(targetG, 0); lcd.print("g   "); }
+      else { lcd.print("Select Product  "); }
+      
+      lcd.setCursor(0, 1); lcd.print(currentWeightG, 0); lcd.print("g      ");
+
+      if (selected_product > 0) {
+        float diffG = currentWeightG - targetG;
+          lcd.setCursor(10, 1);
+        if (diffG > tolerance_g) { lcd.print("OVER "); } 
+        else if (diffG < -tolerance_g) { lcd.print("UNDER"); } 
+          else { lcd.print("OK!  "); }
+      } else {
+          lcd.setCursor(10, 1); lcd.print("      "); 
+      }
+      delay(200); 
+  }
+}
