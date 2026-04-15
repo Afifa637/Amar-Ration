@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiService {
   // For Android emulator: 10.0.2.2
   // For real Android devices/iOS: use computer's IP address
-  static const String _baseUrl = 'http://10.0.2.2:5000/api';
+  static const String _baseUrl = 'http://10.30.4.129:5000/api';
 
   static Future<Map<String, dynamic>> login({
     required String identifier,
@@ -52,7 +52,6 @@ class ApiService {
     required String name,
     required String email,
     required String phone,
-    required String password,
     required String userType,
     required String wardNo,
     required String division,
@@ -67,7 +66,6 @@ class ApiService {
       'name': name,
       'email': email,
       'phone': phone,
-      'password': password,
       'wardNo': wardNo,
       'division': division,
       'district': district,

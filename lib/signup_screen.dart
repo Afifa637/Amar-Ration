@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api_service.dart';
 import 'login_screen.dart';
-import 'home_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({Key? key}) : super(key: key);
@@ -15,8 +13,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   late TextEditingController _phoneController;
-  late TextEditingController _passwordController;
-  late TextEditingController _confirmPasswordController;
   late TextEditingController _wardNoController;
   late TextEditingController _divisionController;
   late TextEditingController _districtController;
@@ -24,8 +20,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
   late TextEditingController _unionNameController;
   late TextEditingController _wardController;
   bool _isLoading = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
   String? _errorMessage;
 
   @override
@@ -34,8 +28,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _nameController = TextEditingController();
     _emailController = TextEditingController();
     _phoneController = TextEditingController();
-    _passwordController = TextEditingController();
-    _confirmPasswordController = TextEditingController();
     _wardNoController = TextEditingController();
     _divisionController = TextEditingController();
     _districtController = TextEditingController();
@@ -49,8 +41,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
     _wardNoController.dispose();
     _divisionController.dispose();
     _districtController.dispose();
@@ -63,11 +53,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   bool _validateInputs() {
     if (_nameController.text.isEmpty ||
         _emailController.text.isEmpty ||
-        _phoneController.text.isEmpty ||
-        _passwordController.text.isEmpty ||
-        _confirmPasswordController.text.isEmpty) {
+        _phoneController.text.isEmpty) {
       setState(() {
-        _errorMessage = 'সকল ফিল্ড পূরণ করুন';
+        _errorMessage = 'নাম, ইমেইল এবং ফোন নম্বর আবশ্যক';
       });
       return false;
     }
@@ -105,20 +93,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
       return false;
     }
 
-    if (_passwordController.text.length < 8) {
-      setState(() {
-        _errorMessage = 'পাসওয়ার্ড কমপক্ষে ৮ অক্ষর হতে হবে';
-      });
-      return false;
-    }
-
-    if (_passwordController.text != _confirmPasswordController.text) {
-      setState(() {
-        _errorMessage = 'পাসওয়ার্ড ম্যাচ করে না';
-      });
-      return false;
-    }
-
     return true;
   }
 
@@ -140,7 +114,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
         name: _nameController.text.trim(),
         email: _emailController.text.trim().toLowerCase(),
         phone: _phoneController.text.trim(),
-        password: _passwordController.text,
         userType: 'FieldUser',
         wardNo: _wardNoController.text.trim(),
         division: _divisionController.text.trim(),
@@ -150,43 +123,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ward: _wardController.text.trim(),
       );
 
-      final token = result['data']?['token'] as String?;
-      final user = result['data']?['user'] as Map<String, dynamic>?;
-
-      if (token == null || user == null) {
-        throw Exception('Invalid server response');
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('amar_ration_auth', token);
-      await prefs.setString('user_name', user['name'] ?? _nameController.text);
-      await prefs.setString('user_email', user['email'] ?? _emailController.text);
-      await prefs.setString('user_phone', user['phone'] ?? _phoneController.text);
-      await prefs.setString('login_time', DateTime.now().toString());
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে!'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-
-        Future.delayed(const Duration(seconds: 2), () {
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
-            );
-          }
-        });
+        _showSuccessDialog();
       }
     } catch (e) {
       setState(() {
         if (e is ApiException) {
           _errorMessage = e.message;
         } else {
-          _errorMessage = 'সাইন আপ ব্যর্থ। পুনরায় চেষ্টা করুন।';
+          _errorMessage = 'আবেদন জমা ব্যর্থ। পুনরায় চেষ্টা করুন।';
         }
       });
     } finally {
@@ -196,18 +141,67 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
-  String _getPasswordStrength(String password) {
-    if (password.isEmpty) return '';
-    if (password.length < 8) return 'দুর্বল';
-    if (password.length < 12) return 'মাঝারি';
-    return 'শক্তিশালী';
-  }
-
-  Color _getPasswordStrengthColor(String password) {
-    if (password.isEmpty) return Colors.transparent;
-    if (password.length < 8) return const Color(0xFFdc3545);
-    if (password.length < 12) return const Color(0xFFFFC107);
-    return const Color(0xFF28a745);
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle, color: Color(0xFF28a745), size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              'আবেদন সফলভাবে জমা হয়েছে!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Anek Bangla',
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'আপনার আবেদন ডিস্ট্রিবিউটরের কাছে পাঠানো হয়েছে। অনুমোদনের পর আপনার ইমেইলে ইউজারনেম ও পাসওয়ার্ড পাঠানো হবে।',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Anek Bangla',
+                fontSize: 13,
+                color: Color(0xFF666666),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1f77b4),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+                child: const Text(
+                  'ঠিক আছে',
+                  style: TextStyle(
+                    fontFamily: 'Anek Bangla',
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -528,132 +522,30 @@ class _SignUpScreenState extends State<SignUpScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Password Field
-            const Text(
-              'পাসওয়ার্ড *',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF333333),
-                fontFamily: 'Anek Bangla',
+            // Info box about approval process
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                border: Border.all(color: const Color(0xFFFFC107)),
+                borderRadius: BorderRadius.circular(6),
               ),
-            ),
-            const Text(
-              'কমপক্ষে ৮ অক্ষর',
-              style: TextStyle(
-                fontSize: 11,
-                color: Color(0xFF999999),
-                fontFamily: 'Anek Bangla',
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            const SizedBox(height: 4),
-            TextField(
-              controller: _passwordController,
-              enabled: !_isLoading,
-              obscureText: _obscurePassword,
-              onChanged: (value) {
-                setState(() {});
-              },
-              decoration: InputDecoration(
-                hintText: 'শক্তিশালী পাসওয়ার্ড',
-                hintStyle: const TextStyle(
-                  fontFamily: 'Anek Bangla',
-                  color: Color(0xFFAAAAAA),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
-                ),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                    color: const Color(0xFF1f77b4),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscurePassword = !_obscurePassword;
-                    });
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Password Strength Indicator
-            if (_passwordController.text.isNotEmpty)
-              Column(
+              child: const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: (_passwordController.text.length / 16).clamp(0, 1),
-                      minHeight: 4,
-                      backgroundColor: const Color(0xFFEFEFEF),
-                      valueColor: AlwaysStoppedAnimation(
-                        _getPasswordStrengthColor(_passwordController.text),
+                  Icon(Icons.info_outline, color: Color(0xFFFFC107), size: 20),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'আবেদন জমা দেওয়ার পর আপনার বিভাগের ডিস্ট্রিবিউটর অনুমোদন করলে আপনার ইমেইলে ইউজারনেম ও পাসওয়ার্ড পাঠানো হবে।',
+                      style: TextStyle(
+                        fontFamily: 'Anek Bangla',
+                        fontSize: 12,
+                        color: Color(0xFF333333),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _getPasswordStrength(_passwordController.text),
-                    style: TextStyle(
-                      fontFamily: 'Anek Bangla',
-                      fontSize: 11,
-                      color: _getPasswordStrengthColor(_passwordController.text),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
                 ],
-              ),
-            const SizedBox(height: 16),
-
-            // Confirm Password Field
-            const Text(
-              'পাসওয়ার্ড নিশ্চিত করুন *',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF333333),
-                fontFamily: 'Anek Bangla',
-              ),
-            ),
-            const SizedBox(height: 4),
-            TextField(
-              controller: _confirmPasswordController,
-              enabled: !_isLoading,
-              obscureText: _obscureConfirmPassword,
-              decoration: InputDecoration(
-                hintText: 'পাসওয়ার্ড পুনরায় লিখুন',
-                hintStyle: const TextStyle(
-                  fontFamily: 'Anek Bangla',
-                  color: Color(0xFFAAAAAA),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
-                ),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
-                    color: const Color(0xFF1f77b4),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscureConfirmPassword = !_obscureConfirmPassword;
-                    });
-                  },
-                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -683,7 +575,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
                 )
                     : const Text(
-                  'সাইন আপ করুন',
+                  'আবেদন জমা দিন',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
