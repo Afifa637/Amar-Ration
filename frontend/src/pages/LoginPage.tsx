@@ -3,28 +3,30 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AuthContext, type UserRole } from "../context/AuthContext";
 
 const roleNames: Record<UserRole, string> = {
-  "central-admin": "কেন্দ্রীয় অ্যাডমিন",
+  "central-admin": "ডিস্ট্রিবিউটর / অ্যাডমিন",
   distributor: "ডিস্ট্রিবিউটর",
-  "field-distributor": "ফিল্ড ডিস্ট্রিবিউটর",
 };
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { role } = useParams<{ role: UserRole }>();
+  const { role } = useParams<{ role?: string }>();
   const auth = useContext(AuthContext);
 
-  const isAdminLogin = role === "central-admin";
+  const normalizedRole: UserRole =
+    role === "central-admin" ? "central-admin" : "distributor";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totpToken, setTotpToken] = useState("");
   const [requires2FA, setRequires2FA] = useState(false);
+  const [twoStepNotice, setTwoStepNotice] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setTwoStepNotice("");
     setIsLoading(true);
 
     if (!email || !password) {
@@ -39,20 +41,23 @@ export default function LoginPage() {
       return;
     }
 
-    if (!role || !auth) {
-      setError("Invalid role or auth context");
+    if (!auth) {
+      setError("Auth context unavailable");
       setIsLoading(false);
       return;
     }
 
     try {
-      const result = await auth.login(email, password, role as UserRole, {
+      const result = await auth.login(email, password, normalizedRole, {
         totpToken: requires2FA ? totpToken.trim() : undefined,
       });
 
       if (result.requires2FA) {
         setRequires2FA(true);
-        setError(result.message || "২FA কোড প্রয়োজন");
+        setTwoStepNotice(
+          "পাসওয়ার্ড যাচাই হয়েছে। এখন Authenticator App-এর OTP দিন।",
+        );
+        setTotpToken("");
         return;
       }
 
@@ -63,7 +68,7 @@ export default function LoginPage() {
           navigate("/force-password-change");
           return;
         }
-        if (role === "central-admin") {
+        if (result.loggedInRole === "central-admin") {
           navigate("/admin/dashboard");
         } else {
           navigate("/dashboard");
@@ -106,13 +111,19 @@ export default function LoginPage() {
         </div>
 
         <h1 className="text-xl font-bold mb-1 text-center text-white">
-          {roleNames[role as UserRole] || "লগইন"}
+          {roleNames[normalizedRole] || "লগইন"}
         </h1>
         <p className="text-sm text-white/80 text-center mb-4">
-          {isAdminLogin
-            ? "অ্যাডমিন প্যানেলে প্রবেশ করতে আপনার বরাদ্দকৃত ক্রেডেনশিয়াল ব্যবহার করুন"
-            : "আপনার অ্যাকাউন্টে লগইন করুন"}
+          {requires2FA
+            ? "Step 2 of 2: OTP ভেরিফাই করুন"
+            : "Step 1 of 2: ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন"}
         </p>
+
+        {twoStepNotice && (
+          <div className="mb-3 p-2 bg-blue-100 border border-blue-300 text-blue-800 rounded-lg text-sm">
+            {twoStepNotice}
+          </div>
+        )}
 
         {error && (
           <div className="mb-3 p-2 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
@@ -121,31 +132,35 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-3">
-          <div>
-            <label className="text-sm font-medium text-white block mb-1">
-              ইমেইল
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
-              placeholder="example@email.com"
-            />
-          </div>
+          {!requires2FA && (
+            <>
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  ইমেইল
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
+                  placeholder="example@email.com"
+                />
+              </div>
 
-          <div>
-            <label className="text-sm font-medium text-white block mb-1">
-              পাসওয়ার্ড
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
-              placeholder="পাসওয়ার্ড লিখুন"
-            />
-          </div>
+              <div>
+                <label className="text-sm font-medium text-white block mb-1">
+                  পাসওয়ার্ড
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
+                  placeholder="পাসওয়ার্ড লিখুন"
+                />
+              </div>
+            </>
+          )}
 
           {requires2FA && (
             <div>
@@ -163,18 +178,31 @@ export default function LoginPage() {
                 inputMode="numeric"
                 maxLength={12}
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setRequires2FA(false);
+                  setTotpToken("");
+                  setTwoStepNotice("");
+                }}
+                className="mt-2 text-xs text-white/80 hover:text-white underline"
+              >
+                ← ফিরে যান
+              </button>
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center">
-              <input type="checkbox" className="mr-2" />
-              <span className="text-white/90">মনে রাখো</span>
-            </label>
-            <a href="#" className="text-white hover:underline">
-              পাসওয়ার্ড ভুলে গেছেন?
-            </a>
-          </div>
+          {!requires2FA && (
+            <div className="flex items-center justify-between text-sm">
+              <label className="flex items-center">
+                <input type="checkbox" className="mr-2" />
+                <span className="text-white/90">মনে রাখো</span>
+              </label>
+              <a href="#" className="text-white hover:underline">
+                পাসওয়ার্ড ভুলে গেছেন?
+              </a>
+            </div>
+          )}
 
           <button
             type="submit"
@@ -189,11 +217,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {role !== "central-admin" && (
-          <div className="mt-4 text-center text-sm text-white/90 border border-white/20 rounded-lg p-2 bg-white/10">
-            ডিস্ট্রিবিউটর/ফিল্ড ইউজার অ্যাকাউন্ট শুধুমাত্র অ্যাডমিন ইস্যু করে।
-          </div>
-        )}
+        <div className="mt-4 text-center text-sm text-white/90 border border-white/20 rounded-lg p-2 bg-white/10">
+          ডিস্ট্রিবিউটর ও অ্যাডমিন লগইন একই পোর্টাল থেকে হবে।
+        </div>
 
         <div className="mt-3 text-center">
           <button

@@ -129,9 +129,11 @@ export default function MonitoringPage() {
             <thead className="bg-[#f8fafc]">
               <tr>
                 <th className="border p-2">টাইপ</th>
-                <th className="border p-2">আইডি</th>
+                <th className="border p-2">টার্গেট</th>
+                <th className="border p-2">এলাকা</th>
                 <th className="border p-2">কারণ</th>
                 <th className="border p-2">ব্লক টাইপ</th>
+                <th className="border p-2">Created By</th>
                 <th className="border p-2">স্ট্যাটাস</th>
                 <th className="border p-2">অ্যাকশন</th>
               </tr>
@@ -140,9 +142,28 @@ export default function MonitoringPage() {
               {blacklist.map((b) => (
                 <tr key={b._id}>
                   <td className="border p-2 text-center">{b.targetType}</td>
-                  <td className="border p-2 text-center">{b.targetRefId}</td>
-                  <td className="border p-2">{b.reason}</td>
+                  <td className="border p-2 text-center">
+                    {b.targetCode || b.targetRefId}
+                    <div className="text-[10px] text-[#64748b]">
+                      {b.targetName || "—"}
+                    </div>
+                  </td>
+                  <td className="border p-2 text-center">
+                    {b.division || "—"}
+                    <div className="text-[10px] text-[#64748b]">
+                      Ward {b.ward || "—"}
+                    </div>
+                  </td>
+                  <td className="border p-2">{b.reasonText || b.reason}</td>
                   <td className="border p-2 text-center">{b.blockType}</td>
+                  <td className="border p-2 text-center">
+                    {b.createdByName || "—"}
+                    <div className="text-[10px] text-[#64748b]">
+                      {b.createdAt
+                        ? new Date(b.createdAt).toLocaleString("bn-BD")
+                        : ""}
+                    </div>
+                  </td>
                   <td className="border p-2 text-center">
                     {b.active ? (
                       <Badge tone="red">ব্লক</Badge>
@@ -160,7 +181,7 @@ export default function MonitoringPage() {
               {blacklist.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={8}
                     className="border p-3 text-center text-[#6b7280]"
                   >
                     {loading ? "লোড হচ্ছে..." : "কোনো ব্ল্যাকলিস্ট ডেটা নেই"}
@@ -218,7 +239,10 @@ export default function MonitoringPage() {
               <thead className="bg-[#f8fafc]">
                 <tr>
                   <th className="border p-2">কিউ আইডি</th>
-                  <th className="border p-2">ডেটা</th>
+                  <th className="border p-2">অ্যাকশন/সেশন</th>
+                  <th className="border p-2">কনজিউমার/এলাকা</th>
+                  <th className="border p-2">টোকেন/আইটেম</th>
+                  <th className="border p-2">পরিমাণ</th>
                   <th className="border p-2">সময়</th>
                   <th className="border p-2">স্ট্যাটাস</th>
                   <th className="border p-2">কারণ</th>
@@ -233,8 +257,44 @@ export default function MonitoringPage() {
                       <td className="border p-2 text-center">
                         {o._id.slice(-6)}
                       </td>
-                      <td className="border p-2">
-                        {JSON.stringify(o.payload)}
+                      <td className="border p-2 text-center">
+                        {o.actionType || o.payloadSummary?.actionType || "—"}
+                        <div className="text-[10px] text-[#64748b]">
+                          {o.sessionCode ||
+                            o.payloadSummary?.sessionCode ||
+                            "—"}
+                        </div>
+                      </td>
+                      <td className="border p-2 text-center">
+                        {o.consumerCode ||
+                          o.payloadSummary?.consumerCode ||
+                          "—"}
+                        <div className="text-[10px] text-[#64748b]">
+                          {(o.consumerName ||
+                            o.payloadSummary?.consumerName ||
+                            "—") +
+                            " | " +
+                            (o.division || "—") +
+                            "/" +
+                            (o.ward || "—")}
+                        </div>
+                      </td>
+                      <td className="border p-2 text-center">
+                        {o.tokenCode || o.payloadSummary?.tokenCode || "—"}
+                        <div className="text-[10px] text-[#64748b]">
+                          {o.item || o.payloadSummary?.item || "—"}
+                        </div>
+                      </td>
+                      <td className="border p-2 text-center">
+                        {Number(
+                          o.expectedQtyKg ||
+                            o.payloadSummary?.expectedQtyKg ||
+                            0,
+                        ).toFixed(2)}{" "}
+                        /{" "}
+                        {Number(
+                          o.actualQtyKg || o.payloadSummary?.actualQtyKg || 0,
+                        ).toFixed(2)}
                       </td>
                       <td className="border p-2 text-center">
                         {new Date(o.createdAt).toLocaleString()}
@@ -252,6 +312,11 @@ export default function MonitoringPage() {
                       </td>
                       <td className="border p-2 text-center">
                         {o.errorMessage || "—"}
+                        <div className="text-[10px] text-[#64748b]">
+                          {o.syncedAt
+                            ? `Synced: ${new Date(o.syncedAt).toLocaleString("bn-BD")}`
+                            : ""}
+                        </div>
                       </td>
                       <td className="border p-2 text-center">
                         <div className="flex flex-wrap gap-2 justify-center">

@@ -5,6 +5,7 @@ import Button from "../../components/ui/Button";
 import {
   createBlacklistEntry,
   deactivateBlacklistEntry,
+  downloadAdminAuditRequestFile,
   getAdminAuditDetail,
   getAdminAuditRequests,
   getAuditLogs,
@@ -47,6 +48,7 @@ export default function AdminAuditPage() {
   const [note, setNote] = useState("");
   const [requesting, setRequesting] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<AuditReportRequest | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
   const [openBlacklistModal, setOpenBlacklistModal] = useState(false);
   const [blacklistForm, setBlacklistForm] = useState({
     targetType: "Consumer" as "Consumer" | "Distributor",
@@ -136,18 +138,42 @@ export default function AdminAuditPage() {
   };
 
   const onReviewRequest = async (
-    decision: "Approved" | "Rejected" | "Suspended",
+    decision: "Approved" | "Rejected" | "Suspended" | "ReRequested",
   ) => {
     if (!reviewing) return;
     try {
       setLoading(true);
-      await reviewAuditReportRequest(reviewing._id, decision);
+      await reviewAuditReportRequest(reviewing._id, {
+        decision,
+        note: reviewNote.trim() || undefined,
+      });
       setReviewing(null);
+      setReviewNote("");
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "রিভিউ ব্যর্থ");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadAttachment = async (
+    requestId: string,
+    fileId: string,
+    fileName: string,
+  ) => {
+    try {
+      const blob = await downloadAdminAuditRequestFile(requestId, fileId);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName || `audit-${fileId}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ফাইল ডাউনলোড ব্যর্থ");
     }
   };
 
@@ -252,13 +278,19 @@ export default function AdminAuditPage() {
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-[#f3f5f8] text-left">
-                {["সময়", "ইভেন্ট", "অ্যাক্টর", "অবস্থা", "অ্যাকশন"].map(
-                  (head) => (
-                    <th key={head} className="p-2 border border-[#d7dde6]">
-                      {head}
-                    </th>
-                  ),
-                )}
+                {[
+                  "সময়",
+                  "ইভেন্ট",
+                  "অ্যাক্টর",
+                  "এলাকা/সেশন",
+                  "কনজিউমার/টোকেন",
+                  "অবস্থা",
+                  "অ্যাকশন",
+                ].map((head) => (
+                  <th key={head} className="p-2 border border-[#d7dde6]">
+                    {head}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -270,6 +302,21 @@ export default function AdminAuditPage() {
                   <td className="p-2 border border-[#d7dde6]">{log.action}</td>
                   <td className="p-2 border border-[#d7dde6]">
                     {log.actorType}
+                    <div className="text-[11px] text-[#64748b]">
+                      {log.actorName || ""}
+                    </div>
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {(log.division || "—") + " / " + (log.ward || "—")}
+                    <div className="text-[11px] text-[#64748b]">
+                      {log.sessionCode || ""}
+                    </div>
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {log.consumerCode || "—"}
+                    <div className="text-[11px] text-[#64748b]">
+                      {log.tokenCode || log.entityId || ""}
+                    </div>
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {severityLabel(log.severity)}
@@ -317,9 +364,12 @@ export default function AdminAuditPage() {
                 {[
                   "স্ট্যাটাস",
                   "ডিস্ট্রিবিউটর",
+                  "Division/Ward",
+                  "Linked Event",
                   "ডেডলাইন",
                   "সময়",
-                  "রিপোর্ট",
+                  "ফাইল",
+                  "অ্যাকশন",
                 ].map((head) => (
                   <th key={head} className="p-2 border border-[#d7dde6]">
                     {head}
@@ -334,7 +384,22 @@ export default function AdminAuditPage() {
                   <td className="p-2 border border-[#d7dde6]">
                     {typeof item.distributorUserId === "string"
                       ? item.distributorUserId
-                      : item.distributorUserId?.name || "—"}
+                      : item.distributor?.name ||
+                        item.distributorUserId?.name ||
+                        "—"}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {(item.distributor?.division || "—") +
+                      " / " +
+                      (item.distributor?.ward || "—")}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {item.linkedAudit?.action || "—"}
+                    <div className="text-[11px] text-[#64748b]">
+                      {item.linkedAudit?.sessionCode ||
+                        item.linkedAudit?.consumerCode ||
+                        ""}
+                    </div>
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {item.dueAt
@@ -345,22 +410,31 @@ export default function AdminAuditPage() {
                     {new Date(item.createdAt).toLocaleString()}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
-                    {item.reportText ? (
+                    {item.attachments?.length || 0}
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {item.reportText?.trim() ||
+                    (item.attachments?.length || 0) > 0 ? (
                       <Button
                         variant="secondary"
-                        onClick={() => setReviewing(item)}
+                        onClick={() => {
+                          setReviewing(item);
+                          setReviewNote(item.note || "");
+                        }}
                       >
                         রিপোর্ট দেখুন
                       </Button>
                     ) : (
-                      "অপেক্ষমান"
+                      <span className="text-[12px] text-[#6b7280]">
+                        অপেক্ষমান
+                      </span>
                     )}
                   </td>
                 </tr>
               ))}
               {requests.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-[#6b7280]">
+                  <td colSpan={8} className="p-4 text-center text-[#6b7280]">
                     কোনো রিকোয়েস্ট নেই
                   </td>
                 </tr>
@@ -382,7 +456,8 @@ export default function AdminAuditPage() {
               <tr className="bg-[#f3f5f8] text-left">
                 {[
                   "টার্গেট টাইপ",
-                  "আইডি",
+                  "টার্গেট",
+                  "Division/Ward",
                   "কারণ",
                   "ব্লক টাইপ",
                   "মেয়াদ শেষ",
@@ -402,7 +477,13 @@ export default function AdminAuditPage() {
                     {entry.targetType}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
-                    {entry.targetRefId}
+                    {entry.targetCode || entry.targetRefId}
+                    <div className="text-[11px] text-[#64748b]">
+                      {entry.targetName || ""}
+                    </div>
+                  </td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {(entry.division || "—") + " / " + (entry.ward || "—")}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {entry.reason}
@@ -440,7 +521,7 @@ export default function AdminAuditPage() {
               ))}
               {blacklist.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-[#6b7280]">
+                  <td colSpan={8} className="p-4 text-center text-[#6b7280]">
                     ব্ল্যাকলিস্ট ডেটা নেই
                   </td>
                 </tr>
@@ -540,7 +621,10 @@ export default function AdminAuditPage() {
       <Modal
         open={!!reviewing}
         title="অডিট রিপোর্ট রিভিউ"
-        onClose={() => setReviewing(null)}
+        onClose={() => {
+          setReviewing(null);
+          setReviewNote("");
+        }}
       >
         {reviewing && (
           <div className="space-y-2 text-[13px]">
@@ -553,10 +637,72 @@ export default function AdminAuditPage() {
             <div>
               <strong>নোট:</strong> {reviewing.note || "—"}
             </div>
-            <div className="border rounded p-3 bg-[#f8fafc] whitespace-pre-wrap">
-              {reviewing.reportText || "রিপোর্ট নেই"}
+            <div>
+              <strong>জমাদানের সময়:</strong>{" "}
+              {reviewing.submittedAt
+                ? new Date(reviewing.submittedAt).toLocaleString("bn-BD")
+                : "—"}
             </div>
+            <div className="border rounded p-3 bg-[#f8fafc] whitespace-pre-wrap">
+              {reviewing.reportText?.trim() ||
+                "লিখিত রিপোর্ট নেই (শুধু সংযুক্ত ফাইল জমা হয়েছে)"}
+            </div>
+            <div className="space-y-2">
+              <div className="font-medium">সংযুক্ত ফাইল</div>
+              {reviewing.attachments && reviewing.attachments.length > 0 ? (
+                <div className="space-y-1">
+                  {reviewing.attachments.map((file) => (
+                    <div
+                      key={file._id}
+                      className="flex items-center justify-between rounded border px-3 py-2 bg-white"
+                    >
+                      <div className="text-[12px] text-[#374151]">
+                        {file.originalName} (
+                        {Math.max(1, Math.round(file.size / 1024))} KB)
+                      </div>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          void downloadAttachment(
+                            reviewing._id,
+                            file._id,
+                            file.originalName,
+                          )
+                        }
+                      >
+                        ডাউনলোড
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[12px] text-[#6b7280]">
+                  কোনো সংযুক্ত ফাইল নেই
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-[12px] mb-1 font-medium">
+                অ্যাডমিন নির্দেশনা / রিভিউ নোট
+              </div>
+              <textarea
+                value={reviewNote}
+                onChange={(e) => setReviewNote(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-[12px]"
+                rows={3}
+                placeholder="অনুমোদন/বাতিল/আবার রিপোর্ট চাওয়ার কারণ লিখুন"
+              />
+            </div>
+
             <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => void onReviewRequest("ReRequested")}
+                disabled={loading}
+              >
+                আবার রিপোর্ট চাই
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => void onReviewRequest("Approved")}

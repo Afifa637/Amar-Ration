@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "node --test tests/**/*.test.js",
     "seed": "node src/seed/seed.js",
     "indexes": "node src/setup/ensure-indexes.js",
     "db:verify": "node src/setup/verify-collections.js",
+    "db:migrate-queue": "node src/setup/migrate-queue-entries.js",
     "db:create-enterprise": "node src/setup/create-missing-enterprise-collections.js",
     "db:prune": "node src/setup/prune-extra-collections.js",
     "cron:test": "node -e \"const {startCronJobs}=require('./src/jobs/cron.jobs');startCronJobs()\"",

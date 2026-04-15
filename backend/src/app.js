@@ -44,10 +44,13 @@ if (process.env.NID_ENCRYPTION_KEY === process.env.JWT_SECRET) {
   console.error("FATAL: NID_ENCRYPTION_KEY must be different from JWT_SECRET");
   process.exit(1);
 }
-console.log("✅ Environment validation passed");
+if (process.env.NODE_ENV !== "production") {
+  console.log("✅ Environment validation passed");
+}
 
 const app = express();
 
+app.set("trust proxy", Number(process.env.TRUST_PROXY || 1));
 app.set("etag", false);
 
 const globalLimiter = rateLimit({
@@ -72,6 +75,17 @@ const loginLimiter = rateLimit({
   },
 });
 
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_REFRESH_MAX || 60),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Refresh অনুরোধ খুব বেশি হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।",
+  },
+});
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
   : ["http://localhost:5173", "http://localhost:3000"];
@@ -87,7 +101,11 @@ app.use(
     credentials: true,
   }),
 );
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(globalLimiter);
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
@@ -104,6 +122,7 @@ app.get("/", (req, res) =>
 );
 
 app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/refresh", refreshLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/distribution", distributionRoutes);

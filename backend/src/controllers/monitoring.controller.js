@@ -5,7 +5,11 @@ const AuditLog = require("../models/AuditLog");
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const User = require("../models/User");
+const Token = require("../models/Token");
+const DistributionSession = require("../models/DistributionSession");
+const { normalizeStockItem } = require("../utils/stock-items.utils");
 const { writeAudit } = require("../services/audit.service");
+const { makeSessionCode } = require("../services/sessionCode.service");
 const { normalizeDivision } = require("../utils/division.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
 const {
@@ -131,6 +135,267 @@ function normalizeOfflinePayload(payload) {
   };
 }
 
+async function enrichBlacklistEntries(entries = []) {
+  const creatorIds = Array.from(
+    new Set(
+      entries.map((e) => String(e.createdByUserId || "")).filter(Boolean),
+    ),
+  );
+  const owners = Array.from(
+    new Set(entries.map((e) => String(e.distributorId || "")).filter(Boolean)),
+  );
+
+  const consumerRefIds = entries
+    .filter((e) => e.targetType === "Consumer")
+    .map((e) => String(e.targetRefId || "").trim())
+    .filter(Boolean);
+  const distributorRefIds = entries
+    .filter((e) => e.targetType === "Distributor")
+    .map((e) => String(e.targetRefId || "").trim())
+    .filter(Boolean);
+
+  const [creators, ownerDistributors, consumers, allDistributors] =
+    await Promise.all([
+      creatorIds.length
+        ? User.find({ _id: { $in: creatorIds } })
+            .select("_id name userType")
+            .lean()
+        : [],
+      owners.length
+        ? Distributor.find({ _id: { $in: owners } })
+            .select("_id userId division wardNo ward")
+            .populate("userId", "name")
+            .lean()
+        : [],
+      consumerRefIds.length
+        ? Consumer.find({
+            $or: [
+              {
+                _id: {
+                  $in: consumerRefIds.filter((id) =>
+                    mongoose.Types.ObjectId.isValid(id),
+                  ),
+                },
+              },
+              { consumerCode: { $in: consumerRefIds } },
+            ],
+          })
+            .select("_id consumerCode name division ward")
+            .lean()
+        : [],
+      distributorRefIds.length
+        ? Distributor.find({
+            $or: [
+              {
+                _id: {
+                  $in: distributorRefIds.filter((id) =>
+                    mongoose.Types.ObjectId.isValid(id),
+                  ),
+                },
+              },
+              {
+                userId: {
+                  $in: distributorRefIds.filter((id) =>
+                    mongoose.Types.ObjectId.isValid(id),
+                  ),
+                },
+              },
+            ],
+          })
+            .select("_id userId division wardNo ward")
+            .populate("userId", "name")
+            .lean()
+        : [],
+    ]);
+
+  const creatorMap = new Map(creators.map((u) => [String(u._id), u]));
+  const ownerMap = new Map(ownerDistributors.map((d) => [String(d._id), d]));
+
+  const consumerMap = new Map();
+  for (const c of consumers) {
+    consumerMap.set(String(c._id), c);
+    consumerMap.set(String(c.consumerCode || "").trim(), c);
+  }
+
+  const distributorMap = new Map();
+  for (const d of allDistributors) {
+    distributorMap.set(String(d._id), d);
+    distributorMap.set(String(d.userId || ""), d);
+  }
+
+  return entries.map((entry) => {
+    const creator = creatorMap.get(String(entry.createdByUserId || ""));
+    const owner = ownerMap.get(String(entry.distributorId || ""));
+    const consumer =
+      entry.targetType === "Consumer"
+        ? consumerMap.get(String(entry.targetRefId || "").trim())
+        : null;
+    const targetDistributor =
+      entry.targetType === "Distributor"
+        ? distributorMap.get(String(entry.targetRefId || "").trim())
+        : null;
+    const targetDistributorUser =
+      targetDistributor?.userId && typeof targetDistributor.userId === "object"
+        ? targetDistributor.userId
+        : null;
+    const ownerUser =
+      owner?.userId && typeof owner.userId === "object" ? owner.userId : null;
+
+    const targetName =
+      entry.targetType === "Consumer"
+        ? consumer?.name || ""
+        : targetDistributorUser?.name || "";
+    const targetCode =
+      entry.targetType === "Consumer"
+        ? consumer?.consumerCode || String(entry.targetRefId || "")
+        : targetDistributor?._id
+          ? `DST-${String(targetDistributor._id).slice(-6).toUpperCase()}`
+          : String(entry.targetRefId || "");
+
+    return {
+      ...entry,
+      targetName,
+      targetCode,
+      division:
+        consumer?.division ||
+        targetDistributor?.division ||
+        owner?.division ||
+        "",
+      ward:
+        consumer?.ward ||
+        targetDistributor?.wardNo ||
+        targetDistributor?.ward ||
+        owner?.wardNo ||
+        owner?.ward ||
+        "",
+      ownerDistributorName: ownerUser?.name || "",
+      ownerDistributorCode: owner?._id
+        ? `DST-${String(owner._id).slice(-6).toUpperCase()}`
+        : "",
+      createdByName: creator?.name || "",
+      createdByType: creator?.userType || "",
+      reasonText: `${entry.reason}${entry.expiresAt ? ` (expires ${new Date(entry.expiresAt).toLocaleDateString("en-GB")})` : ""}`,
+    };
+  });
+}
+
+async function enrichOfflineQueueItems(items = []) {
+  const distributorIds = Array.from(
+    new Set(items.map((x) => String(x.distributorId || "")).filter(Boolean)),
+  );
+
+  const payloadSessionIds = Array.from(
+    new Set(
+      items
+        .map((x) => String(x?.payload?.sessionId || "").trim())
+        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+    ),
+  );
+  const payloadConsumerCodes = Array.from(
+    new Set(
+      items
+        .map((x) => String(x?.payload?.consumerCode || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const payloadTokenCodes = Array.from(
+    new Set(
+      items
+        .map((x) => String(x?.payload?.tokenCode || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const [distributors, sessions, consumers, tokens] = await Promise.all([
+    distributorIds.length
+      ? Distributor.find({ _id: { $in: distributorIds } })
+          .select("_id division wardNo ward userId")
+          .populate("userId", "name")
+          .lean()
+      : [],
+    payloadSessionIds.length
+      ? DistributionSession.find({ _id: { $in: payloadSessionIds } })
+          .select("_id dateKey status distributorId")
+          .lean()
+      : [],
+    payloadConsumerCodes.length
+      ? Consumer.find({ consumerCode: { $in: payloadConsumerCodes } })
+          .select("_id consumerCode name division ward")
+          .lean()
+      : [],
+    payloadTokenCodes.length
+      ? Token.find({ tokenCode: { $in: payloadTokenCodes } })
+          .select("_id tokenCode consumerId sessionId rationItem rationQtyKg")
+          .populate("consumerId", "consumerCode name division ward")
+          .populate("sessionId", "_id dateKey status")
+          .lean()
+      : [],
+  ]);
+
+  const distributorMap = new Map(distributors.map((d) => [String(d._id), d]));
+  const sessionMap = new Map(sessions.map((s) => [String(s._id), s]));
+  const consumerMap = new Map(
+    consumers.map((c) => [String(c.consumerCode), c]),
+  );
+  const tokenMap = new Map(tokens.map((t) => [String(t.tokenCode), t]));
+
+  return items.map((item) => {
+    const payload = item.payload || {};
+    const actionType = String(payload.action || "").toUpperCase();
+    const owner = distributorMap.get(String(item.distributorId || ""));
+    const ownerUser =
+      owner?.userId && typeof owner.userId === "object" ? owner.userId : null;
+
+    const payloadToken = tokenMap.get(String(payload.tokenCode || "").trim());
+    const payloadSession =
+      sessionMap.get(String(payload.sessionId || "").trim()) ||
+      (payloadToken?.sessionId && typeof payloadToken.sessionId === "object"
+        ? payloadToken.sessionId
+        : null);
+    const payloadConsumer =
+      consumerMap.get(String(payload.consumerCode || "").trim()) ||
+      (payloadToken?.consumerId && typeof payloadToken.consumerId === "object"
+        ? payloadToken.consumerId
+        : null);
+
+    const itemName = normalizeStockItem(payloadToken?.rationItem || "") || "";
+
+    return {
+      ...item,
+      division: payloadConsumer?.division || owner?.division || "",
+      ward: payloadConsumer?.ward || owner?.wardNo || owner?.ward || "",
+      distributorName: ownerUser?.name || "",
+      distributorCode: owner?._id
+        ? `DST-${String(owner._id).slice(-6).toUpperCase()}`
+        : "",
+      sessionId: payloadSession?._id ? String(payloadSession._id) : "",
+      sessionCode: payloadSession ? makeSessionCode(payloadSession) : "",
+      sessionDate: payloadSession?.dateKey || "",
+      sessionStatus: payloadSession?.status || "",
+      consumerCode:
+        payloadConsumer?.consumerCode || String(payload.consumerCode || ""),
+      consumerName: payloadConsumer?.name || "",
+      tokenCode: payloadToken?.tokenCode || String(payload.tokenCode || ""),
+      actionType,
+      item: itemName,
+      expectedQtyKg: Number(payloadToken?.rationQtyKg || 0),
+      actualQtyKg: Number(payload.actualKg || 0),
+      payloadSummary: {
+        actionType,
+        sessionId: payloadSession?._id ? String(payloadSession._id) : "",
+        sessionCode: payloadSession ? makeSessionCode(payloadSession) : "",
+        consumerCode:
+          payloadConsumer?.consumerCode || String(payload.consumerCode || ""),
+        consumerName: payloadConsumer?.name || "",
+        tokenCode: payloadToken?.tokenCode || String(payload.tokenCode || ""),
+        item: itemName,
+        expectedQtyKg: Number(payloadToken?.rationQtyKg || 0),
+        actualQtyKg: Number(payload.actualKg || 0),
+      },
+    };
+  });
+}
+
 async function syncTargetStatus(entry) {
   const status = applyBlacklistStatus(entry.blockType, entry.active);
 
@@ -223,6 +488,11 @@ async function getMonitoringSummary(req, res) {
       criticalPromise,
     ]);
 
+    const [enrichedBlacklist, enrichedOffline] = await Promise.all([
+      enrichBlacklistEntries(blacklist),
+      enrichOfflineQueueItems(offline),
+    ]);
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -242,9 +512,9 @@ async function getMonitoringSummary(req, res) {
         systemStatus: "Normal",
         todayAlerts,
         criticalCount: critical.length,
-        offlinePending: offline.length,
-        blacklist,
-        offline,
+        offlinePending: enrichedOffline.length,
+        blacklist: enrichedBlacklist,
+        offline: enrichedOffline,
         critical,
       },
     });
@@ -286,10 +556,12 @@ async function listBlacklist(req, res) {
         .lean(),
     ]);
 
+    const enrichedEntries = await enrichBlacklistEntries(entries);
+
     res.json({
       success: true,
       data: {
-        entries,
+        entries: enrichedEntries,
         pagination: {
           total,
           page,
@@ -484,10 +756,12 @@ async function listOfflineQueue(req, res) {
         .lean(),
     ]);
 
+    const enrichedItems = await enrichOfflineQueueItems(items);
+
     res.json({
       success: true,
       data: {
-        items,
+        items: enrichedItems,
         pagination: {
           total,
           page,

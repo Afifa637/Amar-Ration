@@ -14,7 +14,7 @@ const { hashNid } = require("../services/nid-security.service");
 const { validateConsumerPayload, validateNID } = require("../utils/validators");
 const { normalizeWardNo } = require("../utils/ward.utils");
 const { normalizeDivision } = require("../utils/division.utils");
-const { buildOmsQrPayload } = require("../utils/qr-payload.utils");
+const { buildArQrPayload } = require("../utils/qr-payload.utils");
 
 const CSV_REQUIRED_HEADERS = [
   "name",
@@ -177,30 +177,40 @@ async function uploadBulkRegister(req, res) {
     }
 
     const errors = [];
+    const invalidRows = [];
+    const duplicateRows = [];
+    const ignoredRows = [];
+    const failedRows = [];
     const validRows = [];
     const seenNids = new Map();
 
     rows.forEach((row, idx) => {
       const payload = validateConsumerPayload(row);
       if (!payload.valid) {
-        errors.push({
+        const entry = {
           row: idx + 2,
           name: row?.name || "",
           nid: row?.nidNumber || "",
+          code: "INVALID_ROW",
           reason: payload.errors.join(", "),
-        });
+        };
+        errors.push(entry);
+        invalidRows.push(entry);
         return;
       }
 
       const originalCleaned = payload.cleaned;
       if (scope && !rowInsideScope(originalCleaned, scope)) {
-        errors.push({
+        const entry = {
           row: idx + 2,
           name: row?.name || "",
           nid: row?.nidNumber || "",
+          code: "OUT_OF_SCOPE",
           reason:
             "Row বাইরে: আপনার division/ward scope এর বাইরে নিবন্ধন অনুমোদিত নয়",
-        });
+        };
+        errors.push(entry);
+        ignoredRows.push(entry);
         return;
       }
 
@@ -208,12 +218,15 @@ async function uploadBulkRegister(req, res) {
 
       const nidKey = String(payload.cleaned.nidFull || "");
       if (seenNids.has(nidKey)) {
-        errors.push({
+        const entry = {
           row: idx + 2,
           name: row?.name || "",
           nid: row?.nidNumber || "",
+          code: "DUPLICATE_CSV",
           reason: `Duplicate NID inside CSV (first seen at row ${seenNids.get(nidKey)})`,
-        });
+        };
+        errors.push(entry);
+        duplicateRows.push(entry);
         return;
       }
       seenNids.set(nidKey, idx + 2);
@@ -225,33 +238,60 @@ async function uploadBulkRegister(req, res) {
       });
     });
 
+    const hashedNids = validRows.map((item) => hashNid(item.cleaned.nidFull));
+    const existingConsumers = hashedNids.length
+      ? await Consumer.find({ nidHash: { $in: hashedNids } })
+          .select("nidHash consumerCode")
+          .lean()
+      : [];
+    const existingByHash = new Map(
+      existingConsumers.map((row) => [String(row.nidHash || ""), row]),
+    );
+
     for (const item of validRows) {
-      const existing = await Consumer.findOne({
-        nidHash: hashNid(item.cleaned.nidFull),
-      })
-        .select("consumerCode")
-        .lean();
+      const existing = existingByHash.get(hashNid(item.cleaned.nidFull));
       if (existing) {
-        errors.push({
+        const entry = {
           row: item.rowNumber,
           name: item.cleaned.name,
           nid: item.cleaned.nidFull,
+          code: "DUPLICATE_DB",
           reason: `Duplicate NID (${existing.consumerCode || "existing"})`,
-        });
+        };
+        errors.push(entry);
+        duplicateRows.push(entry);
       }
     }
 
+    const skipped = errors.length;
+    const wouldInsert = Math.max(0, rows.length - skipped);
+    const summary = {
+      total: rows.length,
+      valid: validRows.length,
+      inserted: wouldInsert,
+      duplicate: duplicateRows.length,
+      invalid: invalidRows.length,
+      ignoredOutOfScope: ignoredRows.length,
+      failed: failedRows.length,
+      skipped,
+    };
+
     if (dryRun) {
-      const skipped = errors.length;
-      const inserted = Math.max(0, rows.length - skipped);
       return res.json({
         success: true,
         data: {
           dryRun: true,
           total: rows.length,
-          inserted,
+          inserted: wouldInsert,
           skipped,
           errors,
+          summary,
+          details: {
+            invalidRows,
+            duplicateRows,
+            ignoredRows,
+            failedRows,
+          },
         },
       });
     }
@@ -290,13 +330,12 @@ async function uploadBulkRegister(req, res) {
           { upsert: true, new: true, session: rowSession },
         );
 
-        const qrPayload =
-          buildOmsQrPayload({
-            consumerCode: code,
-            ward: item.cleaned.ward,
-            category: item.cleaned.category,
-            expiryDate: last,
-          }) || crypto.randomBytes(32).toString("hex");
+        const qrPayload = buildArQrPayload({
+          consumerCode: code,
+          ward: item.cleaned.ward,
+          category: item.cleaned.category,
+          expiryDate: last,
+        });
 
         const qr = await QRCode.create(
           [
@@ -352,19 +391,33 @@ async function uploadBulkRegister(req, res) {
         inserted += 1;
       } catch (rowError) {
         await rowSession.abortTransaction();
-        errors.push({
+        const entry = {
           row: item.rowNumber,
           name: item.cleaned.name,
           nid: item.cleaned.nidFull,
+          code: "INSERT_FAILED",
           reason:
             rowError instanceof Error
               ? rowError.message
               : "Insert failed for this row",
-        });
+        };
+        errors.push(entry);
+        failedRows.push(entry);
       } finally {
         rowSession.endSession();
       }
     }
+
+    const postSummary = {
+      total: rows.length,
+      valid: validRows.length,
+      inserted,
+      duplicate: duplicateRows.length,
+      invalid: invalidRows.length,
+      ignoredOutOfScope: ignoredRows.length,
+      failed: failedRows.length,
+      skipped: rows.length - inserted,
+    };
 
     return res.status(201).json({
       success: true,
@@ -374,6 +427,13 @@ async function uploadBulkRegister(req, res) {
         inserted,
         skipped: rows.length - inserted,
         errors,
+        summary: postSummary,
+        details: {
+          invalidRows,
+          duplicateRows,
+          ignoredRows,
+          failedRows,
+        },
       },
     });
   } catch (error) {

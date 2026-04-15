@@ -1,26 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import Modal from "../../components/ui/Modal";
-import { getAppeals, reviewAppeal } from "../../services/api";
+import {
+  downloadAppealAttachment,
+  getAppeals,
+  reviewAppeal,
+  type AppealItem,
+  type AppealStatus,
+} from "../../services/api";
 import { formatDate } from "../../utils/date";
-
-type AppealStatus = "pending" | "under_review" | "approved" | "rejected";
-
-interface AppealItem {
-  _id: string;
-  appealId: string;
-  consumerPhone: string;
-  reason: string;
-  supportingInfo?: string;
-  status: AppealStatus;
-  createdAt: string;
-  adminNote?: string;
-}
 
 export default function AdminAppealsPage() {
   const [items, setItems] = useState<AppealItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<AppealStatus | "">("");
+  const [division, setDivision] = useState("");
+  const [ward, setWard] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
@@ -38,25 +33,12 @@ export default function AdminAppealsPage() {
         page: 1,
         limit: 100,
         status: status || undefined,
+        division: division || undefined,
+        ward: ward || undefined,
         startDate: from || undefined,
         endDate: to || undefined,
       });
-      const mappedItems = (data.items || []).map((item) => {
-        const row = item as Record<string, unknown>;
-        return {
-          _id: String(row._id || ""),
-          appealId: String(row.appealId || ""),
-          consumerPhone: String(row.consumerPhone || ""),
-          reason: String(row.reason || ""),
-          supportingInfo: row.supportingInfo
-            ? String(row.supportingInfo)
-            : undefined,
-          status: String(row.status || "pending") as AppealStatus,
-          createdAt: String(row.createdAt || new Date().toISOString()),
-          adminNote: row.adminNote ? String(row.adminNote) : undefined,
-        } as AppealItem;
-      });
-      setItems(mappedItems.filter((x) => x._id));
+      setItems((data.items || []).filter((x) => x._id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "ডেটা লোড ব্যর্থ");
     } finally {
@@ -100,6 +82,26 @@ export default function AdminAppealsPage() {
     }
   };
 
+  const onDownloadAttachment = async (
+    appealId: string,
+    fileId: string,
+    name: string,
+  ) => {
+    try {
+      const blob = await downloadAppealAttachment(appealId, fileId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ফাইল ডাউনলোড ব্যর্থ");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">
@@ -140,10 +142,10 @@ export default function AdminAppealsPage() {
       </section>
 
       <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => setStatus(e.target.value as AppealStatus | "")}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
           >
             <option value="">সব স্ট্যাটাস</option>
@@ -152,6 +154,18 @@ export default function AdminAppealsPage() {
             <option value="approved">অনুমোদিত</option>
             <option value="rejected">প্রত্যাখ্যাত</option>
           </select>
+          <input
+            value={division}
+            onChange={(e) => setDivision(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="ডিভিশন"
+          />
+          <input
+            value={ward}
+            onChange={(e) => setWard(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="ওয়ার্ড"
+          />
           <input
             type="date"
             value={from}
@@ -188,6 +202,9 @@ export default function AdminAppealsPage() {
                   ফোন
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                  ডিভিশন/ওয়ার্ড
+                </th>
+                <th className="text-xs uppercase text-gray-500 p-2 text-left">
                   কারণ
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
@@ -195,6 +212,9 @@ export default function AdminAppealsPage() {
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
                   স্ট্যাটাস
+                </th>
+                <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                  ডকুমেন্ট
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
                   কার্যক্রম
@@ -205,14 +225,25 @@ export default function AdminAppealsPage() {
               {items.map((item) => (
                 <tr key={item._id} className="border-t border-gray-100">
                   <td className="p-2 text-sm">{item.appealId}</td>
-                  <td className="p-2 text-sm">—</td>
+                  <td className="p-2 text-sm">
+                    {item.consumerId?.name || "—"}
+                    <div className="text-xs text-gray-500">
+                      {item.consumerId?.consumerCode || ""}
+                    </div>
+                  </td>
                   <td className="p-2 text-sm">{item.consumerPhone}</td>
+                  <td className="p-2 text-sm">
+                    {item.division || "—"} / {item.ward || "—"}
+                  </td>
                   <td className="p-2 text-sm">{item.reason.slice(0, 35)}...</td>
                   <td className="p-2 text-sm">{formatDate(item.createdAt)}</td>
                   <td className="p-2 text-sm">
                     <span className="bg-purple-100 text-purple-700 rounded-full px-2 py-0.5 text-xs">
                       {item.status}
                     </span>
+                  </td>
+                  <td className="p-2 text-sm">
+                    {item.attachments?.length || 0}
                   </td>
                   <td className="p-2 text-sm">
                     <button
@@ -229,7 +260,7 @@ export default function AdminAppealsPage() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                  <td colSpan={9} className="p-4 text-center text-gray-500">
                     {loading ? "লোড হচ্ছে..." : "কোনো আবেদন পাওয়া যায়নি"}
                   </td>
                 </tr>
@@ -250,6 +281,17 @@ export default function AdminAppealsPage() {
               <b>আবেদন:</b> {active.appealId}
             </div>
             <div>
+              <b>ভোক্তা:</b> {active.consumerId?.name || "—"} (
+              {active.consumerId?.consumerCode || "—"})
+            </div>
+            <div>
+              <b>ডিস্ট্রিবিউটর:</b> {active.distributorUserId?.name || "—"} (
+              {active.distributorUserId?.phone || "—"})
+            </div>
+            <div>
+              <b>এলাকা:</b> {active.division || "—"} / {active.ward || "—"}
+            </div>
+            <div>
               <b>ফোন:</b> {active.consumerPhone}
             </div>
             <div>
@@ -257,6 +299,32 @@ export default function AdminAppealsPage() {
             </div>
             <div>
               <b>Supporting Info:</b> {active.supportingInfo || "—"}
+            </div>
+            <div>
+              <b>Blacklist Reason:</b> {active.blacklistEntryId?.reason || "—"}
+            </div>
+            <div>
+              <b>সংযুক্ত ডকুমেন্ট:</b>
+              <div className="mt-1 space-y-1">
+                {(active.attachments || []).length === 0 && (
+                  <div className="text-xs text-gray-500">কোনো ডকুমেন্ট নেই</div>
+                )}
+                {(active.attachments || []).map((file) => (
+                  <button
+                    key={file._id}
+                    onClick={() =>
+                      void onDownloadAttachment(
+                        active.appealId,
+                        file._id,
+                        file.originalName,
+                      )
+                    }
+                    className="block text-left text-xs px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100"
+                  >
+                    ⬇ {file.originalName}
+                  </button>
+                ))}
+              </div>
             </div>
             <textarea
               rows={4}

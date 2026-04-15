@@ -29,6 +29,11 @@ router.patch(
   authorize("Distributor", "FieldUser"),
   skipEntry,
 );
-router.get("/session/:sessionId", protect, authorize("Admin"), sessionQueue);
+router.get(
+  "/session/:sessionId",
+  protect,
+  authorize("Admin", "Distributor", "FieldUser"),
+  sessionQueue,
+);
 
 module.exports = router;

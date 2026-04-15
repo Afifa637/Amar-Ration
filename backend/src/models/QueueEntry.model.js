@@ -15,6 +15,17 @@ const QueueEntrySchema = new mongoose.Schema(
       ref: "Consumer",
       required: true,
     },
+    distributorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Distributor",
+      required: true,
+      index: true,
+    },
+    createdByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     consumerName: { type: String },
     consumerCode: { type: String },
     category: { type: String },
@@ -33,5 +44,11 @@ const QueueEntrySchema = new mongoose.Schema(
 
 QueueEntrySchema.index({ sessionId: 1, consumerId: 1 }, { unique: true });
 QueueEntrySchema.index({ sessionId: 1, queueNumber: 1 });
+QueueEntrySchema.index({
+  distributorId: 1,
+  sessionId: 1,
+  status: 1,
+  queueNumber: 1,
+});
 
 module.exports = mongoose.model("QueueEntry", QueueEntrySchema);

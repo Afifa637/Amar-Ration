@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
   deleteConsumerCard,
+  forceResetAllQRCodes,
   getConsumerCard,
   getConsumerCards,
   getAdminCardsSummary,
@@ -13,10 +14,14 @@ import {
 import Modal from "../../components/ui/Modal";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import ArRationCardView from "../../components/cards/ArRationCardView";
+import { buildArRationCardPrintHtml } from "../../components/cards/arRationCardPrint";
 
 export default function AdminCardsPage() {
   const [summary, setSummary] = useState<AdminCardsSummary | null>(null);
   const [cards, setCards] = useState<ConsumerCardRow[]>([]);
+  const [division, setDivision] = useState("");
+  const [ward, setWard] = useState("");
   const [search, setSearch] = useState("");
   const [cardStatus, setCardStatus] = useState<
     "সব" | "Active" | "Inactive" | "Revoked"
@@ -25,17 +30,34 @@ export default function AdminCardsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [openCard, setOpenCard] = useState(false);
+  const [openDangerRotate, setOpenDangerRotate] = useState(false);
   const [selectedCard, setSelectedCard] = useState<ConsumerCardDetail | null>(
     null,
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      if (ward.trim() && !division.trim()) {
+        setError("ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ দিন");
+        setCards([]);
+        setSummary(null);
+        return;
+      }
+
+      const params = {
+        division: division.trim() || undefined,
+        ward: ward.trim() || undefined,
+      };
+
       const [summaryData, cardData] = await Promise.all([
-        getAdminCardsSummary(),
-        getConsumerCards({ limit: 300 }),
+        getAdminCardsSummary(params),
+        getConsumerCards({
+          limit: 300,
+          division: params.division,
+          ward: params.ward,
+        }),
       ]);
       setSummary(summaryData);
       setCards(cardData.rows || []);
@@ -44,11 +66,30 @@ export default function AdminCardsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [division, ward]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  const divisionOptions = useMemo(() => {
+    return Array.from(
+      new Set(cards.map((card) => card.division || "").filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, "bn"));
+  }, [cards]);
+
+  const wardOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        cards
+          .filter((card) =>
+            division ? (card.division || "") === division : true,
+          )
+          .map((card) => card.ward || "")
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b, "bn"));
+  }, [cards, division]);
 
   const filteredCards = useMemo(() => {
     return cards.filter((card) => {
@@ -56,7 +97,8 @@ export default function AdminCardsPage() {
         !search.trim() ||
         card.consumerCode.toLowerCase().includes(search.toLowerCase()) ||
         card.name.toLowerCase().includes(search.toLowerCase()) ||
-        (card.ward || "").toLowerCase().includes(search.toLowerCase());
+        (card.ward || "").toLowerCase().includes(search.toLowerCase()) ||
+        (card.division || "").toLowerCase().includes(search.toLowerCase());
 
       const matchStatus = cardStatus === "সব" || card.cardStatus === cardStatus;
 
@@ -96,7 +138,7 @@ export default function AdminCardsPage() {
 
   const onRemoveCard = async (consumerId: string) => {
     const confirmed = window.confirm(
-      "এই OMS কার্ড মুছে ফেলতে চান? এই অ্যাকশনে কার্ড কাউন্ট আপডেট হবে।",
+      "এই AR রেশন কার্ড মুছে ফেলতে চান? এই অ্যাকশনে কার্ড কাউন্ট আপডেট হবে।",
     );
     if (!confirmed) return;
 
@@ -113,6 +155,23 @@ export default function AdminCardsPage() {
     }
   };
 
+  const onForceRotateAll = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const result = await forceResetAllQRCodes();
+      setMessage(
+        `জরুরি QR রোটেশন সম্পন্ন: মোট ${result.total} জনের মধ্যে ${result.updated} আপডেট, ${result.failed} ব্যর্থ।`,
+      );
+      setOpenDangerRotate(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "জরুরি রোটেশন ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const statusText = (status?: string) => {
     if (status === "Active" || status === "Valid") return "সক্রিয়";
     if (status === "Inactive" || status === "Invalid") return "নিষ্ক্রিয়";
@@ -124,52 +183,14 @@ export default function AdminCardsPage() {
   const printCard = (card: ConsumerCardDetail) => {
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
-    const validToText = card.validTo
-      ? new Date(card.validTo).toLocaleDateString("bn-BD")
-      : "—";
-
-    win.document.write(`
-      <html>
-        <head>
-          <title>OMS Card - ${card.consumerCode}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 24px; }
-            .card { width: 720px; border: 2px solid #0f4c75; border-radius: 12px; padding: 20px; }
-            .title { font-size: 28px; font-weight: 700; color: #0f4c75; }
-            .grid { display: grid; grid-template-columns: 1fr 220px; gap: 16px; margin-top: 14px; }
-            .kv { margin-bottom: 8px; font-size: 14px; }
-            .qr { text-align: center; border: 1px solid #dbe3ef; border-radius: 10px; padding: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <div class="title">আমার রেশন — OMS কার্ড</div>
-            <div class="grid">
-              <div>
-                <div class="kv"><b>Consumer Code:</b> ${card.consumerCode}</div>
-                <div class="kv"><b>নাম:</b> ${card.name}</div>
-                <div class="kv"><b>ক্যাটাগরি:</b> ${card.category}</div>
-                <div class="kv"><b>ওয়ার্ড:</b> ${card.ward || "—"}</div>
-                <div class="kv"><b>কার্ড:</b> ${card.cardStatus}</div>
-                <div class="kv"><b>QR:</b> ${card.qrStatus}</div>
-                <div class="kv"><b>Valid To:</b> ${validToText}</div>
-              </div>
-              <div class="qr">
-                ${card.qrImageDataUrl ? `<img src="${card.qrImageDataUrl}" width="200" height="200" alt="QR" />` : "QR unavailable"}
-              </div>
-            </div>
-          </div>
-          <script>window.onload = () => window.print();</script>
-        </body>
-      </html>
-    `);
+    win.document.write(buildArRationCardPrintHtml(card));
     win.document.close();
   };
 
   return (
     <div className="space-y-3">
       <div className="bg-white border border-[#d7dde6] rounded px-3 py-2 text-[12px] text-[#4b5563]">
-        অ্যাডমিন <span className="mx-1">›</span> OMS কার্ড ও QR কন্ট্রোল
+        অ্যাডমিন <span className="mx-1">›</span> AR কার্ড ও QR কন্ট্রোল
       </div>
 
       <SectionCard title="QR কার্ড কন্ট্রোল সারাংশ">
@@ -211,12 +232,39 @@ export default function AdminCardsPage() {
       </SectionCard>
 
       <SectionCard title="কার্ড তালিকা ও প্রিন্ট ভিউ">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
+          <select
+            value={division}
+            onChange={(e) => {
+              setDivision(e.target.value);
+              setWard("");
+            }}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব বিভাগ</option>
+            {divisionOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <select
+            value={ward}
+            onChange={(e) => setWard(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব ওয়ার্ড</option>
+            {wardOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="সার্চ: consumer code / নাম / ওয়ার্ড"
+            placeholder="সার্চ: consumer code / নাম / বিভাগ / ওয়ার্ড"
           />
           <select
             value={cardStatus}
@@ -241,6 +289,8 @@ export default function AdminCardsPage() {
               onClick={() => {
                 setSearch("");
                 setCardStatus("সব");
+                setDivision("");
+                setWard("");
               }}
             >
               রিসেট
@@ -255,6 +305,7 @@ export default function AdminCardsPage() {
                 {[
                   "কোড",
                   "নাম",
+                  "বিভাগ",
                   "ওয়ার্ড",
                   "কার্ড",
                   "QR",
@@ -277,6 +328,9 @@ export default function AdminCardsPage() {
                     {card.consumerCode}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">{card.name}</td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {card.division || "—"}
+                  </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {card.ward || "—"}
                   </td>
@@ -337,7 +391,7 @@ export default function AdminCardsPage() {
               ))}
               {filteredCards.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-3 text-center text-[#6b7280]">
+                  <td colSpan={8} className="p-3 text-center text-[#6b7280]">
                     {loading ? "লোড হচ্ছে..." : "কোনো কার্ড ডেটা নেই"}
                   </td>
                 </tr>
@@ -387,11 +441,31 @@ export default function AdminCardsPage() {
 
       <SectionCard title="অ্যাডমিন অ্যাকশন">
         <ul className="space-y-2 text-sm text-[#374151]">
-          <li>• যাচাই সফল হলে OMS রেশন কার্ড ইস্যু।</li>
+          <li>• যাচাই সফল হলে AR রেশন কার্ড ইস্যু।</li>
           <li>• নিষ্ক্রিয় অনুমোদনের পর QR সঙ্গে সঙ্গে বাতিল।</li>
           <li>• নির্ধারিত সময় অনুযায়ী QR রোটেশন।</li>
           <li>• প্রতিটি QR স্টেট পরিবর্তন অডিটে নথিভুক্ত।</li>
         </ul>
+      </SectionCard>
+
+      <SectionCard title="⚠️ জরুরি QR রোটেশন (Danger Zone)">
+        <div className="rounded border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#991b1b]">
+          সিস্টেমে বড় ধরনের সমস্যা, নিরাপত্তা ঝুঁকি বা ব্যাপক ফ্রড সিগন্যাল দেখা
+          গেলে এক ক্লিকে সবার QR নতুন করে রোটেট করা যাবে।
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="text-[12px] text-[#6b7280]">
+            এই অ্যাকশনে সব ভোক্তার বিদ্যমান QR অকার্যকর হয়ে যাবে এবং নতুন QR
+            তৈরি হবে।
+          </div>
+          <Button
+            variant="danger"
+            onClick={() => setOpenDangerRotate(true)}
+            disabled={loading}
+          >
+            🚨 সকলের QR রোটেট করুন
+          </Button>
+        </div>
       </SectionCard>
 
       <Modal
@@ -400,37 +474,7 @@ export default function AdminCardsPage() {
         onClose={() => setOpenCard(false)}
       >
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2 text-[12px]">
-            <div>
-              কোড: <b>{selectedCard?.consumerCode}</b>
-            </div>
-            <div>
-              নাম: <b>{selectedCard?.name}</b>
-            </div>
-            <div>
-              ওয়ার্ড: <b>{selectedCard?.ward || "—"}</b>
-            </div>
-            <div>
-              ক্যাটাগরি: <b>{selectedCard?.category}</b>
-            </div>
-            <div>
-              কার্ড: <b>{selectedCard?.cardStatus}</b>
-            </div>
-            <div>
-              QR: <b>{selectedCard?.qrStatus}</b>
-            </div>
-          </div>
-          <div className="border rounded p-2 flex justify-center bg-[#f8fafc]">
-            {selectedCard?.qrImageDataUrl ? (
-              <img
-                src={selectedCard.qrImageDataUrl}
-                alt="QR"
-                className="w-44 h-44"
-              />
-            ) : (
-              <div className="text-[12px] text-[#6b7280]">QR unavailable</div>
-            )}
-          </div>
+          <ArRationCardView card={selectedCard} />
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpenCard(false)}>
               বন্ধ
@@ -442,6 +486,32 @@ export default function AdminCardsPage() {
               🖨️ প্রিন্ট/PDF
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={openDangerRotate}
+        title="জরুরি QR রোটেশন নিশ্চিতকরণ"
+        onClose={() => setOpenDangerRotate(false)}
+      >
+        <p className="text-sm text-gray-700 mb-4">
+          আপনি কি নিশ্চিত? এই অ্যাকশনে সব ভোক্তার QR কোড তাৎক্ষণিকভাবে বদলে
+          যাবে।
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setOpenDangerRotate(false)}
+          >
+            বাতিল
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => void onForceRotateAll()}
+            disabled={loading}
+          >
+            {loading ? "প্রসেস হচ্ছে..." : "হ্যাঁ, এখনই রোটেট করুন"}
+          </Button>
         </div>
       </Modal>
     </div>

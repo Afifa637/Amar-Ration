@@ -15,11 +15,13 @@ const {
   getAdminAuditLogs,
   getAdminAuditDetail,
   forceCloseSession,
+  applyAdminAlertAction,
 } = require("../controllers/admin.controller");
 const {
   listAuditReportRequests,
   requestAuditReport,
   reviewAuditReportRequest,
+  downloadAuditReportFile,
 } = require("../controllers/audit-report.controller");
 
 router.use(protect, authorize("Admin"));
@@ -43,8 +45,10 @@ router.patch("/distribution/session/:sessionId/force-close", forceCloseSession);
 router.get("/consumers/review", getAdminConsumerReview);
 router.get("/audit", getAdminAuditLogs);
 router.get("/audit/:id/detail", getAdminAuditDetail);
+router.patch("/alerts/:id/action", applyAdminAlertAction);
 router.get("/audit/requests", listAuditReportRequests);
 router.post("/audit/requests", requestAuditReport);
 router.patch("/audit/requests/:id/review", reviewAuditReportRequest);
+router.get("/audit/requests/:id/files/:fileId", downloadAuditReportFile);
 
 module.exports = router;

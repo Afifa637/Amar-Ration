@@ -71,6 +71,13 @@ export default function AdminDistributorsPage() {
   const [openCreate, setOpenCreate] = useState(false);
   const [filterDivision, setFilterDivision] = useState("");
   const [filterWard, setFilterWard] = useState("");
+  const [filterStatus, setFilterStatus] = useState<
+    "" | "Pending" | "Active" | "Suspended" | "Revoked"
+  >("");
+  const [filterAuditRequired, setFilterAuditRequired] = useState<
+    "" | "true" | "false"
+  >("");
+  const [filterSearch, setFilterSearch] = useState("");
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkDistributorResult | null>(
@@ -90,9 +97,21 @@ export default function AdminDistributorsPage() {
     setError("");
     setMessage("");
     try {
+      if (filterWard && !filterDivision) {
+        setError("ওয়ার্ড ফিল্টার ব্যবহার করতে বিভাগ দিন");
+        setRows([]);
+        return;
+      }
+
       const data = await getAdminDistributors({
         division: filterDivision || undefined,
         ward: filterWard || undefined,
+        status: filterStatus || undefined,
+        auditRequired:
+          filterAuditRequired === ""
+            ? undefined
+            : filterAuditRequired === "true",
+        search: filterSearch.trim() || undefined,
       });
       setRows(data.rows || []);
     } catch (err) {
@@ -268,7 +287,13 @@ export default function AdminDistributorsPage() {
   useEffect(() => {
     void loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterDivision, filterWard]);
+  }, [
+    filterDivision,
+    filterWard,
+    filterStatus,
+    filterAuditRequired,
+    filterSearch,
+  ]);
 
   const stats = useMemo(() => {
     const base = { pending: 0, Active: 0, Suspended: 0, Revoked: 0 } as Record<
@@ -379,45 +404,50 @@ export default function AdminDistributorsPage() {
       </SectionCard>
 
       <SectionCard title="ডিস্ট্রিবিউটর বাল্ক CSV রেজিস্ট্রেশন">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
-          <select
-            value={filterDivision}
-            onChange={(e) => setFilterDivision(e.target.value)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-          >
-            <option value="">সব বিভাগ</option>
-            {BANGLADESH_DIVISIONS.map((division) => (
-              <option key={division} value={division}>
-                {division}
-              </option>
-            ))}
-          </select>
-          <input
-            value={filterWard}
-            onChange={(e) => setFilterWard(normalizeWardNo(e.target.value))}
-            placeholder="ওয়ার্ড (যেমন 01)"
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-          />
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-          />
-          <Button
-            onClick={() => void uploadBulkDistributors()}
-            disabled={bulkLoading}
-          >
-            {bulkLoading ? "আপলোড হচ্ছে..." : "CSV বাল্ক আপলোড"}
-          </Button>
+        <div className="rounded-xl border-2 border-dashed border-[#93c5fd] bg-[#eff6ff] p-5">
+          <div className="text-[14px] font-semibold text-[#1e3a8a] mb-1">
+            CSV ফাইল এখানে নির্বাচন করুন
+          </div>
+          <div className="text-[12px] text-[#1d4ed8] mb-3">
+            ১) টেমপ্লেট দেখে CSV প্রস্তুত করুন ২) ফাইল নির্বাচন করুন ৩) আপলোড
+            দিন
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+            <a
+              href="data:text/csv;charset=utf-8,name,email,phone,division,wardNo,ward,district,upazila,unionName,officeAddress,authorityMonths%0A"
+              download="admin-distributor-bulk-template.csv"
+              className="inline-flex items-center justify-center rounded border border-[#bfdbfe] bg-white px-3 py-2 text-[13px] text-[#1e3a8a] hover:bg-[#f8fbff]"
+            >
+              ⬇️ টেমপ্লেট ডাউনলোড
+            </a>
+
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+              className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+            />
+
+            <Button
+              onClick={() => void uploadBulkDistributors()}
+              disabled={bulkLoading}
+            >
+              {bulkLoading ? "আপলোড হচ্ছে..." : "CSV বাল্ক আপলোড"}
+            </Button>
+          </div>
         </div>
         <div className="mt-2 text-[12px] text-[#6b7280]">
           CSV কলাম:
           name,email,phone,division,wardNo,ward,district,upazila,unionName,officeAddress,authorityMonths
         </div>
         {bulkFile && (
-          <div className="mt-2 rounded border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[13px] text-[#1e3a8a]">
-            নির্বাচিত ফাইল: <strong>{bulkFile.name}</strong>
+          <div className="mt-3 rounded-lg border border-[#60a5fa] bg-[#dbeafe] px-4 py-3 text-[14px] text-[#1e40af]">
+            <div className="font-semibold">নির্বাচিত ফাইল</div>
+            <div>{bulkFile.name}</div>
+            <div className="text-[12px] mt-1">
+              সাইজ: {(bulkFile.size / 1024).toFixed(1)} KB
+            </div>
           </div>
         )}
         {bulkResult && (
@@ -439,6 +469,79 @@ export default function AdminDistributorsPage() {
       </SectionCard>
 
       <SectionCard title="ডিস্ট্রিবিউটর রেকর্ড">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-2 mb-3">
+          <select
+            value={filterDivision}
+            onChange={(e) => {
+              setFilterDivision(e.target.value);
+              setFilterWard("");
+            }}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব বিভাগ</option>
+            {BANGLADESH_DIVISIONS.map((division) => (
+              <option key={division} value={division}>
+                {division}
+              </option>
+            ))}
+          </select>
+          <input
+            value={filterWard}
+            onChange={(e) => setFilterWard(normalizeWardNo(e.target.value))}
+            placeholder="ওয়ার্ড (যেমন 01)"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <select
+            value={filterStatus}
+            onChange={(e) =>
+              setFilterStatus(
+                e.target.value as
+                  | ""
+                  | "Pending"
+                  | "Active"
+                  | "Suspended"
+                  | "Revoked",
+              )
+            }
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">সব স্ট্যাটাস</option>
+            <option value="Pending">অপেক্ষমান</option>
+            <option value="Active">সক্রিয়</option>
+            <option value="Suspended">স্থগিত</option>
+            <option value="Revoked">বাতিল</option>
+          </select>
+          <select
+            value={filterAuditRequired}
+            onChange={(e) =>
+              setFilterAuditRequired(e.target.value as "" | "true" | "false")
+            }
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">অডিট: সব</option>
+            <option value="true">অডিট প্রয়োজন</option>
+            <option value="false">অডিট প্রয়োজন নেই</option>
+          </select>
+          <input
+            value={filterSearch}
+            onChange={(e) => setFilterSearch(e.target.value)}
+            placeholder="সার্চ: নাম/ইমেইল/ফোন/আইডি"
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
+          />
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setFilterDivision("");
+              setFilterWard("");
+              setFilterStatus("");
+              setFilterAuditRequired("");
+              setFilterSearch("");
+            }}
+          >
+            ফিল্টার রিসেট
+          </Button>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>

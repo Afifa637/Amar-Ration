@@ -4,10 +4,7 @@ const { normalizeStockItem } = require("../utils/stock-items.utils");
 /**
  * Immutable OUT entry. Works with transaction session.
  */
-async function stockOut(
-  { distributorId, dateKey, qtyKg, ref, item = "চাল" },
-  session,
-) {
+async function stockOut({ distributorId, dateKey, qtyKg, ref, item }, session) {
   const normalizedItem = normalizeStockItem(item);
   if (!normalizedItem) {
     const error = new Error("Invalid stock item");

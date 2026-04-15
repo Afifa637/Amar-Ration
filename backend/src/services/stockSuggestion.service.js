@@ -2,6 +2,7 @@
 
 const DistributionSession = require("../models/DistributionSession");
 const DistributionRecord = require("../models/DistributionRecord");
+const StockLedger = require("../models/StockLedger");
 const Token = require("../models/Token");
 const Distributor = require("../models/Distributor");
 const { normalizeWardNo } = require("../utils/ward.utils");
@@ -25,16 +26,33 @@ function trendBangla(trend) {
   return "স্থিতিশীল";
 }
 
-async function sumActualKgBySession(sessionId) {
+function toFixed2(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function calcSuggestedStock(distributedAverage, insertedAverage) {
+  const distributedTarget = Number(distributedAverage || 0) * 1.1;
+  const insertedBaseline = Number(insertedAverage || 0) * 0.95;
+  return Math.ceil(Math.max(distributedTarget, insertedBaseline, 0));
+}
+
+function calcAccuracyPercent(inserted, distributed) {
+  const inVal = Number(inserted || 0);
+  const outVal = Number(distributed || 0);
+  if (inVal <= 0) return 0;
+  return toFixed2(Math.min(100, (outVal / inVal) * 100));
+}
+
+async function distributedByItemFromRecords(sessionId) {
   const usedTokens = await Token.find({ sessionId, status: "Used" })
     .select("_id rationItem")
     .lean();
   if (!usedTokens.length) {
     return {
-      totalKg: 0,
+      totalDistributedKg: 0,
       consumerCount: 0,
       byItem: STOCK_ITEMS.reduce((acc, item) => {
-        acc[item] = { totalKg: 0, consumerCount: 0 };
+        acc[item] = { distributedKg: 0, consumerCount: 0 };
         return acc;
       }, {}),
     };
@@ -50,7 +68,7 @@ async function sumActualKgBySession(sessionId) {
   );
 
   const byItem = STOCK_ITEMS.reduce((acc, item) => {
-    acc[item] = { totalKg: 0, consumerCount: 0 };
+    acc[item] = { distributedKg: 0, consumerCount: 0 };
     return acc;
   }, {});
 
@@ -62,22 +80,130 @@ async function sumActualKgBySession(sessionId) {
 
   for (const record of records) {
     const item = tokenItemMap.get(String(record.tokenId));
-    if (!byItem[item]) continue;
-    byItem[item].totalKg += Number(record.actualKg || 0);
+    if (!item || !byItem[item]) continue;
+    byItem[item].distributedKg += Number(record.actualKg || 0);
   }
 
-  for (const item of Object.keys(byItem)) {
-    byItem[item].totalKg = Number(byItem[item].totalKg.toFixed(2));
+  for (const item of STOCK_ITEMS) {
+    byItem[item].distributedKg = toFixed2(byItem[item].distributedKg);
   }
 
-  const totalKg = Object.values(byItem).reduce(
-    (sum, row) => sum + Number(row.totalKg || 0),
-    0,
+  const totalDistributedKg = toFixed2(
+    Object.values(byItem).reduce(
+      (sum, row) => sum + Number(row.distributedKg || 0),
+      0,
+    ),
   );
 
   return {
-    totalKg,
+    totalDistributedKg,
     consumerCount: usedTokens.length,
+    byItem,
+  };
+}
+
+async function sessionItemMetrics(session) {
+  const [usedTokenAgg, ledgerInAgg, ledgerOutAgg, recordFallback] =
+    await Promise.all([
+      Token.aggregate([
+        { $match: { sessionId: session._id, status: "Used" } },
+        {
+          $group: {
+            _id: "$rationItem",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      StockLedger.aggregate([
+        {
+          $match: {
+            distributorId: session.distributorId,
+            dateKey: session.dateKey,
+            type: "IN",
+          },
+        },
+        {
+          $group: {
+            _id: "$item",
+            totalKg: { $sum: "$qtyKg" },
+          },
+        },
+      ]),
+      StockLedger.aggregate([
+        {
+          $match: {
+            distributorId: session.distributorId,
+            dateKey: session.dateKey,
+            type: "OUT",
+          },
+        },
+        {
+          $group: {
+            _id: "$item",
+            totalKg: { $sum: "$qtyKg" },
+          },
+        },
+      ]),
+      distributedByItemFromRecords(session._id),
+    ]);
+
+  const byItem = STOCK_ITEMS.reduce((acc, item) => {
+    acc[item] = { insertedKg: 0, distributedKg: 0, consumerCount: 0 };
+    return acc;
+  }, {});
+
+  for (const row of usedTokenAgg) {
+    const item = normalizeStockItem(row._id);
+    if (!item || !byItem[item]) continue;
+    const count = Number(row.count || 0);
+    byItem[item].consumerCount += count;
+  }
+
+  for (const row of ledgerInAgg) {
+    const item = normalizeStockItem(row._id);
+    if (!item || !byItem[item]) continue;
+    byItem[item].insertedKg += Number(row.totalKg || 0);
+  }
+
+  for (const row of ledgerOutAgg) {
+    const item = normalizeStockItem(row._id);
+    if (!item || !byItem[item]) continue;
+    byItem[item].distributedKg += Number(row.totalKg || 0);
+  }
+
+  const ledgerOutTotal = Object.values(byItem).reduce(
+    (sum, row) => sum + Number(row.distributedKg || 0),
+    0,
+  );
+
+  if (ledgerOutTotal <= 0) {
+    for (const item of STOCK_ITEMS) {
+      byItem[item].distributedKg = Number(
+        recordFallback.byItem[item]?.distributedKg || 0,
+      );
+      byItem[item].consumerCount = Math.max(
+        byItem[item].consumerCount,
+        Number(recordFallback.byItem[item]?.consumerCount || 0),
+      );
+    }
+  }
+
+  let totalInsertedKg = 0;
+  let totalDistributedKg = 0;
+  let consumerCount = 0;
+
+  for (const item of STOCK_ITEMS) {
+    byItem[item].insertedKg = toFixed2(byItem[item].insertedKg);
+    byItem[item].distributedKg = toFixed2(byItem[item].distributedKg);
+    totalInsertedKg += byItem[item].insertedKg;
+    totalDistributedKg += byItem[item].distributedKg;
+    consumerCount += Number(byItem[item].consumerCount || 0);
+  }
+
+  return {
+    totalInsertedKg: toFixed2(totalInsertedKg),
+    totalDistributedKg: toFixed2(totalDistributedKg),
+    consumerCount,
     byItem,
   };
 }
@@ -116,7 +242,7 @@ async function getStockSuggestion(
   const sessions = await DistributionSession.find(sessionQuery)
     .sort({ closedAt: -1, updatedAt: -1 })
     .limit(3)
-    .select("_id dateKey closedAt")
+    .select("_id distributorId dateKey closedAt")
     .lean();
 
   const ordered = [...sessions].reverse();
@@ -127,49 +253,103 @@ async function getStockSuggestion(
       suggestedStock: 0,
       totalKg: 0,
       sessionsConsidered: 0,
+      insertedAverage: 0,
+      distributedAverage: 0,
+      averageGap: 0,
+      averageAccuracyPercent: 0,
+      insertedTotalKg: 0,
+      distributedTotalKg: 0,
     };
     return acc;
   }, {});
 
   for (const session of ordered) {
-    const { totalKg, consumerCount, byItem } = await sumActualKgBySession(
-      session._id,
-    );
+    const { totalInsertedKg, totalDistributedKg, consumerCount, byItem } =
+      await sessionItemMetrics(session);
 
     for (const item of STOCK_ITEMS) {
-      const kg = Number(byItem[item]?.totalKg || 0);
-      itemBreakdown[item].totalKg += kg;
+      const insertedKg = Number(byItem[item]?.insertedKg || 0);
+      const distributedKg = Number(byItem[item]?.distributedKg || 0);
+      itemBreakdown[item].insertedTotalKg += insertedKg;
+      itemBreakdown[item].distributedTotalKg += distributedKg;
+      itemBreakdown[item].totalKg += distributedKg;
       itemBreakdown[item].sessionsConsidered += 1;
     }
 
-    const effectiveTotalKg = selectedItem
-      ? Number(byItem[selectedItem]?.totalKg || 0)
-      : totalKg;
+    const effectiveInsertedKg = selectedItem
+      ? Number(byItem[selectedItem]?.insertedKg || 0)
+      : Number(totalInsertedKg || 0);
+    const effectiveDistributedKg = selectedItem
+      ? Number(byItem[selectedItem]?.distributedKg || 0)
+      : Number(totalDistributedKg || 0);
 
     rows.push({
       sessionId: String(session._id),
       date:
         session.dateKey ||
         new Date(session.closedAt || Date.now()).toISOString().slice(0, 10),
-      totalKg: Number(effectiveTotalKg.toFixed(2)),
+      totalKg: toFixed2(effectiveDistributedKg),
+      distributedKg: toFixed2(effectiveDistributedKg),
+      insertedKg: toFixed2(effectiveInsertedKg),
+      accuracyPercent: calcAccuracyPercent(
+        effectiveInsertedKg,
+        effectiveDistributedKg,
+      ),
       consumerCount,
     });
   }
 
-  const values = rows.map((r) => Number(r.totalKg || 0));
-  const movingAverage = values.length
-    ? values.reduce((sum, v) => sum + v, 0) / values.length
+  const distributedValues = rows.map((r) => Number(r.distributedKg || 0));
+  const insertedValues = rows.map((r) => Number(r.insertedKg || 0));
+
+  const distributedAverage = distributedValues.length
+    ? distributedValues.reduce((sum, v) => sum + v, 0) /
+      distributedValues.length
     : 0;
-  const suggestedStock = Math.ceil(movingAverage * 1.1);
-  const trend = trendLabel(values);
+  const insertedAverage = insertedValues.length
+    ? insertedValues.reduce((sum, v) => sum + v, 0) / insertedValues.length
+    : 0;
+  const averageGap = Math.max(0, insertedAverage - distributedAverage);
+  const averageAccuracyPercent =
+    rows.length > 0
+      ? rows.reduce((sum, row) => sum + Number(row.accuracyPercent || 0), 0) /
+        rows.length
+      : 0;
+
+  const movingAverage = distributedAverage;
+  const suggestedStock = calcSuggestedStock(
+    distributedAverage,
+    insertedAverage,
+  );
+  const trend = trendLabel(distributedValues);
 
   for (const item of STOCK_ITEMS) {
-    const total = Number(itemBreakdown[item].totalKg || 0);
+    const insertedTotal = Number(itemBreakdown[item].insertedTotalKg || 0);
+    const distributedTotal = Number(
+      itemBreakdown[item].distributedTotalKg || 0,
+    );
     const count = Number(itemBreakdown[item].sessionsConsidered || 0);
-    const avg = count > 0 ? total / count : 0;
-    itemBreakdown[item].movingAverage = Number(avg.toFixed(2));
-    itemBreakdown[item].suggestedStock = Math.ceil(avg * 1.1);
-    itemBreakdown[item].totalKg = Number(total.toFixed(2));
+
+    const itemInsertedAvg = count > 0 ? insertedTotal / count : 0;
+    const itemDistributedAvg = count > 0 ? distributedTotal / count : 0;
+    const itemGap = Math.max(0, itemInsertedAvg - itemDistributedAvg);
+    const itemAccuracy = calcAccuracyPercent(
+      itemInsertedAvg,
+      itemDistributedAvg,
+    );
+
+    itemBreakdown[item].insertedAverage = toFixed2(itemInsertedAvg);
+    itemBreakdown[item].distributedAverage = toFixed2(itemDistributedAvg);
+    itemBreakdown[item].movingAverage = toFixed2(itemDistributedAvg);
+    itemBreakdown[item].averageGap = toFixed2(itemGap);
+    itemBreakdown[item].averageAccuracyPercent = toFixed2(itemAccuracy);
+    itemBreakdown[item].suggestedStock = calcSuggestedStock(
+      itemDistributedAvg,
+      itemInsertedAvg,
+    );
+    itemBreakdown[item].totalKg = toFixed2(distributedTotal);
+    itemBreakdown[item].insertedTotalKg = toFixed2(insertedTotal);
+    itemBreakdown[item].distributedTotalKg = toFixed2(distributedTotal);
   }
 
   return {
@@ -178,14 +358,18 @@ async function getStockSuggestion(
     union: unionName || "all",
     item: selectedItem || "all",
     last3Sessions: rows,
-    movingAverage: Number(movingAverage.toFixed(2)),
+    movingAverage: toFixed2(movingAverage),
+    distributedAverage: toFixed2(distributedAverage),
+    insertedAverage: toFixed2(insertedAverage),
+    averageGap: toFixed2(averageGap),
+    averageAccuracyPercent: toFixed2(averageAccuracyPercent),
     suggestedStock,
     itemBreakdown,
     trend,
     trendBangla: trendBangla(trend),
     note: selectedItem
-      ? `গত ৩টি সেশনে ${selectedItem} আইটেমের গড় ভিত্তিতে হিসাব করা হয়েছে।`
-      : "গত ৩টি সেশনের গড় ভিত্তিতে হিসাব করা হয়েছে।",
+      ? `গত ৩টি সেশনে ${selectedItem} আইটেমের ইনসার্টেড বনাম ডিস্ট্রিবিউটেড গড় থেকে পরামর্শ করা হয়েছে।`
+      : "গত ৩টি সেশনের ইনসার্টেড বনাম ডিস্ট্রিবিউটেড গড় থেকে পরামর্শ করা হয়েছে।",
     generatedAt: new Date().toISOString(),
   };
 }
@@ -229,13 +413,28 @@ async function getSystemWideStockSuggestion(itemInput) {
     (sum, w) => sum + Number(w.suggestedStock || 0),
     0,
   );
+  const distributedAverage = wards.reduce(
+    (sum, w) => sum + Number(w.distributedAverage || 0),
+    0,
+  );
+  const insertedAverage = wards.reduce(
+    (sum, w) => sum + Number(w.insertedAverage || 0),
+    0,
+  );
+  const averageAccuracyPercent = wards.length
+    ? wards.reduce((sum, w) => sum + Number(w.averageAccuracyPercent || 0), 0) /
+      wards.length
+    : 0;
 
   return {
     wards,
     item: itemInput ? normalizeStockItem(itemInput) || "all" : "all",
     systemTotal: {
-      movingAverage: Number(movingAverage.toFixed(2)),
+      movingAverage: toFixed2(movingAverage),
       suggestedStock: Math.ceil(suggestedStock),
+      distributedAverage: toFixed2(distributedAverage),
+      insertedAverage: toFixed2(insertedAverage),
+      averageAccuracyPercent: toFixed2(averageAccuracyPercent),
     },
     generatedAt: new Date().toISOString(),
   };
@@ -243,10 +442,22 @@ async function getSystemWideStockSuggestion(itemInput) {
 
 async function getSystemStockSuggestionSimple(itemInput) {
   const full = await getSystemWideStockSuggestion(itemInput);
+  const global = await getStockSuggestion(
+    undefined,
+    undefined,
+    undefined,
+    itemInput,
+  );
   return {
     item: full.item,
     movingAverage: full.systemTotal.movingAverage,
     suggestedStock: full.systemTotal.suggestedStock,
+    distributedAverage: full.systemTotal.distributedAverage,
+    insertedAverage: full.systemTotal.insertedAverage,
+    averageAccuracyPercent: full.systemTotal.averageAccuracyPercent,
+    trend: global.trend,
+    trendBangla: global.trendBangla,
+    sampleSessions: global.last3Sessions.length,
     generatedAt: full.generatedAt,
   };
 }

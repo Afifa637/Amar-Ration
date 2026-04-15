@@ -20,7 +20,19 @@ router.put(
   authController.changePassword,
 );
 router.post("/logout", protect, authController.logout);
-router.get("/2fa/setup", protect, authorize("Admin"), authController.setup2FA);
+router.get(
+  "/2fa/status",
+  protect,
+  authorize("Admin"),
+  authController.get2FAStatus,
+);
+router.post("/2fa/setup", protect, authorize("Admin"), authController.setup2FA);
+router.get(
+  "/2fa/setup",
+  protect,
+  authorize("Admin"),
+  authController.setup2FAGetDeprecated,
+);
 router.post(
   "/2fa/setup/reset",
   protect,

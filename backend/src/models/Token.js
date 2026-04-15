@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const { STOCK_ITEMS } = require("../utils/stock-items.utils");
 
+const qtyByItemSchema = STOCK_ITEMS.reduce((acc, item) => {
+  acc[item] = { type: Number, default: 0 };
+  return acc;
+}, {});
+
 const TokenSchema = new mongoose.Schema(
   {
     tokenCode: { type: String, unique: true, required: true },
@@ -25,6 +30,7 @@ const TokenSchema = new mongoose.Schema(
     },
     rationItem: { type: String, enum: STOCK_ITEMS, default: "চাল" },
     rationQtyKg: { type: Number, required: true },
+    entitlementByItem: { type: qtyByItemSchema, default: () => ({}) },
     iotVerified: { type: Boolean, default: false },
     status: {
       type: String,

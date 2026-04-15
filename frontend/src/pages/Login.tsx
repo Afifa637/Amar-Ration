@@ -2,19 +2,9 @@ import { useNavigate } from "react-router-dom";
 
 const roleOptions = [
   {
-    key: "central-admin",
-    label: "কেন্দ্রীয় অ্যাডমিন লগইন",
-    description: "সিস্টেম কনফিগারেশন, অনুমোদন ও তদারকির জন্য",
-  },
-  {
     key: "distributor",
-    label: "ডিস্ট্রিবিউটর লগইন",
-    description: "স্টক, সেশন ও উপকারভোগী ব্যবস্থাপনার জন্য",
-  },
-  {
-    key: "field-distributor",
-    label: "ফিল্ড অপারেটর লগইন",
-    description: "স্ক্যান, টোকেন ও মাঠ পর্যায়ের বিতরণ কাজের জন্য",
+    label: "ডিস্ট্রিবিউটর / অ্যাডমিন লগইন",
+    description: "ডিস্ট্রিবিউটর ও অ্যাডমিন উভয়ের জন্য একীভূত লগইন",
   },
 ] as const;
 
@@ -33,7 +23,7 @@ export default function Login() {
           </p>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 md:grid-cols-1">
           {roleOptions.map((role) => (
             <button
               key={role.key}

@@ -56,8 +56,6 @@ export default function Topbar({
               <span className="ml-2 text-[11px] bg-white/15 px-2 py-0.5 rounded">
                 {auth.user.role === "central-admin" && "কেন্দ্রীয় প্রশাসক"}
                 {auth.user.role === "distributor" && "ডিস্ট্রিবিউটর"}
-                {auth.user.role === "field-distributor" &&
-                  "ফিল্ড ডিস্ট্রিবিউটর"}
               </span>
             )}
           </button>

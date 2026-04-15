@@ -3,11 +3,13 @@ import SectionCard from "../../components/SectionCard";
 import Button from "../../components/ui/Button";
 import {
   disableAdmin2FA,
+  getAdmin2FAStatus,
   getDistributorSettings,
   resetAdmin2FASetup,
   setupAdmin2FA,
   updateDistributorSettings,
   verifyAdmin2FA,
+  type Admin2FAStatus,
   type DistributorSettings,
 } from "../../services/api";
 
@@ -16,11 +18,27 @@ export default function AdminSettingsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [twoFAStatus, setTwoFAStatus] = useState<Admin2FAStatus>({
+    enabled: false,
+    setupPending: false,
+    pendingSince: null,
+    secret: null,
+  });
   const [twoFASecret, setTwoFASecret] = useState("");
-  const [twoFAQrDataUrl, setTwoFAQrDataUrl] = useState("");
   const [twoFAToken, setTwoFAToken] = useState("");
+  const [resetConfirmText, setResetConfirmText] = useState("");
   const [disablePassword, setDisablePassword] = useState("");
   const [disableToken, setDisableToken] = useState("");
+
+  const load2FAStatus = async () => {
+    try {
+      const status = await getAdmin2FAStatus();
+      setTwoFAStatus(status);
+      setTwoFASecret(status.secret || "");
+    } catch {
+      // keep previous state
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -39,6 +57,7 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     void load();
+    void load2FAStatus();
   }, []);
 
   const save = async () => {
@@ -56,14 +75,21 @@ export default function AdminSettingsPage() {
   };
 
   const onSetup2FA = async () => {
+    if (twoFAStatus.enabled) {
+      setError("2FA ইতোমধ্যে চালু আছে");
+      return;
+    }
     try {
       setLoading(true);
       setError("");
       setMessage("");
       const data = await setupAdmin2FA();
       setTwoFASecret(data.secret || "");
-      setTwoFAQrDataUrl(data.qrDataUrl || "");
-      setMessage("২FA setup শুরু হয়েছে। অ্যাপ দিয়ে QR স্ক্যান করে কোড দিন।");
+      setTwoFAToken("");
+      await load2FAStatus();
+      setMessage(
+        "২FA setup pending আছে। ম্যানুয়াল secret অ্যাপে যোগ করে কোড যাচাই করুন।",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "2FA setup ব্যর্থ");
     } finally {
@@ -88,6 +114,8 @@ export default function AdminSettingsPage() {
           : "2FA সক্রিয় হয়েছে",
       );
       setTwoFAToken("");
+      setTwoFASecret("");
+      await load2FAStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "2FA verify ব্যর্থ");
     } finally {
@@ -96,16 +124,21 @@ export default function AdminSettingsPage() {
   };
 
   const onResetSetup2FA = async () => {
+    if (resetConfirmText.trim() !== "CHANGE_2FA_SECRET") {
+      setError("নতুন secret নেওয়ার জন্য CHANGE_2FA_SECRET লিখুন");
+      return;
+    }
     try {
       setLoading(true);
       setError("");
       setMessage("");
       const data = await resetAdmin2FASetup();
       setTwoFASecret(data.secret || "");
-      setTwoFAQrDataUrl(data.qrDataUrl || "");
       setTwoFAToken("");
+      setResetConfirmText("");
+      await load2FAStatus();
       setMessage(
-        "Pending 2FA setup secret reset হয়েছে। নতুন QR স্ক্যান করুন।",
+        "Pending 2FA setup secret reset হয়েছে। নতুন secret অ্যাপে যোগ করুন।",
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "2FA setup reset ব্যর্থ");
@@ -130,7 +163,8 @@ export default function AdminSettingsPage() {
       setDisablePassword("");
       setDisableToken("");
       setTwoFASecret("");
-      setTwoFAQrDataUrl("");
+      setTwoFAToken("");
+      await load2FAStatus();
       setMessage("2FA বন্ধ করা হয়েছে");
     } catch (err) {
       setError(err instanceof Error ? err.message : "2FA disable ব্যর্থ");
@@ -158,76 +192,97 @@ export default function AdminSettingsPage() {
           <div className="border rounded p-3 bg-[#fbfdff]">
             <div className="font-semibold">Admin 2FA Security</div>
             <p className="text-sm text-gray-400 mt-0.5 mb-3">
-              অ্যাডমিন লগইনে TOTP 2FA চালু/বন্ধ করুন
+              অ্যাডমিন লগইনে OTP বাধ্যতামূলক রাখার জন্য নিরাপদ 2FA সেটিংস
             </p>
 
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Button onClick={() => void onSetup2FA()} disabled={loading}>
-                2FA Setup শুরু
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void onResetSetup2FA()}
-                disabled={loading}
-              >
-                Pending Setup Reset
-              </Button>
+            <div className="mb-3 rounded border px-3 py-2 text-[12px] bg-white leading-5">
+              {twoFAStatus.enabled
+                ? "অবস্থা: 2FA সক্রিয় (লগইনের পর OTP ছাড়া ড্যাশবোর্ডে ঢোকা যাবে না)"
+                : twoFAStatus.setupPending
+                  ? `অবস্থা: setup pending${twoFAStatus.pendingSince ? ` (শুরু: ${new Date(twoFAStatus.pendingSince).toLocaleString("bn-BD")})` : ""}`
+                  : "অবস্থা: 2FA সক্রিয় নয়"}
             </div>
 
-            {twoFAQrDataUrl && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start mb-3">
-                <div className="border rounded p-2 bg-white inline-flex items-center justify-center">
-                  <img
-                    src={twoFAQrDataUrl}
-                    alt="2FA QR"
-                    className="w-44 h-44"
-                  />
+            {!twoFAStatus.enabled && !twoFAStatus.setupPending && (
+              <div className="mb-3">
+                <Button onClick={() => void onSetup2FA()} disabled={loading}>
+                  2FA Setup শুরু করুন
+                </Button>
+              </div>
+            )}
+
+            {twoFAStatus.setupPending && (
+              <div className="mb-3 rounded border p-3 bg-white space-y-2">
+                <div className="text-[12px] text-gray-600">
+                  QR বাদ দেয়া হয়েছে। Authenticator app-এ নিচের secret manual
+                  ভাবে যোগ করুন। এই secret verify না করা পর্যন্ত একই থাকবে।
                 </div>
-                <div className="space-y-2">
-                  <div className="text-[12px] text-gray-600 break-all">
-                    Secret: <span className="font-mono">{twoFASecret}</span>
+                <div className="text-[12px] text-gray-700 break-all">
+                  Secret: <span className="font-mono">{twoFASecret}</span>
+                </div>
+                <input
+                  type="text"
+                  value={twoFAToken}
+                  onChange={(e) =>
+                    setTwoFAToken(e.target.value.replace(/\s/g, ""))
+                  }
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="Authenticator app থেকে 6-digit কোড দিন"
+                />
+                <Button onClick={() => void onVerify2FA()} disabled={loading}>
+                  2FA Verify করে চালু করুন
+                </Button>
+
+                <div className="border-t pt-3 mt-2 space-y-2">
+                  <div className="text-[12px] text-[#b45309]">
+                    Secret পরিবর্তন করতে চাইলে নিশ্চিতকরণ লিখুন:
+                    <span className="font-mono"> CHANGE_2FA_SECRET</span>
                   </div>
                   <input
                     type="text"
-                    value={twoFAToken}
-                    onChange={(e) =>
-                      setTwoFAToken(e.target.value.replace(/\s/g, ""))
-                    }
+                    value={resetConfirmText}
+                    onChange={(e) => setResetConfirmText(e.target.value)}
                     className="w-full border rounded px-3 py-2"
-                    placeholder="TOTP কোড দিন"
+                    placeholder="CHANGE_2FA_SECRET লিখুন"
                   />
-                  <Button onClick={() => void onVerify2FA()} disabled={loading}>
-                    2FA Verify করে চালু করুন
+                  <Button
+                    variant="secondary"
+                    onClick={() => void onResetSetup2FA()}
+                    disabled={loading}
+                  >
+                    নতুন Secret অনুরোধ করুন
                   </Button>
                 </div>
               </div>
             )}
 
-            <div className="border-t pt-3 mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-              <input
-                type="password"
-                value={disablePassword}
-                onChange={(e) => setDisablePassword(e.target.value)}
-                className="w-full border rounded px-3 py-2"
-                placeholder="Current password"
-              />
-              <input
-                type="text"
-                value={disableToken}
-                onChange={(e) =>
-                  setDisableToken(e.target.value.replace(/\s/g, ""))
-                }
-                className="w-full border rounded px-3 py-2"
-                placeholder="Current TOTP"
-              />
-              <Button
-                variant="danger"
-                onClick={() => void onDisable2FA()}
-                disabled={loading}
-              >
-                2FA Disable
-              </Button>
-            </div>
+            {twoFAStatus.enabled && (
+              <div className="border-t pt-3 mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="password"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="Current password"
+                />
+                <input
+                  type="text"
+                  value={disableToken}
+                  onChange={(e) =>
+                    setDisableToken(e.target.value.replace(/\s/g, ""))
+                  }
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="Current OTP code"
+                />
+                <Button
+                  variant="danger"
+                  onClick={() => void onDisable2FA()}
+                  disabled={loading}
+                >
+                  2FA Disable
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="border rounded p-3 bg-[#fbfdff]">

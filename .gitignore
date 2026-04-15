@@ -13,6 +13,14 @@ dist-ssr
 *.local
 backend/receipts
 backend/uploads/photos
+backend/uploads/audit-reports
+backend/uploads/appeals
+backend/uploads/**
+frontend/dist
+backend/dist
+backend/.env
+frontend/.env
+.env.*
 frontend/tsconfig.tsbuildinfo
 
 # Editor directories and files
@@ -26,3 +34,4 @@ frontend/tsconfig.tsbuildinfo
 *.sln
 *.sw?
 .env
+.git.zip

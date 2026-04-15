@@ -14,9 +14,11 @@ const API_BASE_URL =
   viteEnv.VITE_API_BASE_URL?.replace(/\/$/, "") ||
   (viteEnv.DEV ? "http://localhost:5000/api" : "/api");
 export const AUTH_STORAGE_KEY = "amar_ration_auth";
+export const REFRESH_STORAGE_KEY = "amar_ration_refresh";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
@@ -27,27 +29,46 @@ let refreshPromise: Promise<string | null> | null = null;
 type AuthStorage = {
   user?: unknown;
   token?: string;
-  refreshToken?: string;
 };
+
+function getStoredAuth(): AuthStorage | null {
+  const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AuthStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getStoredRefreshToken(): string {
+  return sessionStorage.getItem(REFRESH_STORAGE_KEY) || "";
+}
+
+function setStoredRefreshToken(token: string) {
+  if (!token) {
+    sessionStorage.removeItem(REFRESH_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(REFRESH_STORAGE_KEY, token);
+}
 
 async function tryRefreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (!raw) return null;
+      const stored = getStoredAuth();
+      if (!stored?.token) return null;
 
-      let stored: AuthStorage;
-      try {
-        stored = JSON.parse(raw) as AuthStorage;
-      } catch {
-        return null;
-      }
+      const refreshToken = getStoredRefreshToken();
+      if (!refreshToken) return null;
 
-      if (!stored?.refreshToken) return null;
-
-      const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-        refreshToken: stored.refreshToken,
-      });
+      const response = await axios.post(
+        `${API_BASE_URL}/auth/refresh`,
+        {
+          refreshToken,
+        },
+        { withCredentials: true },
+      );
 
       const nextToken: string | undefined = response?.data?.data?.token;
       const nextRefresh: string | undefined = response?.data?.data?.refreshToken;
@@ -56,9 +77,9 @@ async function tryRefreshAccessToken(): Promise<string | null> {
       const nextStored: AuthStorage = {
         ...stored,
         token: nextToken,
-        refreshToken: nextRefresh,
       };
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextStored));
+      setStoredRefreshToken(nextRefresh);
       api.defaults.headers.common.Authorization = `Bearer ${nextToken}`;
       return nextToken;
     })().finally(() => {
@@ -70,11 +91,27 @@ async function tryRefreshAccessToken(): Promise<string | null> {
 }
 
 function forceLogoutAndRedirect() {
+  if ((forceLogoutAndRedirect as { _inProgress?: boolean })._inProgress) return;
+  (forceLogoutAndRedirect as { _inProgress?: boolean })._inProgress = true;
+
   localStorage.removeItem(AUTH_STORAGE_KEY);
+  sessionStorage.removeItem(REFRESH_STORAGE_KEY);
   delete api.defaults.headers.common.Authorization;
 
   if (typeof window !== "undefined" && window.location.pathname !== "/") {
     window.location.href = "/";
+    return;
+  }
+
+  (forceLogoutAndRedirect as { _inProgress?: boolean })._inProgress = false;
+}
+
+export async function logoutSession(refreshToken?: string) {
+  try {
+    if (!refreshToken) return;
+    await api.post("/auth/logout", { refreshToken });
+  } catch {
+    // ignore logout errors and continue local cleanup
   }
 }
 
@@ -114,6 +151,7 @@ api.interceptors.response.use(
       requestUrl.includes("/auth/signup") ||
       requestUrl.includes("/auth/refresh") ||
       requestUrl.includes("/auth/logout");
+    let handledUnauthorized = false;
 
     if (status === 401 && !isAuthCall && requestConfig && !requestConfig._retry) {
       requestConfig._retry = true;
@@ -130,9 +168,10 @@ api.interceptors.response.use(
       }
 
       forceLogoutAndRedirect();
+      handledUnauthorized = true;
     }
 
-    if (status === 401 && !isAuthCall) {
+    if (status === 401 && !isAuthCall && !handledUnauthorized) {
       forceLogoutAndRedirect();
     }
 
@@ -177,6 +216,14 @@ export type DistributionToken = {
   _id: string;
   tokenCode: string;
   rationItem?: StockItem;
+  sessionId?: string;
+  sessionCode?: string;
+  session?: {
+    id: string;
+    dateKey: string;
+    status: "Planned" | "Open" | "Paused" | "Closed";
+    sessionCode?: string;
+  } | null;
   qrPayload?: string;
   qrImageDataUrl?: string;
   sessionDateKey?: string;
@@ -191,6 +238,20 @@ export type DistributionToken = {
         status: ConsumerStatus;
       };
   rationQtyKg: number;
+  expectedKg?: number;
+  actualKg?: number;
+  expectedByItem?: Record<StockItem, number>;
+  actualByItem?: Record<StockItem, number>;
+  mismatch?: boolean;
+  mismatchDetails?: Array<{
+    item: StockItem;
+    expectedKg: number;
+    actualKg: number;
+    diffKg: number;
+    reason: string;
+  }>;
+  division?: string;
+  ward?: string;
   status: TokenStatus;
   issuedAt: string;
   usedAt?: string;
@@ -213,13 +274,32 @@ export type DistributionRecord = {
       };
   expectedKg: number;
   actualKg: number;
+  item?: StockItem;
+  expectedByItem?: Record<StockItem, number>;
+  actualByItem?: Record<StockItem, number>;
+  mismatchDetails?: Array<{
+    item: StockItem;
+    expectedKg: number;
+    actualKg: number;
+    diffKg: number;
+    reason: string;
+  }>;
+  sessionId?: string | null;
+  sessionCode?: string;
+  dateKey?: string | null;
+  division?: string;
+  ward?: string;
   mismatch: boolean;
   createdAt: string;
 };
 
 export type DistributionSession = {
   _id: string;
+  sessionId?: string;
+  sessionCode?: string;
   distributorId: string;
+  division?: string;
+  ward?: string;
   dateKey: string;
   rationItem?: StockItem;
   status: "Planned" | "Open" | "Paused" | "Closed";
@@ -242,12 +322,25 @@ export type AuditSeverity = "Info" | "Warning" | "Critical";
 export type AuditLogEntry = {
   _id: string;
   actorUserId?: string;
+  actorName?: string;
   actorType: "Central Admin" | "Distributor" | "System";
   action: string;
   entityType?: string;
   entityId?: string;
   severity: AuditSeverity;
   meta?: Record<string, unknown>;
+  division?: string;
+  ward?: string;
+  sessionId?: string;
+  sessionCode?: string;
+  consumerCode?: string;
+  consumerName?: string;
+  distributorId?: string;
+  distributorCode?: string;
+  distributorName?: string;
+  tokenCode?: string;
+  item?: string;
+  mismatchReason?: string;
   createdAt: string;
 };
 
@@ -268,9 +361,41 @@ export type AuditReportRequest = {
   reportText?: string;
   dueAt?: string;
   overdueNotified?: boolean;
-  decision?: "Approved" | "Rejected" | "Suspended";
+  decision?: "Approved" | "Rejected" | "Suspended" | "ReRequested";
   reviewedAt?: string;
+  attachments?: Array<{
+    _id: string;
+    originalName: string;
+    storedName: string;
+    mimeType: string;
+    size: number;
+    relativePath: string;
+    uploadedAt?: string;
+  }>;
   status: "Requested" | "Submitted" | "Reviewed" | "Closed";
+  distributor?: {
+    id: string;
+    name?: string;
+    phone?: string;
+    email?: string;
+    division?: string;
+    ward?: string;
+    distributorId?: string;
+    distributorCode?: string;
+  };
+  linkedAudit?: {
+    id: string;
+    action?: string;
+    severity?: string;
+    entityType?: string;
+    entityId?: string;
+    sessionId?: string;
+    sessionCode?: string;
+    consumerCode?: string;
+    consumerName?: string;
+    tokenCode?: string;
+    createdAt?: string;
+  } | null;
   submittedAt?: string;
   createdAt: string;
 };
@@ -344,8 +469,27 @@ export type AdminDistributionMonitorRow = {
   mismatchCount?: number;
   expectedKg: number;
   actualKg: number;
+  shortfallKg?: number;
+  plannedKg?: number;
+  assignedUsers?: number;
+  scannedUsers?: number;
+  matchedUsers?: number;
+  mismatchUsers?: number;
+  pendingUsers?: number;
+  noShowUsers?: number;
+  criticalAlertsCount?: number;
   status: "Matched" | "Mismatch";
   action: string;
+  itemBreakdown?: Record<
+    StockItem,
+    {
+      plannedKg: number;
+      scanExpectedKg: number;
+      actualKg: number;
+      remainingKg: number;
+      mismatchKg: number;
+    }
+  >;
   stockBalanceByItem?: Record<StockItem, number>;
 };
 
@@ -365,8 +509,29 @@ export type AdminMonitoringSessionGroup = {
   openedAt?: string | null;
   closedAt?: string | null;
   updatedAt: string;
+  assignedUsers?: number;
+  permittedUsers?: number;
+  scannedUsers?: number;
+  matchedUsers?: number;
+  mismatchUsers?: number;
+  pendingUsers?: number;
+  noShowUsers?: number;
+  plannedKg?: number;
   expectedKg: number;
   actualKg: number;
+  shortfallKg?: number;
+  mismatchKg?: number;
+  criticalAlertsCount?: number;
+  itemBreakdown?: Record<
+    StockItem,
+    {
+      plannedKg: number;
+      scanExpectedKg: number;
+      actualKg: number;
+      remainingKg: number;
+      mismatchKg: number;
+    }
+  >;
   mismatchCount: number;
   stockBalanceByItem: Record<StockItem, number>;
   rows: AdminMonitoringRecordRow[];
@@ -379,8 +544,17 @@ export type AdminMonitoringDistributorGroup = {
   ward: string;
   sessions: AdminMonitoringSessionGroup[];
   totals: {
+    assignedUsers?: number;
+    scannedUsers?: number;
+    matchedUsers?: number;
+    mismatchUsers?: number;
+    pendingUsers?: number;
+    noShowUsers?: number;
+    plannedKg?: number;
     expectedKg: number;
     actualKg: number;
+    shortfallKg?: number;
+    criticalAlertsCount?: number;
     mismatchCount: number;
   };
 };
@@ -394,7 +568,7 @@ export type AdminDistributionMonitoringResponse = {
     total: number;
     pages: number;
   };
-  view: "live" | "history" | "mismatch";
+  view: "live" | "recent" | "planned" | "mismatch";
   filters: {
     distributorId?: string;
     division?: string;
@@ -430,6 +604,15 @@ export type MonitoringBlacklistEntry = {
   targetRefId: string;
   blockType: "Temporary" | "Permanent";
   reason: string;
+  reasonText?: string;
+  targetName?: string;
+  targetCode?: string;
+  division?: string;
+  ward?: string;
+  ownerDistributorName?: string;
+  ownerDistributorCode?: string;
+  createdByName?: string;
+  createdByType?: string;
   active: boolean;
   expiresAt?: string;
   createdAt: string;
@@ -438,7 +621,33 @@ export type MonitoringBlacklistEntry = {
 export type OfflineQueueItem = {
   _id: string;
   distributorId: string;
+  distributorName?: string;
+  distributorCode?: string;
   payload: Record<string, unknown>;
+  payloadSummary?: {
+    actionType?: string;
+    sessionId?: string;
+    sessionCode?: string;
+    consumerCode?: string;
+    consumerName?: string;
+    tokenCode?: string;
+    item?: string;
+    expectedQtyKg?: number;
+    actualQtyKg?: number;
+  };
+  actionType?: string;
+  division?: string;
+  ward?: string;
+  sessionId?: string;
+  sessionCode?: string;
+  sessionDate?: string;
+  sessionStatus?: string;
+  consumerCode?: string;
+  consumerName?: string;
+  tokenCode?: string;
+  item?: string;
+  expectedQtyKg?: number;
+  actualQtyKg?: number;
   status: "Pending" | "Synced" | "Failed";
   errorMessage?: string;
   resolvedAction?: string;
@@ -494,6 +703,13 @@ export type StockSummaryResponse = {
     }
   >;
   entries: StockLedgerEntry[];
+  context?: {
+    division?: string;
+    ward?: string;
+    sessionId?: string | null;
+    sessionCode?: string;
+    sessionStatus?: string | null;
+  };
 };
 
 export type NotificationItem = {
@@ -512,6 +728,7 @@ export type ConsumerCardRow = {
   consumerCode: string;
   name: string;
   category: ConsumerCategory;
+  division?: string;
   ward?: string;
   unionName?: string;
   upazila?: string;
@@ -523,6 +740,7 @@ export type ConsumerCardRow = {
   validTo?: string | null;
   qrPayload: string;
   qrImageDataUrl?: string | null;
+  photoUrl?: string | null;
   createdAt: string;
 };
 
@@ -534,17 +752,65 @@ export type ConsumerCardDetail = ConsumerCardRow & {
 export type DistributionReportRow = {
   _id: string;
   createdAt: string;
+  dateTime?: string;
+  tokenId?: string;
   tokenCode: string;
   tokenStatus: TokenStatus;
+  sessionId?: string | null;
+  sessionCode?: string;
+  sessionDate?: string;
+  sessionStatus?: string;
+  distributorId?: string;
+  distributorName?: string;
+  distributorCode?: string;
   expectedKg: number;
   actualKg: number;
+  rationItem?: StockItem;
+  expectedByItem?: Record<StockItem, number>;
+  actualByItem?: Record<StockItem, number>;
+  mismatchItem?: string;
+  mismatchReason?: string;
+  mismatchDetails?: Array<{
+    item: StockItem;
+    expectedKg: number;
+    actualKg: number;
+    diffKg: number;
+    reason: string;
+  }>;
   mismatch: boolean;
   consumerCode: string;
   consumerName: string;
+  consumerId?: string;
   ward: string;
   category: ConsumerCategory | "";
   division?: string;
+  complaintId?: string;
 };
+
+export interface ComplaintItemRow {
+  _id: string;
+  complaintId: string;
+  consumerId?: string;
+  consumerCode?: string;
+  consumerName?: string;
+  consumerPhone: string;
+  distributorId?: string;
+  distributorName?: string;
+  distributorCode?: string;
+  division?: string;
+  ward?: string;
+  sessionId?: string;
+  sessionCode?: string;
+  sessionDate?: string;
+  sessionStatus?: string;
+  tokenCode?: string;
+  category: string;
+  description: string;
+  status: "open" | "under_review" | "resolved" | "rejected";
+  adminNote?: string;
+  resolvedAt?: string;
+  createdAt: string;
+}
 
 export type TokenAnalytics = {
   byStatus: Record<TokenStatus, number>;
@@ -596,6 +862,115 @@ export type DistributorSettings = {
   };
 };
 
+export type DistributorDashboardSummary = {
+  distributor: {
+    id: string;
+    wardNo?: string;
+    division?: string;
+    district?: string;
+    upazila?: string;
+    unionName?: string;
+    ward?: string;
+    status?: string;
+  };
+  stats: {
+    totalConsumers: number;
+    activeConsumers: number;
+    issuedTokens: number;
+    usedTokens: number;
+    cancelledTokens?: number;
+    expiredTokens?: number;
+    mismatchCount: number;
+    pendingOffline: number;
+    stockOutTodayKg: number;
+  };
+  session?: {
+    id: string;
+    dateKey: string;
+    status: "Planned" | "Open" | "Paused" | "Closed";
+    rationItem?: StockItem;
+    openedAt?: string | null;
+    closedAt?: string | null;
+  } | null;
+  sessions?: {
+    total: number;
+    planned: number;
+    open: number;
+    paused: number;
+    closed: number;
+    recent: Array<{
+      id: string;
+      dateKey: string;
+      status: "Planned" | "Open" | "Paused" | "Closed";
+      rationItem?: StockItem;
+      openedAt?: string | null;
+      closedAt?: string | null;
+      issuedTokens: number;
+      usedTokens: number;
+      cancelledTokens: number;
+    }>;
+  };
+  stock?: {
+    today: {
+      outKg: number;
+      byItem?: Record<
+        string,
+        { inKg: number; outKg: number; adjustKg: number; balanceKg: number }
+      >;
+    };
+  };
+  trends?: {
+    today?: {
+      issuedTokens: number;
+      usedTokens: number;
+      mismatchCount: number;
+      stockOutKg: number;
+    };
+    last7Days: Array<{
+      dateKey: string;
+      issuedTokens: number;
+      usedTokens: number;
+      mismatchCount: number;
+      stockOutKg: number;
+    }>;
+  };
+  quality?: {
+    mismatchRate: number;
+    fulfilmentRate: number;
+  };
+  recentAudit?: AuditLogEntry[];
+};
+
+export type BulkRegisterUploadResponse = {
+  dryRun: boolean;
+  total: number;
+  inserted: number;
+  skipped: number;
+  errors: Array<{
+    row: number;
+    name: string;
+    nid: string;
+    code?: string;
+    reason: string;
+  }>;
+  summary?: {
+    total: number;
+    valid: number;
+    inserted: number;
+    duplicate: number;
+    invalid: number;
+    ignoredOutOfScope: number;
+    failed: number;
+    skipped: number;
+  };
+  details?: {
+    invalidRows: Array<{ row: number; name: string; nid: string; reason: string }>;
+    duplicateRows: Array<{ row: number; name: string; nid: string; reason: string }>;
+    ignoredRows: Array<{ row: number; name: string; nid: string; reason: string }>;
+    failedRows: Array<{ row: number; name: string; nid: string; reason: string }>;
+  };
+};
+
 export interface ComplaintStats {
   total: number;
   open: number;
@@ -603,6 +978,49 @@ export interface ComplaintStats {
   resolved: number;
   rejected: number;
   byCategory?: Record<string, number>;
+}
+
+export type AppealStatus = "pending" | "under_review" | "approved" | "rejected";
+
+export interface AppealAttachment {
+  _id: string;
+  originalName: string;
+  storedName: string;
+  mimeType: string;
+  size: number;
+  relativePath: string;
+  uploadedAt?: string;
+}
+
+export interface AppealItem {
+  _id: string;
+  appealId: string;
+  consumerPhone: string;
+  reason: string;
+  supportingInfo?: string;
+  status: AppealStatus;
+  createdAt: string;
+  adminNote?: string;
+  division?: string;
+  ward?: string;
+  attachments?: AppealAttachment[];
+  consumerId?: {
+    _id?: string;
+    consumerCode?: string;
+    name?: string;
+    division?: string;
+    ward?: string;
+  };
+  distributorUserId?: {
+    _id?: string;
+    name?: string;
+    phone?: string;
+  };
+  blacklistEntryId?: {
+    _id?: string;
+    reason?: string;
+    blockType?: string;
+  };
 }
 
 export interface MonthlyPerformanceRow {
@@ -631,6 +1049,10 @@ export interface StockSuggestionResult {
   item?: StockItem | "all";
   movingAverage: number;
   suggestedStock: number;
+  insertedAverage?: number;
+  distributedAverage?: number;
+  averageGap?: number;
+  averageAccuracyPercent?: number;
   itemBreakdown?: Record<
     StockItem,
     {
@@ -638,6 +1060,12 @@ export interface StockSuggestionResult {
       suggestedStock: number;
       totalKg: number;
       sessionsConsidered: number;
+      insertedAverage?: number;
+      distributedAverage?: number;
+      averageGap?: number;
+      averageAccuracyPercent?: number;
+      insertedTotalKg?: number;
+      distributedTotalKg?: number;
     }
   >;
   trend: "increasing" | "decreasing" | "stable";
@@ -648,12 +1076,22 @@ export interface StockSuggestionResult {
     sessionId: string;
     date: string;
     totalKg: number;
+    insertedKg?: number;
+    distributedKg?: number;
+    accuracyPercent?: number;
     consumerCount: number;
   }>;
 }
 
 export interface QueueStatus {
   sessionId: string;
+  sessionCode?: string;
+  sessionDate?: string;
+  sessionStatus?: string;
+  division?: string;
+  ward?: string;
+  distributorId?: string;
+  distributorName?: string;
   currentlyServing: {
     id: string;
     queueNumber: number;
@@ -669,7 +1107,57 @@ export interface QueueStatus {
     consumerCode: string;
     category?: string;
   }>;
+  summary?: {
+    totalInQueue: number;
+    waiting: number;
+    serving: number;
+    served: number;
+    skipped: number;
+    mismatchCount: number;
+    servedCount: number;
+    remainingCount: number;
+  };
   lastUpdated: string;
+}
+
+export interface QueueEntryRow {
+  _id: string;
+  sessionId?: string;
+  sessionCode?: string;
+  sessionDate?: string;
+  sessionStatus?: string;
+  division?: string;
+  ward?: string;
+  distributorId?: string;
+  distributorName?: string;
+  queueNumber: number;
+  status: "waiting" | "serving" | "done" | "skipped" | string;
+  consumerId?: string;
+  consumerCode?: string;
+  consumerName?: string;
+  category?: string;
+  tokenId?: string;
+  tokenCode?: string;
+  tokenStatus?: string;
+  rationItem?: StockItem;
+  expectedKg?: number;
+  actualKg?: number;
+  expectedByItem?: Record<StockItem, number>;
+  actualByItem?: Record<StockItem, number>;
+  mismatch?: boolean;
+  mismatchItem?: string;
+  mismatchReason?: string;
+  mismatchDetails?: Array<{
+    item: StockItem;
+    expectedKg: number;
+    actualKg: number;
+    diffKg: number;
+    reason: string;
+  }>;
+  joinedAt?: string;
+  issuedAt?: string;
+  calledAt?: string;
+  completedAt?: string;
 }
 
 export type SettingsProfile = {
@@ -685,6 +1173,13 @@ export type SettingsProfile = {
   upazila?: string;
   unionName?: string;
   ward?: string;
+};
+
+export type Admin2FAStatus = {
+  enabled: boolean;
+  setupPending: boolean;
+  pendingSince?: string | null;
+  secret?: string | null;
 };
 
 type Pagination = {
@@ -775,6 +1270,9 @@ export async function getConsumerCards(params?: {
   page?: number;
   limit?: number;
   search?: string;
+  division?: string;
+  ward?: string;
+  wardNo?: string;
   cardStatus?: "Active" | "Inactive" | "Revoked";
   qrStatus?: "Valid" | "Revoked" | "Expired" | "Invalid";
   withImage?: boolean;
@@ -875,7 +1373,11 @@ export async function getDistributionRecords(params?: {
   const response = await api.get<{
     data: {
       records: DistributionRecord[];
-      stock: { dateKey: string; stockOutKg: number };
+      stock: {
+        dateKey: string;
+        stockOutKg: number;
+        byItem?: Record<StockItem, number>;
+      };
       pagination: Pagination;
     };
   }>("/distribution/records", { params });
@@ -894,6 +1396,15 @@ export async function getDistributionStats(params?: { sessionId?: string }) {
         completedRecords: number;
         expectedKg: number;
         actualKg: number;
+        byItem?: Record<
+          StockItem,
+          { expectedKg: number; actualKg: number; mismatchCount: number }
+        >;
+        totals?: {
+          expectedKg: number;
+          actualKg: number;
+          label?: string;
+        };
       };
     };
   }>("/distribution/stats", { params });
@@ -915,7 +1426,15 @@ export async function getDistributionSessions(params?: {
   distributorId?: string;
 }) {
   const response = await api.get<{
-    data: { sessions: DistributionSession[]; pagination: Pagination };
+    data: {
+      sessions: DistributionSession[];
+      context?: {
+        distributorId?: string | null;
+        division?: string;
+        ward?: string;
+      };
+      pagination: Pagination;
+    };
   }>("/distribution/sessions", { params });
   return response.data.data;
 }
@@ -977,7 +1496,7 @@ export async function recordStockIn(payload: {
   ward?: string;
   wardNo?: string;
   qtyKg: number;
-  item?: StockItem;
+  item: StockItem;
   ref?: string;
   dateKey?: string;
 }) {
@@ -1008,6 +1527,9 @@ export async function getAdminDistributors(params?: {
   division?: string;
   ward?: string;
   wardNo?: string;
+  status?: "Active" | "Suspended" | "Revoked" | "Pending";
+  auditRequired?: boolean;
+  search?: string;
 }) {
   const response = await api.get<{ data: AdminDistributorsResponse }>(
     "/admin/distributors",
@@ -1066,15 +1588,20 @@ export async function adminResetDistributorPassword(
   return response.data;
 }
 
-export async function getAdminCardsSummary() {
+export async function getAdminCardsSummary(params?: {
+  division?: string;
+  ward?: string;
+  wardNo?: string;
+}) {
   const response = await api.get<{ data: AdminCardsSummary }>(
     "/admin/cards/summary",
+    { params },
   );
   return response.data.data;
 }
 
 export async function getAdminDistributionMonitoring(params?: {
-  view?: "live" | "history" | "mismatch";
+  view?: "live" | "recent" | "planned" | "history" | "mismatch";
   distributorId?: string;
   division?: string;
   ward?: string;
@@ -1088,6 +1615,30 @@ export async function getAdminDistributionMonitoring(params?: {
     "/admin/distribution/monitoring",
     { params },
   );
+  return response.data.data;
+}
+
+export async function applyAdminAlertAction(
+  alertId: string,
+  payload: {
+    action:
+      | "acknowledge"
+      | "under_review"
+      | "pause_session"
+      | "stop_session"
+      | "request_audit";
+    note?: string;
+    sessionId?: string;
+    distributorId?: string;
+  },
+) {
+  const response = await api.patch<{
+    data: {
+      alertId: string;
+      action: string;
+      session: { id: string; status: string; dateKey: string } | null;
+    };
+  }>(`/admin/alerts/${alertId}/action`, payload);
   return response.data.data;
 }
 
@@ -1180,11 +1731,14 @@ export async function getAdminAuditRequests() {
 
 export async function reviewAuditReportRequest(
   requestId: string,
-  decision: "Approved" | "Rejected" | "Suspended",
+  payload: {
+    decision: "Approved" | "Rejected" | "Suspended" | "ReRequested";
+    note?: string;
+  },
 ) {
   const response = await api.patch<{ data: { request: AuditReportRequest } }>(
     `/admin/audit/requests/${requestId}/review`,
-    { decision },
+    payload,
   );
   return response.data.data;
 }
@@ -1207,13 +1761,38 @@ export async function getDistributionReport(params?: {
   division?: string;
   ward?: string;
   wardNo?: string;
+  sessionId?: string;
+  sessionCode?: string;
+  distributorId?: string;
+  consumerCode?: string;
+  consumerName?: string;
+  item?: StockItem;
+  mismatchReason?: string;
   sortBy?: "createdAt" | "tokenCode" | "expectedKg" | "actualKg";
   sortOrder?: "asc" | "desc";
   page?: number;
   limit?: number;
 }) {
   const response = await api.get<{
-    data: { rows: DistributionReportRow[]; pagination: PaginationData };
+    data: {
+      rows: DistributionReportRow[];
+      totals?: {
+        expectedKg: number;
+        actualKg: number;
+        differenceKg?: number;
+        mismatches: number;
+        itemWise?: Record<
+          StockItem,
+          { expectedKg: number; actualKg: number; differenceKg?: number }
+        >;
+      };
+      scope?: {
+        division?: string;
+        ward?: string;
+        distributorId?: string | null;
+      };
+      pagination: PaginationData;
+    };
   }>("/reports/distribution", { params });
   return response.data.data;
 }
@@ -1375,12 +1954,39 @@ export async function getDistributorAuditRequests() {
 export async function submitAuditReport(
   requestId: string,
   reportText: string,
+  files?: File[],
 ) {
+  const formData = new FormData();
+  formData.append("reportText", reportText);
+  (files || []).forEach((file) => formData.append("files", file));
+
   const response = await api.post<{ data: { request: AuditReportRequest } }>(
     `/distributor/audit-requests/${requestId}/submit`,
-    { reportText },
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
   );
   return response.data.data;
+}
+
+export async function downloadAdminAuditRequestFile(
+  requestId: string,
+  fileId: string,
+): Promise<Blob> {
+  const response = await api.get(`/admin/audit/requests/${requestId}/files/${fileId}`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}
+
+export async function downloadDistributorAuditRequestFile(
+  requestId: string,
+  fileId: string,
+): Promise<Blob> {
+  const response = await api.get(
+    `/distributor/audit-requests/${requestId}/files/${fileId}`,
+    { responseType: "blob" },
+  );
+  return response.data as Blob;
 }
 
 export async function resolveOfflineQueueItem(
@@ -1403,6 +2009,13 @@ export async function getDistributorSettings() {
     };
   }>("/settings");
   return response.data.data;
+}
+
+export async function getDistributorDashboardSummary() {
+  const response = await api.get<DistributorDashboardSummary>(
+    "/distributor/dashboard",
+  );
+  return response.data;
 }
 
 export async function updateDistributorSettings(payload: DistributorSettings) {
@@ -1500,16 +2113,23 @@ export async function clearReadNotifications() {
 }
 
 export async function setupAdmin2FA() {
-  const response = await api.get<{
-    data: { secret: string; qrDataUrl: string; message?: string };
+  const response = await api.post<{
+    data: { secret: string; message?: string };
   }>("/auth/2fa/setup");
+  return response.data.data;
+}
+
+export async function getAdmin2FAStatus() {
+  const response = await api.get<{ data: Admin2FAStatus }>("/auth/2fa/status");
   return response.data.data;
 }
 
 export async function resetAdmin2FASetup() {
   const response = await api.post<{
-    data: { secret: string; qrDataUrl: string; message?: string };
-  }>("/auth/2fa/setup/reset");
+    data: { secret: string; message?: string };
+  }>("/auth/2fa/setup/reset", {
+    confirmText: "CHANGE_2FA_SECRET",
+  });
   return response.data.data;
 }
 
@@ -1538,13 +2158,7 @@ export async function bulkRegisterUpload(file: File, dryRun: boolean) {
   const formData = new FormData();
   formData.append("file", file);
   const response = await api.post<{
-    data: {
-      dryRun: boolean;
-      total: number;
-      inserted: number;
-      skipped: number;
-      errors: Array<{ row: number; name: string; nid: string; reason: string }>;
-    };
+    data: BulkRegisterUploadResponse;
   }>(`/bulk-register/upload?dryRun=${dryRun ? "true" : "false"}`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -1755,7 +2369,7 @@ export async function submitComplaint(data: object) {
 export async function getComplaints(params?: object) {
   const response = await api.get<{
     data: {
-      items: Array<Record<string, unknown>>;
+      items: ComplaintItemRow[];
       pagination: PaginationData;
     };
   }>("/complaints", { params });
@@ -1776,17 +2390,47 @@ export async function getComplaintStats() {
 }
 
 // Blacklist Appeals
-export async function submitAppeal(data: object) {
-  const response = await axios.post<{ data: { appealId: string } }>(
-    `${API_BASE_URL}/appeals`,
-    data,
+export async function submitAppeal(data: {
+  consumerId?: string;
+  consumerCode?: string;
+  consumerPhone?: string;
+  reason: string;
+  supportingInfo?: string;
+  attachments?: File[];
+}) {
+  const formData = new FormData();
+  if (data.consumerId) formData.append("consumerId", data.consumerId);
+  if (data.consumerCode) formData.append("consumerCode", data.consumerCode);
+  if (data.consumerPhone) formData.append("consumerPhone", data.consumerPhone);
+  formData.append("reason", data.reason);
+  if (data.supportingInfo) formData.append("supportingInfo", data.supportingInfo);
+  for (const file of data.attachments || []) {
+    formData.append("attachments", file);
+  }
+
+  const response = await api.post<{ data: { appealId: string } }>(
+    "/appeals",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    },
   );
   return response.data.data;
 }
 
-export async function getAppeals(params?: object) {
+export async function getAppeals(params?: {
+  page?: number;
+  limit?: number;
+  status?: AppealStatus | "";
+  startDate?: string;
+  endDate?: string;
+  division?: string;
+  ward?: string;
+}) {
   const response = await api.get<{
-    data: { items: Array<Record<string, unknown>>; pagination: PaginationData };
+    data: { items: AppealItem[]; pagination: PaginationData };
   }>("/appeals", { params });
   return response.data.data;
 }
@@ -1797,6 +2441,16 @@ export async function reviewAppeal(appealId: string, data: object) {
     data,
   );
   return response.data.data;
+}
+
+export async function downloadAppealAttachment(
+  appealId: string,
+  fileId: string,
+): Promise<Blob> {
+  const response = await api.get(`/appeals/${appealId}/files/${fileId}`, {
+    responseType: "blob",
+  });
+  return response.data as Blob;
 }
 
 // Eligibility
@@ -1889,7 +2543,13 @@ export async function getSystemStockSuggestion(item?: StockItem) {
     data: {
       wards: StockSuggestionResult[];
       item?: StockItem | "all";
-      systemTotal: { movingAverage: number; suggestedStock: number };
+      systemTotal: {
+        movingAverage: number;
+        suggestedStock: number;
+        distributedAverage?: number;
+        insertedAverage?: number;
+        averageAccuracyPercent?: number;
+      };
       generatedAt: string;
     };
   }>("/stock-suggestion/system", {
@@ -1928,6 +2588,12 @@ export async function getSimpleStockSuggestion(item?: StockItem) {
       item?: StockItem | "all";
       movingAverage: number;
       suggestedStock: number;
+      distributedAverage?: number;
+      insertedAverage?: number;
+      averageAccuracyPercent?: number;
+      trend: "increasing" | "decreasing" | "stable";
+      trendBangla: string;
+      sampleSessions: number;
       generatedAt: string;
     };
   }>("/stock-suggestion/simple", {
@@ -1968,7 +2634,26 @@ export async function skipQueueEntry(entryId: string) {
 export async function getSessionQueueEntries(sessionId: string, page = 1, limit = 20) {
   const response = await api.get<{
     data: {
-      items: Array<Record<string, unknown>>;
+      session?: {
+        sessionId: string;
+        sessionCode?: string;
+        sessionDate?: string;
+        sessionStatus?: string;
+        division?: string;
+        ward?: string;
+        distributorId?: string;
+        distributorName?: string;
+      };
+      summary?: {
+        total: number;
+        waiting: number;
+        serving: number;
+        served: number;
+        skipped: number;
+        mismatchCount: number;
+        remaining: number;
+      };
+      items: QueueEntryRow[];
       pagination: PaginationData;
     };
   }>(`/queue/session/${sessionId}`, { params: { page, limit } });

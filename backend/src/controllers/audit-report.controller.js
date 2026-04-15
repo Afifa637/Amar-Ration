@@ -1,11 +1,20 @@
 const AuditReportRequest = require("../models/AuditReportRequest");
 const User = require("../models/User");
 const Distributor = require("../models/Distributor");
+const path = require("path");
+const fs = require("fs");
 const { writeAudit } = require("../services/audit.service");
 const {
   notifyAdmins,
   notifyUser,
 } = require("../services/notification.service");
+
+function getAuditUploadsDir() {
+  return path.resolve(
+    process.cwd(),
+    process.env.AUDIT_REPORT_UPLOADS_DIR || "./uploads/audit-reports",
+  );
+}
 
 async function applyOverdueSuspension(request) {
   if (!request?.dueAt) return false;
@@ -63,6 +72,77 @@ async function listAuditReportRequests(req, res) {
       .populate("auditLogId")
       .lean();
 
+    const distributorUserIds = Array.from(
+      new Set(
+        items
+          .map((item) =>
+            String(item.distributorUserId?._id || item.distributorUserId || ""),
+          )
+          .filter(Boolean),
+      ),
+    );
+    const distributorProfiles = distributorUserIds.length
+      ? await Distributor.find({ userId: { $in: distributorUserIds } })
+          .select("_id userId division wardNo ward")
+          .lean()
+      : [];
+    const profileMap = new Map(
+      distributorProfiles.map((profile) => [String(profile.userId), profile]),
+    );
+
+    const enrichedItems = items.map((item) => {
+      const userId = String(
+        item.distributorUserId?._id || item.distributorUserId || "",
+      );
+      const profile = profileMap.get(userId);
+      const log =
+        item.auditLogId && typeof item.auditLogId === "object"
+          ? item.auditLogId
+          : null;
+      return {
+        ...item,
+        distributor: {
+          id: userId,
+          name:
+            (item.distributorUserId &&
+            typeof item.distributorUserId === "object"
+              ? item.distributorUserId.name
+              : "") || "",
+          phone:
+            (item.distributorUserId &&
+            typeof item.distributorUserId === "object"
+              ? item.distributorUserId.phone
+              : "") || "",
+          email:
+            (item.distributorUserId &&
+            typeof item.distributorUserId === "object"
+              ? item.distributorUserId.email
+              : "") || "",
+          division: profile?.division || "",
+          ward: profile?.wardNo || profile?.ward || "",
+          distributorId: profile?._id ? String(profile._id) : "",
+          distributorCode: profile?._id
+            ? `DST-${String(profile._id).slice(-6).toUpperCase()}`
+            : "",
+        },
+        linkedAudit: log
+          ? {
+              id: String(log._id),
+              action: log.action || "",
+              severity: log.severity || "",
+              entityType: log.entityType || "",
+              entityId: log.entityId || "",
+              sessionId: String(log.meta?.sessionId || ""),
+              sessionCode: String(log.meta?.sessionCode || ""),
+              consumerCode: String(log.meta?.consumerCode || ""),
+              consumerName: String(log.meta?.consumerName || ""),
+              tokenCode: String(log.meta?.tokenCode || ""),
+              createdAt: log.createdAt,
+            }
+          : null,
+      };
+    });
+
     const overdueItems = items.filter(
       (item) =>
         ["Requested", "Submitted"].includes(item.status) &&
@@ -77,7 +157,7 @@ async function listAuditReportRequests(req, res) {
       );
     }
 
-    res.json({ success: true, data: { items } });
+    res.json({ success: true, data: { items: enrichedItems } });
   } catch (error) {
     console.error("listAuditReportRequests error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -153,6 +233,46 @@ async function listMyAuditReportRequests(req, res) {
       .sort({ createdAt: -1 })
       .populate("auditLogId")
       .lean();
+
+    const distributorProfile = await Distributor.findOne({
+      userId: req.user.userId,
+    })
+      .select("_id division wardNo ward")
+      .lean();
+
+    const enrichedItems = items.map((item) => {
+      const log =
+        item.auditLogId && typeof item.auditLogId === "object"
+          ? item.auditLogId
+          : null;
+      return {
+        ...item,
+        distributor: {
+          id: String(req.user.userId),
+          division: distributorProfile?.division || "",
+          ward: distributorProfile?.wardNo || distributorProfile?.ward || "",
+          distributorId: distributorProfile?._id
+            ? String(distributorProfile._id)
+            : "",
+          distributorCode: distributorProfile?._id
+            ? `DST-${String(distributorProfile._id).slice(-6).toUpperCase()}`
+            : "",
+        },
+        linkedAudit: log
+          ? {
+              id: String(log._id),
+              action: log.action || "",
+              severity: log.severity || "",
+              sessionId: String(log.meta?.sessionId || ""),
+              sessionCode: String(log.meta?.sessionCode || ""),
+              consumerCode: String(log.meta?.consumerCode || ""),
+              consumerName: String(log.meta?.consumerName || ""),
+              tokenCode: String(log.meta?.tokenCode || ""),
+              createdAt: log.createdAt,
+            }
+          : null,
+      };
+    });
     const overdue = items.find(
       (item) =>
         ["Requested", "Submitted"].includes(item.status) &&
@@ -165,7 +285,7 @@ async function listMyAuditReportRequests(req, res) {
       await applyOverdueSuspension(overdue);
     }
 
-    res.json({ success: true, data: { items } });
+    res.json({ success: true, data: { items: enrichedItems } });
   } catch (error) {
     console.error("listMyAuditReportRequests error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -174,11 +294,13 @@ async function listMyAuditReportRequests(req, res) {
 
 async function submitAuditReport(req, res) {
   try {
-    const { reportText } = req.body || {};
-    if (!reportText || !String(reportText).trim()) {
+    const reportText = String(req.body?.reportText || "").trim();
+    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+
+    if (!reportText && uploadedFiles.length < 1) {
       return res.status(400).json({
         success: false,
-        message: "reportText is required",
+        message: "reportText or at least one file is required",
       });
     }
 
@@ -193,7 +315,22 @@ async function submitAuditReport(req, res) {
         .json({ success: false, message: "Audit request not found" });
     }
 
-    request.reportText = String(reportText).trim();
+    request.reportText = reportText || request.reportText || "";
+    if (uploadedFiles.length > 0) {
+      const attachments = uploadedFiles
+        .filter((file) => file?.path)
+        .map((file) => ({
+          originalName: file.originalname,
+          storedName: file.filename,
+          mimeType: file.mimetype,
+          size: Number(file.size || 0),
+          relativePath: path.relative(process.cwd(), file.path),
+          uploadedAt: new Date(),
+        }));
+
+      request.attachments = [...(request.attachments || []), ...attachments];
+    }
+
     request.status = "Submitted";
     request.submittedAt = new Date();
     await request.save();
@@ -226,16 +363,61 @@ async function submitAuditReport(req, res) {
   }
 }
 
+async function downloadAuditReportFile(req, res) {
+  try {
+    const { id, fileId } = req.params;
+    const request = await AuditReportRequest.findById(id).lean();
+
+    if (!request) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Audit request not found" });
+    }
+
+    if (
+      req.user.userType === "Distributor" &&
+      String(request.distributorUserId) !== String(req.user.userId)
+    ) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const fileMeta = (request.attachments || []).find(
+      (item) => String(item._id) === String(fileId),
+    );
+
+    if (!fileMeta) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Attachment not found" });
+    }
+
+    const baseDir = getAuditUploadsDir();
+    const absolutePath = path.resolve(process.cwd(), fileMeta.relativePath);
+
+    if (!absolutePath.startsWith(baseDir) || !fs.existsSync(absolutePath)) {
+      return res
+        .status(404)
+        .json({ success: false, message: "File not found" });
+    }
+
+    return res.download(absolutePath, fileMeta.originalName);
+  } catch (error) {
+    console.error("downloadAuditReportFile error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 async function reviewAuditReportRequest(req, res) {
   try {
-    const { decision } = req.body || {};
+    const { decision, note } = req.body || {};
     if (
       !decision ||
-      !["Approved", "Rejected", "Suspended"].includes(decision)
+      !["Approved", "Rejected", "Suspended", "ReRequested"].includes(decision)
     ) {
       return res.status(400).json({
         success: false,
-        message: "decision must be Approved, Rejected, or Suspended",
+        message:
+          "decision must be Approved, Rejected, Suspended, or ReRequested",
       });
     }
 
@@ -246,19 +428,34 @@ async function reviewAuditReportRequest(req, res) {
         .json({ success: false, message: "Audit request not found" });
     }
 
-    request.status = decision === "Approved" ? "Closed" : "Reviewed";
-    request.decision = decision;
-    request.reviewedAt = new Date();
-    await request.save();
+    if (decision === "ReRequested") {
+      request.status = "Requested";
+      request.decision = "ReRequested";
+      request.reviewedAt = new Date();
+      request.dueAt = new Date(Date.now() + 7 * 86400000);
+      request.overdueNotified = false;
+      if (String(note || "").trim()) {
+        request.note = String(note).trim();
+      }
+      await request.save();
+    } else {
+      request.status = decision === "Approved" ? "Closed" : "Reviewed";
+      request.decision = decision;
+      request.reviewedAt = new Date();
+      if (String(note || "").trim()) {
+        request.note = String(note).trim();
+      }
+      await request.save();
 
-    const nextStatus = decision === "Approved" ? "Active" : "Suspended";
-    await User.findByIdAndUpdate(request.distributorUserId, {
-      $set: { authorityStatus: nextStatus },
-    });
-    await Distributor.findOneAndUpdate(
-      { userId: request.distributorUserId },
-      { $set: { authorityStatus: nextStatus } },
-    );
+      const nextStatus = decision === "Approved" ? "Active" : "Suspended";
+      await User.findByIdAndUpdate(request.distributorUserId, {
+        $set: { authorityStatus: nextStatus },
+      });
+      await Distributor.findOneAndUpdate(
+        { userId: request.distributorUserId },
+        { $set: { authorityStatus: nextStatus } },
+      );
+    }
 
     await writeAudit({
       actorUserId: req.user.userId,
@@ -266,7 +463,12 @@ async function reviewAuditReportRequest(req, res) {
       action: "AUDIT_REPORT_REVIEWED",
       entityType: "AuditReportRequest",
       entityId: String(request._id),
-      severity: decision === "Approved" ? "Info" : "Warning",
+      severity:
+        decision === "Approved"
+          ? "Info"
+          : decision === "ReRequested"
+            ? "Warning"
+            : "Warning",
       meta: { decision },
     });
 
@@ -275,8 +477,15 @@ async function reviewAuditReportRequest(req, res) {
       message:
         decision === "Approved"
           ? "Audit report approved. Your account is active."
-          : "Audit report not approved. Your account remains suspended.",
-      meta: { decision, requestId: String(request._id) },
+          : decision === "ReRequested"
+            ? "Admin requested another audit report. Please submit updated report with files/message before due date."
+            : "Audit report not approved. Your account remains suspended.",
+      meta: {
+        decision,
+        requestId: String(request._id),
+        dueAt: request.dueAt,
+        note: String(request.note || ""),
+      },
     });
 
     res.json({
@@ -296,4 +505,5 @@ module.exports = {
   listMyAuditReportRequests,
   submitAuditReport,
   reviewAuditReportRequest,
+  downloadAuditReportFile,
 };

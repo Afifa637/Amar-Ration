@@ -11,6 +11,10 @@ const Consumer = require("../models/Consumer");
 const AuditLog = require("../models/AuditLog");
 const { generateReconciliationReport } = require("../services/receipt.service");
 const {
+  hydrateRecordItemFields,
+  roundKg,
+} = require("../services/distributionRecord.service");
+const {
   STOCK_ITEMS,
   normalizeStockItem,
 } = require("../utils/stock-items.utils");
@@ -19,6 +23,7 @@ const {
   isSameDivision,
 } = require("../utils/division.utils");
 const { normalizeWardNo, isSameWard } = require("../utils/ward.utils");
+const { assertSessionAccess } = require("../services/access-control.service");
 
 function emptyItemTotals() {
   return STOCK_ITEMS.reduce((acc, item) => {
@@ -104,7 +109,9 @@ async function buildPayload(sessionId) {
     ? await DistributionRecord.find({
         tokenId: { $in: tokenIds },
       })
-        .select("tokenId mismatch expectedKg actualKg")
+        .select(
+          "tokenId mismatch item expectedKg actualKg expectedByItem actualByItem",
+        )
         .lean()
     : [];
 
@@ -113,12 +120,20 @@ async function buildPayload(sessionId) {
   for (const record of records) {
     const token = tokenById.get(String(record.tokenId));
     if (!token) continue;
-    const item = normalizeStockItem(token.rationItem);
-    if (!item || !byItem[item]) continue;
-    byItem[item].expectedKg += Number(
-      record.expectedKg || token.rationQtyKg || 0,
-    );
-    byItem[item].actualKg += Number(record.actualKg || 0);
+
+    const hydrated = hydrateRecordItemFields({
+      item: record.item || token.rationItem,
+      expectedKg: record.expectedKg || token.rationQtyKg,
+      actualKg: record.actualKg,
+      expectedByItem: record.expectedByItem,
+      actualByItem: record.actualByItem,
+    });
+
+    for (const item of STOCK_ITEMS) {
+      if (!byItem[item]) continue;
+      byItem[item].expectedKg += Number(hydrated.expectedByItem[item] || 0);
+      byItem[item].actualKg += Number(hydrated.actualByItem[item] || 0);
+    }
   }
 
   for (const row of stockInRows) {
@@ -134,10 +149,10 @@ async function buildPayload(sessionId) {
   }
 
   for (const item of STOCK_ITEMS) {
-    byItem[item].expectedKg = Number(byItem[item].expectedKg.toFixed(3));
-    byItem[item].actualKg = Number(byItem[item].actualKg.toFixed(3));
-    byItem[item].stockInKg = Number(byItem[item].stockInKg.toFixed(3));
-    byItem[item].stockOutKg = Number(byItem[item].stockOutKg.toFixed(3));
+    byItem[item].expectedKg = roundKg(byItem[item].expectedKg);
+    byItem[item].actualKg = roundKg(byItem[item].actualKg);
+    byItem[item].stockInKg = roundKg(byItem[item].stockInKg);
+    byItem[item].stockOutKg = roundKg(byItem[item].stockOutKg);
   }
 
   const tokenIdsSet = new Set(tokens.map((t) => String(t._id)));
@@ -182,6 +197,7 @@ async function buildPayload(sessionId) {
 
 async function streamLiveHealth(req, res) {
   try {
+    await assertSessionAccess(req.user, req.params.sessionId);
     const payload = await buildPayload(req.params.sessionId);
     if (!payload) {
       return res.status(404).json({
@@ -207,11 +223,27 @@ async function streamLiveHealth(req, res) {
       void send();
     }, 5000);
 
-    req.on("close", () => {
+    let closed = false;
+    const closeStream = () => {
+      if (closed) return;
+      closed = true;
       clearInterval(timer);
-      res.end();
-    });
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+    };
+
+    req.on("close", closeStream);
+    req.on("error", closeStream);
+    res.on("close", closeStream);
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("streamLiveHealth error:", error);
     return res
       .status(500)
@@ -221,10 +253,16 @@ async function streamLiveHealth(req, res) {
 
 async function downloadReconciliationReport(req, res) {
   try {
+    await assertSessionAccess(req.user, req.params.sessionId);
     const filePath = await generateReconciliationReport(req.params.sessionId);
     res.setHeader("Content-Type", "application/pdf");
     return fs.createReadStream(filePath).pipe(res);
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("downloadReconciliationReport error:", error);
     if (error.code === "NOT_FOUND") {
       return res.status(404).json({
@@ -241,9 +279,15 @@ async function downloadReconciliationReport(req, res) {
 
 async function generateReportManually(req, res) {
   try {
+    await assertSessionAccess(req.user, req.params.sessionId);
     const filePath = await generateReconciliationReport(req.params.sessionId);
     return res.json({ success: true, data: { filePath } });
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("generateReportManually error:", error);
     if (error.code === "NOT_FOUND") {
       return res.status(404).json({
