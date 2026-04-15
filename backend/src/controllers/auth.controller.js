@@ -13,13 +13,33 @@ const {
 const { nextConsumerCode } = require("../services/consumer-code.service");
 const { normalizeDivision } = require("../utils/division.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
-
-function escapeRegex(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+const { escapeRegex } = require("../utils/regex.utils");
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const TWO_FA_SECRET_PREFIX = "2fa:v1:";
+const REFRESH_COOKIE_NAME = "refreshToken";
+
+function readCookie(req, cookieName) {
+  const raw = String(req?.headers?.cookie || "");
+  if (!raw) return "";
+  const parts = raw.split(";");
+  for (const part of parts) {
+    const [k, ...rest] = part.split("=");
+    if (String(k || "").trim() !== cookieName) continue;
+    return decodeURIComponent(rest.join("=") || "");
+  }
+  return "";
+}
+
+function refreshCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 86400000,
+    path: "/api/auth",
+  };
+}
 
 function getTwoFAKey() {
   const raw =
@@ -101,6 +121,13 @@ async function generateRefreshToken(userId, tokenVersion, userAgent) {
   return raw;
 }
 
+async function revokeAllRefreshTokensForUser(userId) {
+  await RefreshToken.updateMany(
+    { userId, revokedAt: null },
+    { $set: { revokedAt: new Date() } },
+  );
+}
+
 // Generate unique QR token for consumer
 const generateQRToken = () => {
   return crypto.randomBytes(32).toString("hex");
@@ -143,6 +170,52 @@ function makePasswordChangeAckToken({ user, changedByUserId, changedByType }) {
     process.env.JWT_SECRET,
     { expiresIn: "7d" },
   );
+}
+
+function hashIdentifierForAudit(identifier) {
+  const normalized = String(identifier || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "";
+  return crypto.createHash("sha256").update(normalized).digest("hex");
+}
+
+async function logFailedLoginAttempt({
+  identifier,
+  userId,
+  reason,
+  severity = "Warning",
+  req,
+  userType,
+}) {
+  try {
+    const ip = String(
+      req?.headers?.["x-forwarded-for"] ||
+        req?.ip ||
+        req?.socket?.remoteAddress ||
+        "",
+    )
+      .split(",")[0]
+      .trim();
+
+    await writeAudit({
+      actorUserId: userId || undefined,
+      actorType: "System",
+      action: "AUTH_LOGIN_FAILED",
+      entityType: "User",
+      entityId: userId ? String(userId) : null,
+      severity,
+      meta: {
+        reason: String(reason || ""),
+        identifierHash: hashIdentifierForAudit(identifier),
+        attemptedPortalUserType: userType || null,
+        ip,
+        userAgent: String(req?.headers?.["user-agent"] || ""),
+      },
+    });
+  } catch {
+    // audit write must not block auth flow
+  }
 }
 
 // @route   GET /api/auth/password-change/ack?action=yes|not-me&token=...
@@ -401,6 +474,16 @@ exports.setup2FA = async (req, res) => {
   }
 };
 
+exports.setup2FAGetDeprecated = async (req, res) => {
+  res.set("Deprecation", "true");
+  res.set("Sunset", "2027-01-01");
+  res.set(
+    "Warning",
+    '299 - "GET /api/auth/2fa/setup is deprecated. Use POST /api/auth/2fa/setup"',
+  );
+  return exports.setup2FA(req, res);
+};
+
 // @route   POST /api/auth/2fa/verify
 // @desc    Verify TOTP and enable 2FA for admin
 // @access  Private (Admin)
@@ -622,13 +705,9 @@ exports.signup = async (req, res) => {
     const { userType, name, email, phone, password, ...additionalFields } =
       req.body;
 
-    console.log("🔍 Signup attempt:", { userType, name, email, phone });
-
     // Normalize email and phone
     const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = phone ? String(phone).trim() : null;
-
-    console.log("🔍 Normalized:", { normalizedEmail, normalizedPhone });
 
     // Validation
     if (!userType || !name || !password) {
@@ -742,15 +821,6 @@ exports.signup = async (req, res) => {
     // Save user to database
     const user = await User.create(userData);
 
-    console.log("✅ User saved successfully:", {
-      id: user._id,
-      userType,
-      name,
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      authorityStatus: user.authorityStatus || user.status,
-    });
-
     // Generate token
     const token = generateToken(
       user._id,
@@ -815,8 +885,6 @@ exports.login = async (req, res) => {
     const { identifier, password, userType, totpToken } = req.body; // identifier can be email, phone, or consumerCode
     const normalizedIdentifier = String(identifier || "").trim();
 
-    console.log("🔍 Login attempt:", { identifier, userType });
-
     // Validation
     if (!normalizedIdentifier || !password) {
       return res.status(400).json({
@@ -831,13 +899,6 @@ exports.login = async (req, res) => {
     const normalizedEmail = isPhone ? null : normalizedIdentifier.toLowerCase();
     const normalizedPhone = isPhone ? normalizedIdentifier : null;
 
-    console.log("🔍 Normalized:", {
-      normalizedIdentifier,
-      isPhone,
-      normalizedEmail,
-      normalizedPhone,
-    });
-
     // Find user by email, phone, or consumerCode
     const safeIdentifier = escapeRegex(normalizedIdentifier);
     const user = await User.findOne({
@@ -848,19 +909,14 @@ exports.login = async (req, res) => {
       ],
     });
 
-    console.log(
-      "🔍 User found:",
-      user
-        ? {
-            id: user._id,
-            email: user.email,
-            phone: user.phone,
-            userType: user.userType,
-          }
-        : "No user found",
-    );
-
     if (!user) {
+      await logFailedLoginAttempt({
+        identifier: normalizedIdentifier,
+        reason: "USER_NOT_FOUND",
+        severity: "Warning",
+        req,
+        userType,
+      });
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
@@ -869,6 +925,14 @@ exports.login = async (req, res) => {
 
     // Verify the user is logging in through the correct portal
     if (userType && user.userType !== userType) {
+      await logFailedLoginAttempt({
+        identifier: normalizedIdentifier,
+        userId: String(user._id),
+        reason: "PORTAL_USER_TYPE_MISMATCH",
+        severity: "Warning",
+        req,
+        userType,
+      });
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
@@ -877,6 +941,14 @@ exports.login = async (req, res) => {
 
     // Check if user is active
     if (user.status !== "Active") {
+      await logFailedLoginAttempt({
+        identifier: normalizedIdentifier,
+        userId: String(user._id),
+        reason: `ACCOUNT_${String(user.status || "UNKNOWN").toUpperCase()}`,
+        severity: "Critical",
+        req,
+        userType,
+      });
       return res.status(403).json({
         success: false,
         message: `Account is ${user.status}. Please contact administrator.`,
@@ -887,6 +959,14 @@ exports.login = async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
 
     if (!isPasswordValid) {
+      await logFailedLoginAttempt({
+        identifier: normalizedIdentifier,
+        userId: String(user._id),
+        reason: "INVALID_PASSWORD",
+        severity: "Warning",
+        req,
+        userType,
+      });
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
@@ -945,6 +1025,14 @@ exports.login = async (req, res) => {
         }
 
         if (!backupUsed) {
+          await logFailedLoginAttempt({
+            identifier: normalizedIdentifier,
+            userId: String(user._id),
+            reason: "INVALID_2FA_TOKEN",
+            severity: "Critical",
+            req,
+            userType,
+          });
           return res
             .status(401)
             .json({ success: false, message: "Invalid 2FA code" });
@@ -1034,7 +1122,13 @@ exports.login = async (req, res) => {
       }),
     };
 
-    res.status(200).json({
+    try {
+      res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions());
+    } catch {
+      // cookie set is optional compatibility path
+    }
+
+    return res.status(200).json({
       success: true,
       message: "Login successful",
       data: {
@@ -1058,7 +1152,8 @@ exports.login = async (req, res) => {
 // @access  Public
 exports.refreshAccessToken = async (req, res) => {
   try {
-    const rawRefreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
+    const rawRefreshToken =
+      req.body?.refreshToken || readCookie(req, REFRESH_COOKIE_NAME);
     if (!rawRefreshToken) {
       return res
         .status(401)
@@ -1122,6 +1217,12 @@ exports.refreshAccessToken = async (req, res) => {
       req.headers["user-agent"],
     );
 
+    try {
+      res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions());
+    } catch {
+      // cookie set is optional compatibility path
+    }
+
     return res.json({
       success: true,
       data: {
@@ -1141,7 +1242,8 @@ exports.refreshAccessToken = async (req, res) => {
 // @access  Private
 exports.logout = async (req, res) => {
   try {
-    const rawRefreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
+    const rawRefreshToken =
+      req.body?.refreshToken || readCookie(req, REFRESH_COOKIE_NAME);
     if (rawRefreshToken) {
       const hash = crypto
         .createHash("sha256")
@@ -1151,6 +1253,15 @@ exports.logout = async (req, res) => {
         { token: hash },
         { $set: { revokedAt: new Date() } },
       );
+    }
+
+    try {
+      res.clearCookie(REFRESH_COOKIE_NAME, {
+        ...refreshCookieOptions(),
+        maxAge: undefined,
+      });
+    } catch {
+      // ignore cookie clear failures
     }
 
     return res.json({ success: true, message: "Logged out" });
@@ -1243,6 +1354,7 @@ exports.changePassword = async (req, res) => {
     user.mustChangePassword = false;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+    await revokeAllRefreshTokensForUser(user._id);
 
     if (["Distributor", "FieldUser"].includes(user.userType) && user.email) {
       const ackToken = makePasswordChangeAckToken({

@@ -3,6 +3,7 @@
 const DistributionSession = require("../models/DistributionSession");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
+const { assertSessionAccess } = require("../services/access-control.service");
 
 function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -23,6 +24,7 @@ function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
 
 async function setExpectedLocation(req, res) {
   try {
+    await assertSessionAccess(req.user, req.params.sessionId);
     const { latitude, longitude } = req.body || {};
     if (
       !Number.isFinite(Number(latitude)) ||
@@ -47,17 +49,20 @@ async function setExpectedLocation(req, res) {
     ).lean();
 
     if (!session) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Session not found",
-          code: "NOT_FOUND",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "Session not found",
+        code: "NOT_FOUND",
+      });
     }
 
     return res.json({ success: true, data: session });
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("setExpectedLocation error:", error);
     return res
       .status(500)
@@ -67,6 +72,7 @@ async function setExpectedLocation(req, res) {
 
 async function logLocation(req, res) {
   try {
+    await assertSessionAccess(req.user, req.params.sessionId);
     const { latitude, longitude } = req.body || {};
     if (
       !Number.isFinite(Number(latitude)) ||
@@ -81,13 +87,11 @@ async function logLocation(req, res) {
 
     const session = await DistributionSession.findById(req.params.sessionId);
     if (!session) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Session not found",
-          code: "NOT_FOUND",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "Session not found",
+        code: "NOT_FOUND",
+      });
     }
 
     session.actualLatitude = Number(latitude);
@@ -149,6 +153,11 @@ async function logLocation(req, res) {
       },
     });
   } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ success: false, message: error.message, code: error.code });
+    }
     console.error("logLocation error:", error);
     return res
       .status(500)

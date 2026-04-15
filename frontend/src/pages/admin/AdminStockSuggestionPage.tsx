@@ -10,7 +10,16 @@ import {
 const STOCK_ITEMS: StockItem[] = ["চাল", "ডাল", "পেঁয়াজ"];
 
 export default function AdminStockSuggestionPage() {
-  const [simple, setSimple] = useState({ movingAverage: 0, suggestedStock: 0 });
+  const [simple, setSimple] = useState({
+    movingAverage: 0,
+    suggestedStock: 0,
+    distributedAverage: 0,
+    insertedAverage: 0,
+    averageAccuracyPercent: 0,
+    trendBangla: "ডেটা অনুপস্থিত",
+    sampleSessions: 0,
+    generatedAt: "",
+  });
   const [wardRows, setWardRows] = useState<StockSuggestionResult[]>([]);
   const [detail, setDetail] = useState<StockSuggestionResult | null>(null);
   const [division, setDivision] = useState("");
@@ -36,6 +45,12 @@ export default function AdminStockSuggestionPage() {
         setSimple({
           movingAverage: Number(data.movingAverage || 0),
           suggestedStock: Number(data.suggestedStock || 0),
+          distributedAverage: Number(data.distributedAverage || 0),
+          insertedAverage: Number(data.insertedAverage || 0),
+          averageAccuracyPercent: Number(data.averageAccuracyPercent || 0),
+          trendBangla: String(data.trendBangla || "ডেটা অনুপস্থিত"),
+          sampleSessions: Number(data.sampleSessions || 0),
+          generatedAt: String(data.generatedAt || ""),
         });
       } catch {
         // silent
@@ -96,7 +111,7 @@ export default function AdminStockSuggestionPage() {
         <div className="text-sm text-gray-500 mb-2">
           সামগ্রিক পরামর্শকৃত স্টক ({item === "all" ? "সকল আইটেম" : item})
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div>
             <div className="text-xs text-gray-500">গড় বিতরণ (কেজি)</div>
             <div className="text-2xl font-bold text-gray-800">
@@ -111,8 +126,23 @@ export default function AdminStockSuggestionPage() {
               {simple.suggestedStock}
             </div>
           </div>
-          <div className="text-sm text-gray-600">→ স্থিতিশীল</div>
+          <div className="text-sm text-gray-600">
+            ইনসার্টেড গড়: {simple.insertedAverage.toFixed(2)} kg
+            <br />
+            ডিস্ট্রিবিউটেড গড়: {simple.distributedAverage.toFixed(2)} kg
+          </div>
+          <div className="text-sm text-gray-600">
+            গড় নির্ভুলতা: {simple.averageAccuracyPercent.toFixed(2)}%
+            <br />
+            {simple.trendBangla} • সেশন: {simple.sampleSessions}
+          </div>
         </div>
+        {simple.generatedAt && (
+          <div className="mt-2 text-xs text-gray-500">
+            সর্বশেষ আপডেট:{" "}
+            {new Date(simple.generatedAt).toLocaleString("bn-BD")}
+          </div>
+        )}
       </section>
 
       <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -156,10 +186,13 @@ export default function AdminStockSuggestionPage() {
                     আইটেম
                   </th>
                   <th className="text-xs uppercase text-gray-500 p-2 text-left">
-                    গড় (কেজি)
+                    ইন/আউট গড় (কেজি)
                   </th>
                   <th className="text-xs uppercase text-gray-500 p-2 text-left">
                     পরামর্শ (কেজি)
+                  </th>
+                  <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                    নির্ভুলতা
                   </th>
                   <th className="text-xs uppercase text-gray-500 p-2 text-left">
                     প্রবণতা
@@ -176,9 +209,17 @@ export default function AdminStockSuggestionPage() {
                     <td className="p-2 text-sm">{row.ward}</td>
                     <td className="p-2 text-sm">{row.union}</td>
                     <td className="p-2 text-sm">{row.item || "all"}</td>
-                    <td className="p-2 text-sm">{row.movingAverage}</td>
+                    <td className="p-2 text-sm">
+                      {Number(row.insertedAverage || 0).toFixed(2)} /{" "}
+                      {Number(
+                        row.distributedAverage || row.movingAverage || 0,
+                      ).toFixed(2)}
+                    </td>
                     <td className="p-2 text-sm font-semibold text-purple-700">
                       {row.suggestedStock}
+                    </td>
+                    <td className="p-2 text-sm">
+                      {Number(row.averageAccuracyPercent || 0).toFixed(2)}%
                     </td>
                     <td className="p-2 text-sm">
                       {row.trend === "increasing" && (
@@ -233,6 +274,26 @@ export default function AdminStockSuggestionPage() {
               আইটেম:{" "}
               <span className="font-semibold">{detail.item || "all"}</span>
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <div className="rounded-lg bg-purple-50 border border-purple-100 p-3 text-sm">
+                ইনসার্টেড গড়: {Number(detail.insertedAverage || 0).toFixed(2)}{" "}
+                kg
+              </div>
+              <div className="rounded-lg bg-indigo-50 border border-indigo-100 p-3 text-sm">
+                ডিস্ট্রিবিউটেড গড়:{" "}
+                {Number(
+                  detail.distributedAverage || detail.movingAverage || 0,
+                ).toFixed(2)}{" "}
+                kg
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-sm">
+                গড় গ্যাপ: {Number(detail.averageGap || 0).toFixed(2)} kg
+              </div>
+              <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-sm">
+                নির্ভুলতা:{" "}
+                {Number(detail.averageAccuracyPercent || 0).toFixed(2)}%
+              </div>
+            </div>
             <div className="text-sm text-gray-700">
               প্রবণতা:{" "}
               <span className="font-semibold">
@@ -240,25 +301,92 @@ export default function AdminStockSuggestionPage() {
               </span>
             </div>
             <div className="text-xs text-gray-500">{detail.note}</div>
+
+            {detail.item === "all" && detail.itemBreakdown && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-2 text-left text-xs uppercase text-gray-500">
+                        আইটেম
+                      </th>
+                      <th className="p-2 text-left text-xs uppercase text-gray-500">
+                        ইনসার্টেড গড়
+                      </th>
+                      <th className="p-2 text-left text-xs uppercase text-gray-500">
+                        ডিস্ট্রিবিউটেড গড়
+                      </th>
+                      <th className="p-2 text-left text-xs uppercase text-gray-500">
+                        নির্ভুলতা
+                      </th>
+                      <th className="p-2 text-left text-xs uppercase text-gray-500">
+                        পরামর্শ
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {STOCK_ITEMS.map((stockItem) => (
+                      <tr key={stockItem} className="border-t border-gray-100">
+                        <td className="p-2">{stockItem}</td>
+                        <td className="p-2">
+                          {Number(
+                            detail.itemBreakdown?.[stockItem]
+                              ?.insertedAverage || 0,
+                          ).toFixed(2)}
+                        </td>
+                        <td className="p-2">
+                          {Number(
+                            detail.itemBreakdown?.[stockItem]
+                              ?.distributedAverage || 0,
+                          ).toFixed(2)}
+                        </td>
+                        <td className="p-2">
+                          {Number(
+                            detail.itemBreakdown?.[stockItem]
+                              ?.averageAccuracyPercent || 0,
+                          ).toFixed(2)}
+                          %
+                        </td>
+                        <td className="p-2 font-semibold text-purple-700">
+                          {detail.itemBreakdown?.[stockItem]?.suggestedStock ||
+                            0}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             <div className="space-y-2">
               {detail.last3Sessions.map((s) => {
                 const width =
                   detail.suggestedStock > 0
                     ? Math.max(
                         10,
-                        Math.round((s.totalKg / detail.suggestedStock) * 100),
+                        Math.round(
+                          ((s.distributedKg || s.totalKg) /
+                            detail.suggestedStock) *
+                            100,
+                        ),
                       )
                     : 10;
                 return (
                   <div key={s.sessionId}>
-                    <div className="text-xs text-gray-600">সেশন {s.date}</div>
+                    <div className="text-xs text-gray-600">
+                      সেশন {s.date} • ইন: {Number(s.insertedKg || 0).toFixed(2)}{" "}
+                      kg • আউট:{" "}
+                      {Number(s.distributedKg || s.totalKg || 0).toFixed(2)} kg
+                      • নির্ভুলতা: {Number(s.accuracyPercent || 0).toFixed(2)}%
+                    </div>
                     <div className="h-6 bg-gray-100 rounded-lg overflow-hidden mt-1 relative">
                       <div
                         className="h-full bg-purple-400"
                         style={{ width: `${Math.min(100, width)}%` }}
                       />
                       <span className="absolute right-2 top-1 text-xs text-gray-700">
-                        {s.totalKg} kg
+                        {Number(s.distributedKg || s.totalKg || 0).toFixed(2)}{" "}
+                        kg
                       </span>
                     </div>
                   </div>

@@ -31,6 +31,10 @@ const RefreshToken = require("../models/RefreshToken");
 const { normalizeWardNo } = require("../utils/ward.utils");
 const { normalizeDivision } = require("../utils/division.utils");
 const { STOCK_ITEMS } = require("../utils/stock-items.utils");
+const {
+  mapSingleItemQty,
+  hydrateRecordItemFields,
+} = require("../services/distributionRecord.service");
 
 // ── Safety Guards ──────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === "production") {
@@ -812,11 +816,42 @@ const CONSUMER_SEED = [
         sessionId: ses._id,
         rationItem: ITEM_BY_CATEGORY[c.category] || STOCK_ITEMS[0],
         rationQtyKg: ALLOC[c.category],
+        entitlementByItem: mapSingleItemQty(
+          ITEM_BY_CATEGORY[c.category] || STOCK_ITEMS[0],
+          ALLOC[c.category],
+        ),
         status,
         issuedAt: hrsAgo(agoHrs),
         iotVerified: status === "Used" ? Math.random() > 0.4 : false,
         ...(usedAgo !== undefined ? { usedAt: hrsAgo(usedAgo) } : {}),
       });
+
+    const mkDistRecord = ({
+      token,
+      expectedKg,
+      actualKg,
+      mismatch,
+      createdAt,
+    }) => {
+      const itemWise = hydrateRecordItemFields({
+        item: token.rationItem,
+        expectedKg,
+        actualKg,
+      });
+      return {
+        tokenId: token._id,
+        distributorId: token.distributorId,
+        sessionId: token.sessionId,
+        item: itemWise.item,
+        expectedKg,
+        actualKg,
+        expectedByItem: itemWise.expectedByItem,
+        actualByItem: itemWise.actualByItem,
+        mismatchDetails: itemWise.mismatchDetails,
+        mismatch,
+        createdAt,
+      };
+    };
 
     // Dist1 today (ses1Today): some Used, some Issued, one Cancelled
     const [t01, t02, t03, t04, t05] = await Promise.all([
@@ -897,154 +932,154 @@ const CONSUMER_SEED = [
     // ── Distribution Records ──────────────────────────────────────────────
     await DistributionRecord.insertMany([
       // dist1 today
-      {
-        tokenId: t01._id,
+      mkDistRecord({
+        token: t01,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(3),
-      },
-      {
-        tokenId: t02._id,
+      }),
+      mkDistRecord({
+        token: t02,
         expectedKg: ALLOC.A,
         actualKg: 4.4,
         mismatch: true,
         createdAt: hrsAgo(3.2),
-      },
-      {
-        tokenId: t05._id,
+      }),
+      mkDistRecord({
+        token: t05,
         expectedKg: ALLOC.B,
         actualKg: 4.0,
         mismatch: false,
         createdAt: hrsAgo(2.5),
-      },
+      }),
       // dist1 yesterday
-      {
-        tokenId: t06._id,
+      mkDistRecord({
+        token: t06,
         expectedKg: ALLOC.C,
         actualKg: 3.0,
         mismatch: false,
         createdAt: hrsAgo(26),
-      },
-      {
-        tokenId: t07._id,
+      }),
+      mkDistRecord({
+        token: t07,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(25.5),
-      },
-      {
-        tokenId: t08._id,
+      }),
+      mkDistRecord({
+        token: t08,
         expectedKg: ALLOC.C,
         actualKg: 2.5,
         mismatch: true,
         createdAt: hrsAgo(24),
-      },
+      }),
       // dist1 day2
-      {
-        tokenId: t09._id,
+      mkDistRecord({
+        token: t09,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(50),
-      },
-      {
-        tokenId: t10._id,
+      }),
+      mkDistRecord({
+        token: t10,
         expectedKg: ALLOC.A,
         actualKg: 4.6,
         mismatch: true,
         createdAt: hrsAgo(49),
-      },
+      }),
       // dist1 day3
-      {
-        tokenId: t11._id,
+      mkDistRecord({
+        token: t11,
         expectedKg: ALLOC.B,
         actualKg: 4.0,
         mismatch: false,
         createdAt: hrsAgo(74),
-      },
-      {
-        tokenId: t12._id,
+      }),
+      mkDistRecord({
+        token: t12,
         expectedKg: ALLOC.B,
         actualKg: 3.9,
         mismatch: false,
         createdAt: hrsAgo(73),
-      },
+      }),
       // dist2 today
-      {
-        tokenId: t13._id,
+      mkDistRecord({
+        token: t13,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(3),
-      },
-      {
-        tokenId: t14._id,
+      }),
+      mkDistRecord({
+        token: t14,
         expectedKg: ALLOC.B,
         actualKg: 3.4,
         mismatch: true,
         createdAt: hrsAgo(2.8),
-      },
+      }),
       // dist2 yesterday
-      {
-        tokenId: t16._id,
+      mkDistRecord({
+        token: t16,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(25),
-      },
-      {
-        tokenId: t17._id,
+      }),
+      mkDistRecord({
+        token: t17,
         expectedKg: ALLOC.B,
         actualKg: 4.0,
         mismatch: false,
         createdAt: hrsAgo(24),
-      },
+      }),
       // dist2 day2
-      {
-        tokenId: t18._id,
+      mkDistRecord({
+        token: t18,
         expectedKg: ALLOC.C,
         actualKg: 3.0,
         mismatch: false,
         createdAt: hrsAgo(49),
-      },
+      }),
       // dist3 yesterday
-      {
-        tokenId: t19._id,
+      mkDistRecord({
+        token: t19,
         expectedKg: ALLOC.A,
         actualKg: 5.0,
         mismatch: false,
         createdAt: hrsAgo(25),
-      },
-      {
-        tokenId: t20._id,
+      }),
+      mkDistRecord({
+        token: t20,
         expectedKg: ALLOC.B,
         actualKg: 4.0,
         mismatch: false,
         createdAt: hrsAgo(24),
-      },
+      }),
       // dist4 (fraud: 3/3 mismatch for demo)
-      {
-        tokenId: t21._id,
+      mkDistRecord({
+        token: t21,
         expectedKg: ALLOC.A,
         actualKg: 3.8,
         mismatch: true,
         createdAt: hrsAgo(73),
-      },
-      {
-        tokenId: t22._id,
+      }),
+      mkDistRecord({
+        token: t22,
         expectedKg: ALLOC.A,
         actualKg: 3.5,
         mismatch: true,
         createdAt: hrsAgo(72),
-      },
-      {
-        tokenId: t23._id,
+      }),
+      mkDistRecord({
+        token: t23,
         expectedKg: ALLOC.B,
         actualKg: 2.9,
         mismatch: true,
         createdAt: hrsAgo(71),
-      },
+      }),
     ]);
     console.log("   ✓ Distribution records (19 records, 8 mismatches)");
 
@@ -1381,6 +1416,10 @@ const CONSUMER_SEED = [
         consumerId: consumers[6]._id,
         consumerPhone: "01711000007",
         blacklistEntryId: bl1._id,
+        distributorUserId: distUser1._id,
+        distributorRefId: dist1._id,
+        division: dist1.division,
+        ward: dist1.wardNo,
         reason:
           "আমার NID সঠিক। আমি জাতীয় পরিচয়পত্র অধিদপ্তর থেকে যাচাই করেছি।",
         supportingInfo:
@@ -1393,6 +1432,10 @@ const CONSUMER_SEED = [
         consumerId: consumers[16]._id,
         consumerPhone: "01812000017",
         blacklistEntryId: bl2._id,
+        distributorUserId: distUser2._id,
+        distributorRefId: dist2._id,
+        division: dist2.division,
+        ward: dist2.wardNo,
         reason: "মিসম্যাচ আমার কারণে নয়, স্কেলটি নষ্ট ছিল বলে পরে জানা গেছে।",
         supportingInfo:
           "সেশন ডেটা দেখলে বোঝা যাবে একই সেশনে অন্যদেরও মিসম্যাচ হয়েছে।",
@@ -1403,6 +1446,10 @@ const CONSUMER_SEED = [
         appealId: randomId("APL"),
         consumerId: consumers[6]._id,
         consumerPhone: "01711000007",
+        distributorUserId: distUser1._id,
+        distributorRefId: dist1._id,
+        division: dist1.division,
+        ward: dist1.wardNo,
         reason: "আগের আবেদনের ফলো-আপ। অনুগ্রহ করে পুনর্বিবেচনা করুন।",
         status: "rejected",
         adminNote: "তথ্য যাচাই সম্পন্ন। ব্ল্যাকলিস্ট বহাল থাকবে।",
@@ -1439,6 +1486,8 @@ const CONSUMER_SEED = [
     for (let qi = 0; qi < queueConsumers.length; qi++) {
       queueEntries.push({
         sessionId: ses1Today._id,
+        distributorId: dist1._id,
+        createdByUserId: distUser1._id,
         consumerId: queueConsumers[qi]._id,
         consumerName: queueConsumers[qi].name,
         consumerCode: queueConsumers[qi].consumerCode,
@@ -1459,6 +1508,8 @@ const CONSUMER_SEED = [
     for (let qi = 0; qi < 4; qi++) {
       queueEntries.push({
         sessionId: ses2Today._id,
+        distributorId: dist2._id,
+        createdByUserId: distUser2._id,
         consumerId: consumers[10 + qi]._id,
         consumerName: consumers[10 + qi].name,
         consumerCode: consumers[10 + qi].consumerCode,

@@ -1,22 +1,15 @@
 "use strict";
 
 const cron = require("node-cron");
-const crypto = require("crypto");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const Consumer = require("../models/Consumer");
 const Distributor = require("../models/Distributor");
 const User = require("../models/User");
-const QRCode = require("../models/QRCode");
-const OMSCard = require("../models/OMSCard");
 const SystemSetting = require("../models/SystemSetting");
 const { writeAudit } = require("../services/audit.service");
 const { notifyAdmins } = require("../services/notification.service");
 const { processSmsQueue } = require("../services/sms.service");
-const { buildOmsQrPayload } = require("../utils/qr-payload.utils");
-
-function sha256(s) {
-  return crypto.createHash("sha256").update(s).digest("hex");
-}
+const { rotateAllQRCodes } = require("../services/qrRotation.service");
 
 async function expireBlacklists() {
   try {
@@ -86,80 +79,15 @@ async function expireBlacklists() {
 
 async function rotateExpiredQrCodes() {
   try {
-    const globalSetting = await SystemSetting.findOne({
-      key: "distributor:global:settings",
-    }).lean();
-
-    const qrDays = Math.max(
-      1,
-      Number(globalSetting?.value?.qr?.expiryCycleDays || 30) || 30,
-    );
-
-    const expiredQrs = await QRCode.find({
-      status: "Valid",
-      validTo: { $lte: new Date() },
-    }).lean();
-
-    if (!expiredQrs.length) {
-      console.log("[Cron] No expired QR codes to rotate");
+    const result = await rotateAllQRCodes();
+    if (!result.rotated && !result.failed) {
+      console.log("[Cron] No expired AR QR codes to rotate");
       return;
     }
 
-    console.log(`[Cron] Rotating ${expiredQrs.length} expired QR codes`);
-
-    for (const oldQr of expiredQrs) {
-      try {
-        const card = await OMSCard.findOne({ qrCodeId: oldQr._id }).lean();
-        if (!card) continue;
-
-        const consumer = await Consumer.findById(card.consumerId).lean();
-        if (!consumer || consumer.status !== "Active") continue;
-
-        const validTo = new Date(Date.now() + qrDays * 86400000);
-        const newToken =
-          buildOmsQrPayload({
-            consumerCode: consumer.consumerCode,
-            ward: consumer.ward || consumer.wardNo,
-            category: consumer.category,
-            expiryDate: validTo,
-          }) || crypto.randomBytes(32).toString("hex");
-        const newQr = await QRCode.create({
-          payload: newToken,
-          payloadHash: sha256(newToken),
-          validFrom: new Date(),
-          validTo,
-          status: "Valid",
-        });
-
-        await Consumer.findByIdAndUpdate(card.consumerId, {
-          $set: { qrToken: newToken },
-        });
-        await OMSCard.findByIdAndUpdate(card._id, {
-          $set: { qrCodeId: newQr._id },
-        });
-        await QRCode.findByIdAndUpdate(oldQr._id, {
-          $set: { status: "Expired" },
-        });
-
-        await writeAudit({
-          actorUserId: null,
-          actorType: "System",
-          action: "QR_AUTO_ROTATED",
-          entityType: "Consumer",
-          entityId: String(card.consumerId),
-          severity: "Info",
-          meta: {
-            oldQrId: String(oldQr._id),
-            newQrId: String(newQr._id),
-            reason: "Daily auto-rotation job",
-          },
-        });
-      } catch (qrErr) {
-        console.error(
-          `[Cron] QR rotation error for QR ${oldQr._id}: ${qrErr.message}`,
-        );
-      }
-    }
+    console.log(
+      `[Cron] AR QR rotation done. rotated=${result.rotated}, failed=${result.failed}`,
+    );
   } catch (err) {
     console.error("[Cron] rotateExpiredQrCodes error:", err.message);
   }

@@ -134,7 +134,7 @@ export default function Sidebar() {
           }
         >
           <span>🪪</span>
-          <span>আমার রেশন কার্ড/টোকেন</span>
+          <span>আমার রেশন কার্ড</span>
         </NavLink>
 
         <NavLink
@@ -185,6 +185,16 @@ export default function Sidebar() {
         >
           <span>🛰️</span>
           <span>মনিটরিং</span>
+        </NavLink>
+
+        <NavLink
+          to="/appeals"
+          className={({ isActive }) =>
+            `${navItem} ${isActive ? activeItem : ""}`
+          }
+        >
+          <span>📨</span>
+          <span>ব্ল্যাকলিস্ট আপিল</span>
         </NavLink>
 
         <NavLink

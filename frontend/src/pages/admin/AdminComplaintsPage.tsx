@@ -4,23 +4,12 @@ import {
   getComplaintStats,
   getComplaints,
   resolveComplaint,
+  type ComplaintItemRow,
   type ComplaintStats,
 } from "../../services/api";
 import { formatDate } from "../../utils/date";
 
 type ComplaintStatus = "open" | "under_review" | "resolved" | "rejected";
-
-interface ComplaintItem {
-  _id: string;
-  complaintId: string;
-  consumerPhone: string;
-  category: string;
-  description: string;
-  status: ComplaintStatus;
-  adminNote?: string;
-  resolvedAt?: string;
-  createdAt: string;
-}
 
 function statusBadge(status: ComplaintStatus) {
   if (status === "open") return "bg-yellow-100 text-yellow-800";
@@ -43,7 +32,7 @@ function categoryLabel(category: string) {
 
 export default function AdminComplaintsPage() {
   const [stats, setStats] = useState<ComplaintStats | null>(null);
-  const [items, setItems] = useState<ComplaintItem[]>([]);
+  const [items, setItems] = useState<ComplaintItemRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
@@ -53,8 +42,9 @@ export default function AdminComplaintsPage() {
   const [category, setCategory] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
 
-  const [active, setActive] = useState<ComplaintItem | null>(null);
+  const [active, setActive] = useState<ComplaintItemRow | null>(null);
   const [adminNote, setAdminNote] = useState("");
 
   const load = async (targetPage = page) => {
@@ -68,26 +58,13 @@ export default function AdminComplaintsPage() {
           limit: 20,
           status: status || undefined,
           category: category || undefined,
+          search: search.trim() || undefined,
           startDate: from || undefined,
           endDate: to || undefined,
         }),
       ]);
       setStats(statsData);
-      const mappedItems = (rowsData.items || []).map((item) => {
-        const row = item as Record<string, unknown>;
-        return {
-          _id: String(row._id || ""),
-          complaintId: String(row.complaintId || ""),
-          consumerPhone: String(row.consumerPhone || ""),
-          category: String(row.category || "other"),
-          description: String(row.description || ""),
-          status: String(row.status || "open") as ComplaintStatus,
-          adminNote: row.adminNote ? String(row.adminNote) : undefined,
-          resolvedAt: row.resolvedAt ? String(row.resolvedAt) : undefined,
-          createdAt: String(row.createdAt || new Date().toISOString()),
-        } as ComplaintItem;
-      });
-      setItems(mappedItems.filter((x) => x._id));
+      setItems((rowsData.items || []).filter((x) => x._id));
       setPage(rowsData.pagination.page);
       setPages(rowsData.pagination.pages);
     } catch (err) {
@@ -160,6 +137,12 @@ export default function AdminComplaintsPage() {
 
       <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="ID/Consumer/Phone Search"
+          />
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
@@ -214,7 +197,16 @@ export default function AdminComplaintsPage() {
                   অভিযোগ ID
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                  কনজিউমার
+                </th>
+                <th className="text-xs uppercase text-gray-500 p-2 text-left">
                   ফোন
+                </th>
+                <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                  Division/Ward
+                </th>
+                <th className="text-xs uppercase text-gray-500 p-2 text-left">
+                  Distributor/Session
                 </th>
                 <th className="text-xs uppercase text-gray-500 p-2 text-left">
                   ক্যাটাগরি
@@ -237,7 +229,22 @@ export default function AdminComplaintsPage() {
               {items.map((item) => (
                 <tr key={item._id} className="border-t border-gray-100">
                   <td className="p-2 text-sm">{item.complaintId}</td>
+                  <td className="p-2 text-sm">
+                    {item.consumerCode || "—"}
+                    <div className="text-xs text-gray-500">
+                      {item.consumerName || ""}
+                    </div>
+                  </td>
                   <td className="p-2 text-sm">{item.consumerPhone}</td>
+                  <td className="p-2 text-sm">
+                    {(item.division || "—") + " / " + (item.ward || "—")}
+                  </td>
+                  <td className="p-2 text-sm">
+                    {item.distributorName || item.distributorCode || "—"}
+                    <div className="text-xs text-gray-500">
+                      {item.sessionCode || item.tokenCode || ""}
+                    </div>
+                  </td>
                   <td className="p-2 text-sm">
                     {categoryLabel(item.category)}
                   </td>
@@ -267,7 +274,7 @@ export default function AdminComplaintsPage() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                  <td colSpan={10} className="p-4 text-center text-gray-500">
                     {loading ? "লোড হচ্ছে..." : "কোনো অভিযোগ পাওয়া যায়নি"}
                   </td>
                 </tr>

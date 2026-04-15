@@ -8,8 +8,8 @@ const roleContent: Record<
   "central-admin": {
     title: "কেন্দ্রীয় অ্যাডমিন অ্যাকাউন্ট",
     description:
-      "অ্যাডমিন অ্যাকাউন্ট আগে থেকেই নিয়ন্ত্রিতভাবে তৈরি করা হয়। নতুন অ্যাডমিন স্বয়ংক্রিয়ভাবে নিবন্ধন করা যাবে না।",
-    loginPath: "/login/central-admin",
+      "অ্যাডমিন অ্যাকাউন্ট আগে থেকেই নিয়ন্ত্রিতভাবে তৈরি করা হয়। লগইনের জন্য একীভূত ডিস্ট্রিবিউটর/অ্যাডমিন পোর্টাল ব্যবহার করুন।",
+    loginPath: "/login/distributor",
   },
   distributor: {
     title: "ডিস্ট্রিবিউটর অ্যাকাউন্ট",
@@ -17,20 +17,10 @@ const roleContent: Record<
       "ডিস্ট্রিবিউটর অ্যাকাউন্ট প্রশাসনিক অনুমোদন, দায়িত্বসীমা এবং ওয়ার্ড যাচাইয়ের মাধ্যমে তৈরি করা হয়। আপনার লগইন তথ্য প্রশাসন থেকে সংগ্রহ করুন।",
     loginPath: "/login/distributor",
   },
-  "field-distributor": {
-    title: "ফিল্ড অপারেটর অ্যাকাউন্ট",
-    description:
-      "ফিল্ড অপারেটর অ্যাকাউন্টও প্রশাসনিকভাবে তৈরি করা হয়। দায়িত্বপ্রাপ্ত অ্যাকাউন্ট পেলে নিচের বাটন দিয়ে লগইন করুন।",
-    loginPath: "/login/field-distributor",
-  },
 };
 
 function isUserRole(value: string | undefined): value is UserRole {
-  return (
-    value === "central-admin" ||
-    value === "distributor" ||
-    value === "field-distributor"
-  );
+  return value === "central-admin" || value === "distributor";
 }
 
 export default function SignupPage() {

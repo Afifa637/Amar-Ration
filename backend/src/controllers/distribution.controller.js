@@ -36,6 +36,12 @@ const {
   generateReconciliationReport,
 } = require("../services/receipt.service");
 const {
+  mapSingleItemQty,
+  normalizeQtyByItem,
+  hydrateRecordItemFields,
+} = require("../services/distributionRecord.service");
+const { makeSessionCode } = require("../services/sessionCode.service");
+const {
   normalizeWardNo,
   isSameWard: isSameWardScoped,
   buildWardMatchQuery,
@@ -46,10 +52,16 @@ const {
   buildDivisionMatchQuery,
 } = require("../utils/division.utils");
 const {
-  buildOmsQrPayload,
-  parseOmsQrPayload,
+  buildArQrPayload,
+  verifyArQrPayload,
+  isArQrPayload,
+  normalizeArWard,
+  normalizeArCategory,
 } = require("../utils/qr-payload.utils");
-const { normalizeStockItem } = require("../utils/stock-items.utils");
+const {
+  STOCK_ITEMS,
+  normalizeStockItem,
+} = require("../utils/stock-items.utils");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -168,9 +180,12 @@ async function createDistributionSession(req, res) {
 
     const dateKey = String(req.body?.dateKey || todayKey()).trim();
     const requestedRationItem = req.body?.rationItem;
-    const rationItem = requestedRationItem
-      ? normalizeStockItem(requestedRationItem)
-      : "চাল";
+    const rationItem =
+      req.user.userType === "Admin"
+        ? requestedRationItem
+          ? normalizeStockItem(requestedRationItem)
+          : "চাল"
+        : "চাল";
 
     if (!rationItem) {
       return res.status(400).json({
@@ -179,9 +194,15 @@ async function createDistributionSession(req, res) {
         code: "VALIDATION_ERROR",
       });
     }
-    const scheduledStartAt = req.body?.scheduledStartAt
-      ? new Date(req.body.scheduledStartAt)
-      : undefined;
+    const scheduledStartAt =
+      req.user.userType === "Admin" && req.body?.scheduledStartAt
+        ? new Date(req.body.scheduledStartAt)
+        : undefined;
+    const plannedAllocationByItem =
+      req.body?.plannedAllocationByItem &&
+      typeof req.body.plannedAllocationByItem === "object"
+        ? normalizeQtyByItem(req.body.plannedAllocationByItem)
+        : mapSingleItemQty(rationItem, Number(req.body?.plannedQtyKg || 0));
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
       return res
@@ -205,7 +226,12 @@ async function createDistributionSession(req, res) {
       return res.status(200).json({
         success: true,
         message: "Session already exists",
-        data: { session: existing },
+        data: {
+          session: {
+            ...existing.toObject(),
+            sessionCode: makeSessionCode(existing),
+          },
+        },
       });
     }
 
@@ -213,6 +239,7 @@ async function createDistributionSession(req, res) {
       distributorId: distributor._id,
       dateKey,
       rationItem,
+      plannedAllocationByItem,
       status: "Planned",
       scheduledStartAt,
     });
@@ -228,6 +255,7 @@ async function createDistributionSession(req, res) {
       meta: {
         dateKey,
         rationItem,
+        plannedAllocationByItem,
         distributorId: String(distributor._id),
         scheduledStartAt: scheduledStartAt || null,
       },
@@ -236,7 +264,12 @@ async function createDistributionSession(req, res) {
     return res.status(201).json({
       success: true,
       message: "Distribution session planned",
-      data: { session: sessionDoc },
+      data: {
+        session: {
+          ...sessionDoc.toObject(),
+          sessionCode: makeSessionCode(sessionDoc),
+        },
+      },
     });
   } catch (error) {
     console.error("createDistributionSession error:", error);
@@ -306,7 +339,12 @@ async function startDistributionSession(req, res) {
       return res.json({
         success: true,
         message: "Distribution session already open",
-        data: { session: daySession },
+        data: {
+          session: {
+            ...daySession.toObject(),
+            sessionCode: makeSessionCode(daySession),
+          },
+        },
       });
     }
 
@@ -338,7 +376,12 @@ async function startDistributionSession(req, res) {
     return res.json({
       success: true,
       message: "Distribution session started",
-      data: { session: daySession },
+      data: {
+        session: {
+          ...daySession.toObject(),
+          sessionCode: makeSessionCode(daySession),
+        },
+      },
     });
   } catch (error) {
     console.error("startDistributionSession error:", error);
@@ -386,50 +429,93 @@ async function resolveConsumerFromPayload(qrPayload) {
   const payload = String(qrPayload || "").trim();
   if (!payload) return { consumer: null, qr: null, card: null };
 
-  const structured = parseOmsQrPayload(payload);
-  if (structured?.expired) {
+  const verified = verifyArQrPayload(payload);
+  if (!verified.valid || !verified.parsed) {
     return {
       consumer: null,
       qr: null,
       card: null,
-      reason: "QR_EXPIRED_BY_DATE",
+      reason:
+        verified.reason === "AR_QR_EXPIRED"
+          ? "QR_EXPIRED_BY_DATE"
+          : "INVALID_AR_QR",
     };
   }
 
-  if (structured && structured.consumerCode) {
-    const consumer = await Consumer.findOne({
-      consumerCode: {
-        $regex: `^${String(structured.consumerCode).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-        $options: "i",
-      },
-    });
+  const structured = verified.parsed;
 
-    if (consumer) {
-      const card = await OMSCard.findOne({ consumerId: consumer._id }).lean();
-      const qr = card?.qrCodeId
-        ? await QRCode.findById(card.qrCodeId).lean()
-        : null;
-      return { consumer, qr, card };
-    }
+  const consumer = await Consumer.findOne({
+    consumerCode: {
+      $regex: `^${String(structured.consumerCode).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      $options: "i",
+    },
+  });
+  if (!consumer) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "CONSUMER_NOT_FOUND",
+    };
+  }
+
+  const consumerWard = normalizeArWard(consumer.ward || consumer.wardNo || "");
+  const consumerCategory = normalizeArCategory(consumer.category || "");
+  if (
+    consumerWard !== structured.ward ||
+    consumerCategory !== structured.category
+  ) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "QR_FIELD_MISMATCH",
+    };
+  }
+
+  const card = await OMSCard.findOne({ consumerId: consumer._id }).lean();
+  if (!card?.qrCodeId) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "CARD_NOT_FOUND",
+    };
+  }
+
+  const qr = await QRCode.findById(card.qrCodeId).lean();
+  if (!qr) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "QR_NOT_FOUND",
+    };
   }
 
   const payloadHash = sha256(payload);
-  const qr = await QRCode.findOne({
-    $or: [{ payload }, { payloadHash }],
-  }).lean();
+  const isCurrentPayload =
+    String(qr.payload || "") === payload ||
+    String(qr.payloadHash || "") === payloadHash;
+  if (!isCurrentPayload) {
+    return {
+      consumer: null,
+      qr: null,
+      card: null,
+      reason: "QR_NOT_CURRENT",
+    };
+  }
 
-  if (!qr) return { consumer: null, qr: null, card: null };
-
-  const card = await OMSCard.findOne({ qrCodeId: qr._id }).lean();
-  if (!card) return { consumer: null, qr, card: null };
-
-  const consumer = await Consumer.findById(card.consumerId);
-  return { consumer, qr, card };
+  return { consumer, qr, card, parsed: structured };
 }
 
 async function resolveConsumerFromInput(input) {
   const raw = String(input || "").trim();
   if (!raw) return { consumer: null, qr: null, card: null };
+
+  if (isArQrPayload(raw)) {
+    return resolveConsumerFromPayload(raw);
+  }
 
   const byPayload = await resolveConsumerFromPayload(raw);
   if (byPayload.consumer && byPayload.card && byPayload.qr) {
@@ -510,13 +596,12 @@ async function rotateOmsQrAfterSessionClose(consumerIds) {
     const now = new Date();
     const validTo = new Date(now.getTime() + qrDays * 86400000);
     const qrStatus = consumer.status === "Active" ? "Valid" : "Invalid";
-    const qrToken =
-      buildOmsQrPayload({
-        consumerCode: consumer.consumerCode,
-        ward: consumer.ward || consumer.wardNo,
-        category: consumer.category,
-        expiryDate: validTo,
-      }) || crypto.randomBytes(32).toString("hex");
+    const qrToken = buildArQrPayload({
+      consumerCode: consumer.consumerCode,
+      ward: consumer.ward || consumer.wardNo,
+      category: consumer.category,
+      expiryDate: validTo,
+    });
 
     const newQr = await QRCode.create({
       payload: qrToken,
@@ -585,8 +670,37 @@ async function scanAndIssueToken(req, res) {
     });
   }
 
-  const { consumer, qr, card } = await resolveConsumerFromInput(issueInput);
+  const { consumer, qr, card, reason } =
+    await resolveConsumerFromInput(issueInput);
   if (!qr || !card || !consumer) {
+    if (reason === "INVALID_AR_QR") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid AR card QR format/signature",
+        code: "INVALID_AR_QR",
+      });
+    }
+    if (reason === "QR_EXPIRED_BY_DATE") {
+      return res.status(400).json({
+        success: false,
+        message: "AR card QR has expired",
+        code: "AR_QR_EXPIRED",
+      });
+    }
+    if (reason === "QR_FIELD_MISMATCH") {
+      return res.status(400).json({
+        success: false,
+        message: "AR card fields mismatch with consumer profile",
+        code: "AR_QR_FIELD_MISMATCH",
+      });
+    }
+    if (reason === "QR_NOT_CURRENT") {
+      return res.status(400).json({
+        success: false,
+        message: "AR card QR is not current. Use the latest rotated card",
+        code: "AR_QR_NOT_CURRENT",
+      });
+    }
     return res
       .status(400)
       .json({ success: false, message: "Invalid QR or consumer code" });
@@ -605,7 +719,7 @@ async function scanAndIssueToken(req, res) {
 
     return res.status(400).json({
       success: false,
-      message: "OMS card is not active",
+      message: "AR ration card is not active",
     });
   }
 
@@ -769,6 +883,10 @@ async function scanAndIssueToken(req, res) {
               sessionId: plannedSession._id,
               rationItem: plannedRationItem,
               rationQtyKg,
+              entitlementByItem: mapSingleItemQty(
+                plannedRationItem,
+                rationQtyKg,
+              ),
               status: "Issued",
             },
           ],
@@ -1005,20 +1123,34 @@ async function completeDistribution(req, res) {
     const expected = Number(token.rationQtyKg);
     const maxDiff = Math.max(0.05, expected * thresholdPercent);
     const mismatch = Math.abs(actual - expected) > maxDiff;
+    const { expectedByItem, actualByItem, mismatchDetails } =
+      hydrateRecordItemFields({
+        item: itemName,
+        expectedKg: expected,
+        actualKg: actual,
+      });
+
     const thresholdDetails = {
       expected,
       actual,
       maxDiff: Number(maxDiff.toFixed(3)),
       thresholdPercent: Number((thresholdPercent * 100).toFixed(1)),
       category: consumer?.category || "Unknown",
+      item: itemName,
     };
 
     await DistributionRecord.create(
       [
         {
           tokenId: token._id,
+          distributorId: distributor._id,
+          sessionId: token.sessionId || null,
+          item: itemName,
           expectedKg: expected,
           actualKg: actual,
+          expectedByItem,
+          actualByItem,
+          mismatchDetails,
           mismatch,
         },
       ],
@@ -1040,6 +1172,18 @@ async function completeDistribution(req, res) {
       },
       session,
     );
+
+    if (token.sessionId) {
+      await DistributionSession.findByIdAndUpdate(
+        token.sessionId,
+        {
+          $inc: {
+            [`distributedByItem.${itemName}`]: Number(actual || 0),
+          },
+        },
+        { session },
+      );
+    }
 
     await writeAudit(
       {
@@ -1131,8 +1275,12 @@ async function completeDistribution(req, res) {
       message: "Distribution completed",
       data: {
         mismatch,
+        item: itemName,
         expected,
         actual,
+        expectedByItem,
+        actualByItem,
+        mismatchDetails,
         maxDiff: Number(maxDiff.toFixed(3)),
         thresholdPercent: Number((thresholdPercent * 100).toFixed(1)),
         fraudCheck,
@@ -1184,21 +1332,81 @@ async function listTokens(req, res) {
     const [total, rawTokens] = await Promise.all([
       Token.countDocuments(query),
       Token.find(query)
-        .populate("consumerId", "consumerCode name ward status")
+        .populate("consumerId", "consumerCode name ward wardNo division status")
+        .populate("sessionId", "_id dateKey status")
         .sort({ createdAt: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
         .lean(),
     ]);
 
-    const tokens = includeImage
-      ? await Promise.all(
-          rawTokens.map(async (token) => ({
-            ...token,
-            qrImageDataUrl: await buildQrImageDataUrl(token.qrPayload),
-          })),
-        )
-      : rawTokens;
+    const tokenIds = rawTokens.map((t) => t._id);
+    const records = await DistributionRecord.find({
+      tokenId: { $in: tokenIds },
+    })
+      .select(
+        "tokenId expectedKg actualKg mismatch expectedByItem actualByItem mismatchDetails item",
+      )
+      .lean();
+    const recordMap = new Map(records.map((r) => [String(r.tokenId), r]));
+
+    const tokens = await Promise.all(
+      rawTokens.map(async (token) => {
+        const tokenRecord = recordMap.get(String(token._id));
+        const { expectedByItem, actualByItem, mismatchDetails } =
+          hydrateRecordItemFields({
+            item: tokenRecord?.item || token.rationItem,
+            expectedKg: tokenRecord
+              ? Number(tokenRecord.expectedKg || token.rationQtyKg || 0)
+              : Number(token.rationQtyKg || 0),
+            actualKg: tokenRecord ? Number(tokenRecord.actualKg || 0) : 0,
+            expectedByItem: tokenRecord?.expectedByItem,
+            actualByItem: tokenRecord?.actualByItem,
+          });
+
+        const row = {
+          ...token,
+          sessionId: token.sessionId ? String(token.sessionId._id) : null,
+          sessionCode: makeSessionCode(token.sessionId),
+          session: token.sessionId
+            ? {
+                id: String(token.sessionId._id),
+                dateKey: token.sessionId.dateKey,
+                status: token.sessionId.status,
+                sessionCode: makeSessionCode(token.sessionId),
+              }
+            : null,
+          expectedByItem,
+          actualByItem,
+          mismatch: Boolean(tokenRecord?.mismatch),
+          mismatchDetails:
+            tokenRecord?.mismatchDetails?.length > 0
+              ? tokenRecord.mismatchDetails
+              : mismatchDetails,
+          expectedKg: tokenRecord
+            ? Number(tokenRecord.expectedKg || 0)
+            : Number(token.rationQtyKg || 0),
+          actualKg: tokenRecord ? Number(tokenRecord.actualKg || 0) : 0,
+          division:
+            (typeof token.consumerId === "object" &&
+              token.consumerId?.division) ||
+            distributor?.division ||
+            "",
+          ward:
+            (typeof token.consumerId === "object" &&
+              (token.consumerId?.ward || token.consumerId?.wardNo)) ||
+            distributor?.wardNo ||
+            distributor?.ward ||
+            "",
+        };
+
+        if (!includeImage) return row;
+        return {
+          ...row,
+          qrImageDataUrl: await buildQrImageDataUrl(token.qrPayload),
+        };
+      }),
+    );
 
     res.json({
       success: true,
@@ -1297,8 +1505,23 @@ async function getDistributionRecords(req, res) {
       tokenQuery.tokenCode = { $regex: search, $options: "i" };
     }
 
-    const tokenIds = await Token.find(tokenQuery).select("_id").lean();
+    const tokenIds = await Token.find(tokenQuery)
+      .select("_id sessionId rationItem rationQtyKg distributorId")
+      .lean();
     const ids = tokenIds.map((item) => item._id);
+    const tokenMap = new Map(tokenIds.map((row) => [String(row._id), row]));
+
+    const sessionIds = Array.from(
+      new Set(
+        tokenIds.map((row) => String(row.sessionId || "")).filter(Boolean),
+      ),
+    );
+    const sessionRows = await DistributionSession.find({
+      _id: { $in: sessionIds },
+    })
+      .select("_id dateKey status")
+      .lean();
+    const sessionMap = new Map(sessionRows.map((s) => [String(s._id), s]));
 
     const recordQuery = {
       tokenId: { $in: ids },
@@ -1315,16 +1538,68 @@ async function getDistributionRecords(req, res) {
       DistributionRecord.find(recordQuery)
         .populate({
           path: "tokenId",
+          select:
+            "_id tokenCode sessionId rationItem rationQtyKg distributorId",
           populate: {
             path: "consumerId",
-            select: "consumerCode name ward",
+            select: "consumerCode name ward wardNo division",
           },
         })
+        .select(
+          "tokenId expectedKg actualKg mismatch expectedByItem actualByItem mismatchDetails item createdAt updatedAt distributorId sessionId",
+        )
         .sort({ createdAt: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
         .lean(),
     ]);
+
+    const enrichedRecords = records.map((record) => {
+      const token =
+        typeof record.tokenId === "object"
+          ? record.tokenId
+          : tokenMap.get(String(record.tokenId));
+      const session = token?.sessionId
+        ? sessionMap.get(String(token.sessionId))
+        : null;
+
+      const { item, expectedByItem, actualByItem, mismatchDetails } =
+        hydrateRecordItemFields({
+          item: record.item || token?.rationItem,
+          expectedKg: record.expectedKg,
+          actualKg: record.actualKg,
+          expectedByItem: record.expectedByItem,
+          actualByItem: record.actualByItem,
+        });
+
+      return {
+        ...record,
+        sessionId: token?.sessionId ? String(token.sessionId) : null,
+        sessionCode: makeSessionCode({
+          _id: token?.sessionId,
+          dateKey: session?.dateKey,
+        }),
+        dateKey: session?.dateKey || null,
+        item,
+        expectedByItem,
+        actualByItem,
+        mismatchDetails: record.mismatch
+          ? record.mismatchDetails?.length
+            ? record.mismatchDetails
+            : mismatchDetails
+          : [],
+        division:
+          (token?.consumerId && token.consumerId.division) ||
+          distributor?.division ||
+          "",
+        ward:
+          (token?.consumerId &&
+            (token.consumerId.ward || token.consumerId.wardNo)) ||
+          distributor?.wardNo ||
+          distributor?.ward ||
+          "",
+      };
+    });
 
     let dateKey = todayKey();
     if (sessionId) {
@@ -1343,13 +1618,26 @@ async function getDistributionRecords(req, res) {
       .filter((entry) => entry.type === "OUT")
       .reduce((sum, entry) => sum + Number(entry.qtyKg || 0), 0);
 
+    const stockOutByItem = STOCK_ITEMS.reduce((acc, item) => {
+      acc[item] = 0;
+      return acc;
+    }, {});
+
+    stockEntries.forEach((entry) => {
+      if (entry.type !== "OUT") return;
+      const item = normalizeStockItem(entry.item);
+      if (!item) return;
+      stockOutByItem[item] += Number(entry.qtyKg || 0);
+    });
+
     res.json({
       success: true,
       data: {
-        records,
+        records: enrichedRecords,
         stock: {
           dateKey,
           stockOutKg,
+          byItem: stockOutByItem,
         },
         pagination: {
           total,
@@ -1384,8 +1672,11 @@ async function getDistributionStats(req, res) {
     if (distributor) tokenQuery.distributorId = distributor._id;
     if (sessionId) tokenQuery.sessionId = sessionId;
 
-    const tokenIds = await Token.find(tokenQuery).select("_id status").lean();
+    const tokenIds = await Token.find(tokenQuery)
+      .select("_id status rationItem")
+      .lean();
     const idSet = tokenIds.map((item) => item._id);
+    const tokenMap = new Map(tokenIds.map((t) => [String(t._id), t]));
 
     const [recordCount, mismatchCount, records] = await Promise.all([
       DistributionRecord.countDocuments({ tokenId: { $in: idSet } }),
@@ -1394,7 +1685,9 @@ async function getDistributionStats(req, res) {
         mismatch: true,
       }),
       DistributionRecord.find({ tokenId: { $in: idSet } })
-        .select("expectedKg actualKg")
+        .select(
+          "tokenId expectedKg actualKg mismatch expectedByItem actualByItem item",
+        )
         .lean(),
     ]);
 
@@ -1407,6 +1700,40 @@ async function getDistributionStats(req, res) {
       0,
     );
 
+    const byItem = STOCK_ITEMS.reduce((acc, item) => {
+      acc[item] = {
+        expectedKg: 0,
+        actualKg: 0,
+        mismatchCount: 0,
+      };
+      return acc;
+    }, {});
+
+    records.forEach((record) => {
+      const token = tokenMap.get(String(record.tokenId));
+      const hydrated = hydrateRecordItemFields({
+        item: record.item || token?.rationItem,
+        expectedKg: record.expectedKg,
+        actualKg: record.actualKg,
+        expectedByItem: record.expectedByItem,
+        actualByItem: record.actualByItem,
+      });
+
+      for (const item of STOCK_ITEMS) {
+        byItem[item].expectedKg += Number(hydrated.expectedByItem[item] || 0);
+        byItem[item].actualKg += Number(hydrated.actualByItem[item] || 0);
+      }
+
+      if (record.mismatch && byItem[hydrated.item]) {
+        byItem[hydrated.item].mismatchCount += 1;
+      }
+    });
+
+    STOCK_ITEMS.forEach((item) => {
+      byItem[item].expectedKg = Number(byItem[item].expectedKg.toFixed(3));
+      byItem[item].actualKg = Number(byItem[item].actualKg.toFixed(3));
+    });
+
     const stats = {
       totalTokens: tokenIds.length,
       issued: tokenIds.filter((item) => item.status === "Issued").length,
@@ -1416,6 +1743,12 @@ async function getDistributionStats(req, res) {
       completedRecords: recordCount,
       expectedKg: Number(expectedKg.toFixed(2)),
       actualKg: Number(actualKg.toFixed(2)),
+      byItem,
+      totals: {
+        expectedKg: Number(expectedKg.toFixed(2)),
+        actualKg: Number(actualKg.toFixed(2)),
+        label: "Derived grand total from item-wise records",
+      },
     };
 
     res.json({ success: true, data: { stats } });
@@ -1570,10 +1903,44 @@ async function listDistributionSessions(req, res) {
         .lean(),
     ]);
 
+    const distributorIds = Array.from(
+      new Set(
+        sessions.map((s) => String(s.distributorId || "")).filter(Boolean),
+      ),
+    );
+
+    const distributors = distributorIds.length
+      ? await Distributor.find({ _id: { $in: distributorIds } })
+          .select("_id division wardNo ward")
+          .lean()
+      : [];
+    const distributorMap = new Map(distributors.map((d) => [String(d._id), d]));
+
+    const sessionRows = sessions.map((session) => {
+      const owner = distributorMap.get(String(session.distributorId || ""));
+      return {
+        ...session,
+        sessionId: String(session._id),
+        sessionCode: makeSessionCode(session),
+        division: owner?.division || distributor?.division || "",
+        ward:
+          owner?.wardNo ||
+          owner?.ward ||
+          distributor?.wardNo ||
+          distributor?.ward ||
+          "",
+      };
+    });
+
     res.json({
       success: true,
       data: {
-        sessions,
+        sessions: sessionRows,
+        context: {
+          distributorId: distributor ? String(distributor._id) : null,
+          division: distributor?.division || "",
+          ward: distributor?.wardNo || distributor?.ward || "",
+        },
         pagination: {
           total,
           page: pageNum,
@@ -1648,6 +2015,17 @@ async function closeDistributionSession(req, res) {
     const issuedTokens = tokenDocs.filter((t) => t.status === "Issued");
     const usedTokenCodes = usedTokens.map((t) => t.tokenCode);
 
+    const expectedUsedByItem = STOCK_ITEMS.reduce((acc, item) => {
+      acc[item] = 0;
+      return acc;
+    }, {});
+
+    usedTokens.forEach((token) => {
+      const item = normalizeStockItem(token.rationItem);
+      if (!item) return;
+      expectedUsedByItem[item] += Number(token.rationQtyKg || 0);
+    });
+
     const expectedUsedKg = usedTokens.reduce(
       (sum, token) => sum + Number(token.rationQtyKg || 0),
       0,
@@ -1671,6 +2049,36 @@ async function closeDistributionSession(req, res) {
       { $match: stockOutMatch },
       { $group: { _id: null, totalKg: { $sum: "$qtyKg" } } },
     ]);
+
+    const stockOutByItemAgg = await StockLedger.aggregate([
+      { $match: stockOutMatch },
+      { $group: { _id: "$item", totalKg: { $sum: "$qtyKg" } } },
+    ]);
+
+    const stockOutByItem = STOCK_ITEMS.reduce((acc, item) => {
+      acc[item] = 0;
+      return acc;
+    }, {});
+    stockOutByItemAgg.forEach((row) => {
+      const item = normalizeStockItem(row._id);
+      if (!item) return;
+      stockOutByItem[item] = Number(Number(row.totalKg || 0).toFixed(3));
+    });
+
+    const byItem = STOCK_ITEMS.reduce((acc, item) => {
+      const expectedKg = Number(
+        Number(expectedUsedByItem[item] || 0).toFixed(3),
+      );
+      const actualKg = Number(Number(stockOutByItem[item] || 0).toFixed(3));
+      const diffKg = Number((actualKg - expectedKg).toFixed(3));
+      acc[item] = {
+        expectedKg,
+        actualKg,
+        diffKg,
+        mismatch: Math.abs(diffKg) > 0.001,
+      };
+      return acc;
+    }, {});
 
     const stockOutKg = Number(stockOutAgg[0]?.totalKg || 0);
     const mismatchKg = Number(Math.abs(expectedUsedKg - stockOutKg).toFixed(3));
@@ -1697,6 +2105,7 @@ async function closeDistributionSession(req, res) {
       meta: {
         note: note || "",
         dateKey: daySession.dateKey,
+        sessionCode: makeSessionCode(daySession),
         issuedTokens: tokenDocs.length,
         usedTokens: usedTokens.length,
         pendingTokens: issuedTokens.length,
@@ -1736,6 +2145,8 @@ async function closeDistributionSession(req, res) {
       data: {
         session: daySession,
         reconciliation: {
+          sessionId: String(daySession._id),
+          sessionCode: makeSessionCode(daySession),
           issuedTokens: tokenDocs.length,
           usedTokens: usedTokens.length,
           pendingTokens: issuedTokens.length,
@@ -1744,6 +2155,7 @@ async function closeDistributionSession(req, res) {
           stockOutKg: Number(stockOutKg.toFixed(3)),
           mismatch: isMismatch,
           mismatchKg,
+          byItem,
           qrRotation,
         },
       },

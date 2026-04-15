@@ -4,6 +4,7 @@ const DistributionSession = require("../models/DistributionSession");
 const User = require("../models/User");
 const { writeAudit } = require("../services/audit.service");
 const { notifyUser } = require("../services/notification.service");
+const { makeSessionCode } = require("../services/sessionCode.service");
 const { normalizeDivision } = require("../utils/division.utils");
 const { normalizeWardNo } = require("../utils/ward.utils");
 const {
@@ -57,6 +58,14 @@ async function resolveStockDistributor(req, distributorIdInput) {
 // POST /api/stock/in
 async function addStockIn(req, res) {
   try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Stock IN শুধুমাত্র Admin বরাদ্দ করতে পারবেন",
+        code: "STOCK_IN_ADMIN_ONLY",
+      });
+    }
+
     const { distributorId, qtyKg, item, ref, dateKey, division, ward, wardNo } =
       req.body || {};
 
@@ -139,21 +148,48 @@ async function addStockIn(req, res) {
 
     const effectiveDateKey = dateKey || todayKey();
 
+    let scopedSession = null;
     if (distributor?._id) {
-      const startedSession = await DistributionSession.findOne({
+      scopedSession = await DistributionSession.findOne({
         distributorId: distributor._id,
         dateKey: effectiveDateKey,
-        status: { $in: ["Open", "Paused", "Closed"] },
+      })
+        .select("_id status dateKey")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      if (scopedSession && ["Open", "Paused"].includes(scopedSession.status)) {
+        return res.status(409).json({
+          success: false,
+          message: "সেশন Open/Live থাকলে Stock IN আপডেট করা যাবে না",
+          code: "SESSION_STOCK_LOCKED",
+          data: {
+            sessionId: String(scopedSession._id),
+            sessionCode: makeSessionCode(scopedSession),
+            status: scopedSession.status,
+            dateKey: scopedSession.dateKey,
+          },
+        });
+      }
+
+      const closedSession = await DistributionSession.findOne({
+        distributorId: distributor._id,
+        dateKey: effectiveDateKey,
+        status: "Closed",
       })
         .select("_id status")
         .lean();
 
-      if (startedSession) {
+      if (closedSession) {
         return res.status(400).json({
           success: false,
           message:
-            "Stock IN is locked because session already started for this date",
+            "এই তারিখের সেশন ইতিমধ্যে বন্ধ হয়েছে, তাই Stock IN আপডেট করা যাবে না",
         });
+      }
+
+      if (!scopedSession && closedSession) {
+        scopedSession = closedSession;
       }
     }
 
@@ -198,7 +234,17 @@ async function addStockIn(req, res) {
     res.status(201).json({
       success: true,
       message: "Stock IN recorded",
-      data: { entry },
+      data: {
+        entry,
+        context: {
+          distributorId: distributor ? String(distributor._id) : null,
+          division: distributor?.division || "",
+          ward: distributor?.wardNo || distributor?.ward || "",
+          dateKey: effectiveDateKey,
+          sessionId: scopedSession?._id ? String(scopedSession._id) : null,
+          sessionCode: makeSessionCode(scopedSession),
+        },
+      },
     });
   } catch (error) {
     console.error("addStockIn error:", error);
@@ -248,6 +294,16 @@ async function getStockSummary(req, res) {
       .sort({ createdAt: -1 })
       .limit(200)
       .lean();
+
+    const scopedSession = distributor
+      ? await DistributionSession.findOne({
+          distributorId: distributor._id,
+          dateKey: targetDateKey,
+        })
+          .select("_id status dateKey")
+          .sort({ createdAt: -1 })
+          .lean()
+      : null;
 
     const totals = entries.reduce(
       (acc, entry) => {
@@ -307,6 +363,13 @@ async function getStockSummary(req, res) {
         },
         byItem,
         entries,
+        context: {
+          division: distributor?.division || "",
+          ward: distributor?.wardNo || distributor?.ward || "",
+          sessionId: scopedSession?._id ? String(scopedSession._id) : null,
+          sessionCode: makeSessionCode(scopedSession),
+          sessionStatus: scopedSession?.status || null,
+        },
       },
     });
   } catch (error) {

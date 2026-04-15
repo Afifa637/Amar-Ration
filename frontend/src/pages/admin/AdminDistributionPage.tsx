@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../../components/SectionCard";
 import {
+  applyAdminAlertAction,
   closeDistributionSession,
   getAdminDistributors,
   getAdminDistributionMonitoring,
@@ -15,7 +16,7 @@ import {
   type StockItem,
 } from "../../services/api";
 
-type MonitoringTab = "live" | "history" | "mismatch";
+type MonitoringTab = "live" | "recent" | "planned" | "mismatch";
 const STOCK_ITEMS: StockItem[] = ["চাল", "ডাল", "পেঁয়াজ"];
 const SESSION_STATUS_OPTIONS = ["", "Open", "Paused", "Closed", "Planned"];
 
@@ -29,6 +30,15 @@ export default function AdminDistributionPage() {
       action: string;
       severity: "Info" | "Warning" | "Critical";
       createdAt: string;
+      meta?: {
+        division?: string;
+        ward?: string;
+        distributorName?: string;
+        distributorId?: string;
+        sessionId?: string;
+        sourceAction?: string;
+        actionable?: boolean;
+      };
     }>
   >([]);
 
@@ -44,13 +54,19 @@ export default function AdminDistributionPage() {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
 
   const [selectedDistributorId, setSelectedDistributorId] = useState("");
-  const [stockQty, setStockQty] = useState("");
+  const [stockDivision, setStockDivision] = useState("");
+  const [stockWard, setStockWard] = useState("");
+  const [stockAllocations, setStockAllocations] = useState<
+    Record<StockItem, string>
+  >({
+    চাল: "",
+    ডাল: "",
+    পেঁয়াজ: "",
+  });
   const [stockRef, setStockRef] = useState("");
-  const [stockItem, setStockItem] = useState<StockItem>("চাল");
   const [stockBalanceTotal, setStockBalanceTotal] = useState<number | null>(
     null,
   );
-  const [stockBalanceItem, setStockBalanceItem] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -64,8 +80,8 @@ export default function AdminDistributionPage() {
       sessionStatus: monitorSessionStatus || undefined,
       item: monitorItem || undefined,
       mismatchOnly: tab === "mismatch" ? true : monitorMismatchOnly,
-      page: tab === "history" ? historyPage : 1,
-      limit: tab === "history" ? 8 : 40,
+      page: tab === "recent" || tab === "planned" ? historyPage : 1,
+      limit: tab === "recent" || tab === "planned" ? 8 : 40,
     }),
     [
       historyPage,
@@ -99,8 +115,10 @@ export default function AdminDistributionPage() {
       );
       setSummary(summaryData);
       setCriticalEvents(
-        (summaryData.alerts || []).filter((a) =>
-          ["Critical", "Warning"].includes(a.severity),
+        (summaryData.alerts || []).filter(
+          (a) =>
+            ["Critical", "Warning"].includes(a.severity) &&
+            a.action !== "ADMIN_ALERT_ACTION_APPLIED",
         ),
       );
       setGroups(monitoringData.groups || []);
@@ -111,6 +129,10 @@ export default function AdminDistributionPage() {
       setDistributors(activeRows);
       if (!selectedDistributorId && activeRows[0]?.distributorId) {
         setSelectedDistributorId(activeRows[0].distributorId);
+      }
+
+      if (!stockDivision && activeRows[0]?.division) {
+        setStockDivision(activeRows[0].division);
       }
 
       const nextExpanded: Record<string, boolean> = {};
@@ -131,8 +153,10 @@ export default function AdminDistributionPage() {
     try {
       const summaryData = await getAdminSummary();
       setCriticalEvents(
-        (summaryData.alerts || []).filter((a) =>
-          ["Critical", "Warning"].includes(a.severity),
+        (summaryData.alerts || []).filter(
+          (a) =>
+            ["Critical", "Warning"].includes(a.severity) &&
+            a.action !== "ADMIN_ALERT_ACTION_APPLIED",
         ),
       );
     } catch {
@@ -169,14 +193,12 @@ export default function AdminDistributionPage() {
           distributorId: selectedDistributorId,
         });
         setStockBalanceTotal(data.summary.balanceKg);
-        setStockBalanceItem(data.byItem?.[stockItem]?.balanceKg ?? null);
       } catch {
         setStockBalanceTotal(null);
-        setStockBalanceItem(null);
       }
     };
     void loadStock();
-  }, [selectedDistributorId, stockItem]);
+  }, [selectedDistributorId]);
 
   const pausedPoints = useMemo(
     () => groups.reduce((sum, g) => sum + (g.totals.mismatchCount || 0), 0),
@@ -195,36 +217,108 @@ export default function AdminDistributionPage() {
     [groups],
   );
 
+  const stockDivisionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(distributors.map((d) => d.division || "").filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [distributors],
+  );
+
+  const stockWardOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          distributors
+            .filter((d) =>
+              stockDivision ? (d.division || "") === stockDivision : true,
+            )
+            .map((d) => d.ward || d.wardNo || "")
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [distributors, stockDivision],
+  );
+
+  const scopedDistributor = useMemo(
+    () =>
+      distributors.find(
+        (d) =>
+          (d.division || "") === stockDivision &&
+          (d.ward || d.wardNo || "") === stockWard,
+      ) || null,
+    [distributors, stockDivision, stockWard],
+  );
+
+  const scopedGroup = useMemo(
+    () =>
+      groups.find(
+        (g) =>
+          g.distributorId === (scopedDistributor?.distributorId || "") ||
+          (g.division === stockDivision && g.ward === stockWard),
+      ) || null,
+    [groups, scopedDistributor, stockDivision, stockWard],
+  );
+
+  const latestScopedSession = useMemo(() => {
+    if (!scopedGroup?.sessions?.length) return null;
+    return [...scopedGroup.sessions].sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )[0];
+  }, [scopedGroup]);
+
+  useEffect(() => {
+    const nextId = scopedDistributor?.distributorId || "";
+    if (nextId && nextId !== selectedDistributorId) {
+      setSelectedDistributorId(nextId);
+    }
+  }, [scopedDistributor, selectedDistributorId]);
+
   const onAllocateStock = async () => {
-    const qty = Number(stockQty);
-    if (!selectedDistributorId && !(monitorDivision && monitorWard)) {
-      setError("ডিস্ট্রিবিউটর অথবা division+ward নির্বাচন করুন");
+    if (!stockDivision || !stockWard) {
+      setError("স্টক বরাদ্দের জন্য বিভাগ + ওয়ার্ড নির্বাচন করুন");
       return;
     }
-    if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1) {
-      setError("স্টক কেজি ১ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+
+    const payloadRows = STOCK_ITEMS.map((item) => ({
+      item,
+      qty: Number(stockAllocations[item] || 0),
+    })).filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+
+    if (payloadRows.length === 0) {
+      setError("কমপক্ষে একটি আইটেমে বরাদ্দ দিন");
+      return;
+    }
+
+    if (payloadRows.some((row) => !Number.isInteger(row.qty) || row.qty < 1)) {
+      setError("প্রতি আইটেমের বরাদ্দ ১ কেজি ধাপে পূর্ণসংখ্যা হতে হবে");
       return;
     }
 
     try {
       setLoading(true);
       setError("");
-      const result = await recordStockIn({
-        distributorId: selectedDistributorId || undefined,
-        division: selectedDistributorId
-          ? undefined
-          : monitorDivision || undefined,
-        ward: selectedDistributorId ? undefined : monitorWard || undefined,
-        qtyKg: qty,
-        item: stockItem,
-        ref: stockRef || undefined,
-      });
 
-      const resolvedDistributorId =
-        selectedDistributorId ||
-        (typeof result.entry.distributorId === "string"
-          ? result.entry.distributorId
-          : "");
+      let resolvedDistributorId = scopedDistributor?.distributorId || "";
+
+      for (const row of payloadRows) {
+        const result = await recordStockIn({
+          distributorId: resolvedDistributorId || undefined,
+          division: stockDivision,
+          ward: stockWard,
+          qtyKg: row.qty,
+          item: row.item,
+          ref: stockRef || undefined,
+        });
+
+        if (!resolvedDistributorId) {
+          resolvedDistributorId =
+            typeof result.entry.distributorId === "string"
+              ? result.entry.distributorId
+              : "";
+        }
+      }
 
       if (!resolvedDistributorId) {
         setError("স্টক বরাদ্দ হয়েছে, তবে distributor সনাক্ত করা যায়নি");
@@ -240,10 +334,9 @@ export default function AdminDistributionPage() {
         distributorId: resolvedDistributorId,
       });
       setStockBalanceTotal(stock.summary.balanceKg);
-      setStockBalanceItem(stock.byItem?.[stockItem]?.balanceKg ?? null);
-      setStockQty("");
+      setStockAllocations({ চাল: "", ডাল: "", পেঁয়াজ: "" });
       setStockRef("");
-      setMessage(`স্টক IN (${stockItem}) বরাদ্দ সংরক্ষণ হয়েছে`);
+      setMessage("স্টক IN বরাদ্দ সংরক্ষণ হয়েছে");
       await loadMainData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "স্টক IN বরাদ্দ ব্যর্থ");
@@ -253,8 +346,13 @@ export default function AdminDistributionPage() {
   };
 
   const onCloseSession = async () => {
-    if (!selectedDistributorId) {
-      setError("ডিস্ট্রিবিউটর নির্বাচন করুন");
+    const targetDistributorId =
+      selectedDistributorId || scopedDistributor?.distributorId || "";
+
+    if (!targetDistributorId) {
+      setError(
+        "সেশন ক্লোজের জন্য বিভাগ+ওয়ার্ড বা ডিস্ট্রিবিউটর নির্বাচন করুন",
+      );
       return;
     }
 
@@ -262,12 +360,20 @@ export default function AdminDistributionPage() {
       setLoading(true);
       setError("");
       const sessionData = await getDistributionSessions({
-        distributorId: selectedDistributorId,
+        distributorId: targetDistributorId,
         status: "Open",
         limit: 1,
       });
 
-      const target = sessionData.sessions?.[0];
+      const target =
+        sessionData.sessions?.[0] ||
+        (
+          await getDistributionSessions({
+            distributorId: targetDistributorId,
+            status: "Paused",
+            limit: 1,
+          })
+        ).sessions?.[0];
       if (!target) {
         setError("এই ডিস্ট্রিবিউটরের কোনো ওপেন সেশন নেই");
         return;
@@ -275,7 +381,7 @@ export default function AdminDistributionPage() {
 
       const result = await closeDistributionSession({
         sessionId: target._id,
-        distributorId: selectedDistributorId,
+        distributorId: targetDistributorId,
         note: "Admin manual close",
       });
 
@@ -288,6 +394,28 @@ export default function AdminDistributionPage() {
       await loadMainData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "সেশন ক্লোজ ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onAlertAction = async (
+    alertId: string,
+    action:
+      | "acknowledge"
+      | "under_review"
+      | "pause_session"
+      | "stop_session"
+      | "request_audit",
+  ) => {
+    try {
+      setLoading(true);
+      setError("");
+      await applyAdminAlertAction(alertId, { action });
+      setMessage("এলার্ট অ্যাকশন প্রয়োগ হয়েছে");
+      await loadMainData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "এলার্ট অ্যাকশন ব্যর্থ");
     } finally {
       setLoading(false);
     }
@@ -349,6 +477,12 @@ export default function AdminDistributionPage() {
 
   const renderSession = (s: AdminMonitoringSessionGroup) => {
     const mismatchRows = s.rows.filter((r) => r.mismatch);
+    const mismatchByItem = STOCK_ITEMS.map((item) => ({
+      item,
+      mismatchKg: s.itemBreakdown?.[item]?.mismatchKg ?? 0,
+      expectedKg: s.itemBreakdown?.[item]?.scanExpectedKg ?? 0,
+      actualKg: s.itemBreakdown?.[item]?.actualKg ?? 0,
+    })).filter((row) => row.mismatchKg > 0);
 
     return (
       <div
@@ -371,7 +505,32 @@ export default function AdminDistributionPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[13px]">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[13px]">
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">বরাদ্দ/পারমিটেড</div>
+            <div className="font-semibold">{s.assignedUsers ?? 0}</div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">স্ক্যানড</div>
+            <div className="font-semibold">{s.scannedUsers ?? 0}</div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">ম্যাচড/মিসম্যাচ</div>
+            <div className="font-semibold">
+              {s.matchedUsers ?? 0} / {s.mismatchUsers ?? s.mismatchCount}
+            </div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">Pending / No-show</div>
+            <div className="font-semibold">
+              {s.pendingUsers ?? 0} / {s.noShowUsers ?? 0}
+            </div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">ক্রিটিকাল এলার্ট</div>
+            <div className="font-semibold">{s.criticalAlertsCount ?? 0}</div>
+          </div>
+
           <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
             <div className="text-[#6b7280]">প্রত্যাশিত</div>
             <div className="font-semibold">{s.expectedKg} kg</div>
@@ -381,18 +540,22 @@ export default function AdminDistributionPage() {
             <div className="font-semibold">{s.actualKg} kg</div>
           </div>
           <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
-            <div className="text-[#6b7280]">মিসম্যাচ</div>
-            <div className="font-semibold">{s.mismatchCount}</div>
+            <div className="text-[#6b7280]">শর্টফল</div>
+            <div className="font-semibold">{s.shortfallKg ?? 0} kg</div>
           </div>
           <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
-            <div className="text-[#6b7280]">স্টক আইটেম</div>
+            <div className="text-[#6b7280]">মোট মিসম্যাচ</div>
             <div className="font-semibold">
-              {Object.keys(s.stockBalanceByItem || {}).length}
+              {s.mismatchKg ?? 0} kg ({s.mismatchCount})
             </div>
+          </div>
+          <div className="border border-[#e5e7eb] rounded p-2 bg-[#fafafa]">
+            <div className="text-[#6b7280]">সেশন বরাদ্দ (kg)</div>
+            <div className="font-semibold">{s.plannedKg ?? 0} kg</div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           {STOCK_ITEMS.map((item) => (
             <div
               key={`${s.sessionId}-${item}`}
@@ -402,9 +565,21 @@ export default function AdminDistributionPage() {
                   : "border-[#e5e7eb] bg-[#f8fafc]"
               }`}
             >
-              <div className="text-[#6b7280]">{item}</div>
-              <div className="font-semibold">
-                {s.stockBalanceByItem?.[item] ?? 0} kg
+              <div className="text-[#6b7280] font-semibold mb-1">{item}</div>
+              <div className="grid grid-cols-2 gap-1">
+                <div>বরাদ্দ: {s.itemBreakdown?.[item]?.plannedKg ?? 0}kg</div>
+                <div>
+                  স্ক্যান-প্রত্যাশিত:{" "}
+                  {s.itemBreakdown?.[item]?.scanExpectedKg ?? 0}
+                  kg
+                </div>
+                <div>প্রকৃত: {s.itemBreakdown?.[item]?.actualKg ?? 0}kg</div>
+                <div>
+                  মিসম্যাচ: {s.itemBreakdown?.[item]?.mismatchKg ?? 0}kg
+                </div>
+                <div className="col-span-2 font-semibold">
+                  অবশিষ্ট: {s.itemBreakdown?.[item]?.remainingKg ?? 0}kg
+                </div>
               </div>
             </div>
           ))}
@@ -413,7 +588,25 @@ export default function AdminDistributionPage() {
         {mismatchRows.length > 0 && (
           <div className="border border-[#fecaca] bg-[#fef2f2] rounded p-2">
             <div className="text-[12px] font-semibold text-[#991b1b] mb-1">
-              মিসম্যাচ সারি
+              আইটেমভিত্তিক মিসম্যাচ
+            </div>
+            <div className="space-y-1 mb-2">
+              {mismatchByItem.map((row) => (
+                <div
+                  key={`${s.sessionId}-${row.item}`}
+                  className="grid grid-cols-4 gap-2 text-[12px] border border-[#fca5a5] rounded px-2 py-1 bg-white"
+                >
+                  <span>আইটেম: {row.item}</span>
+                  <span>স্ক্যান-প্রত্যাশিত: {row.expectedKg}kg</span>
+                  <span>প্রকৃত: {row.actualKg}kg</span>
+                  <span className="text-[#b91c1c]">
+                    মিসম্যাচ: {row.mismatchKg}kg
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-[12px] font-semibold text-[#991b1b] mb-1">
+              মিসম্যাচ সারি (রেকর্ড)
             </div>
             <div className="space-y-1">
               {mismatchRows.slice(0, 8).map((row) => (
@@ -484,43 +677,35 @@ export default function AdminDistributionPage() {
       </SectionCard>
 
       <SectionCard title="স্টক বরাদ্দ ও সেশন নিয়ন্ত্রণ">
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
           <select
             className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-            value={selectedDistributorId}
-            onChange={(e) => setSelectedDistributorId(e.target.value)}
+            value={stockDivision}
+            onChange={(e) => {
+              setStockDivision(e.target.value);
+              setStockWard("");
+            }}
           >
-            <option value="">ডিস্ট্রিবিউটর নির্বাচন করুন</option>
-            {distributors
-              .filter((row) => !!row.distributorId)
-              .map((row) => (
-                <option key={row.userId} value={row.distributorId || ""}>
-                  {row.name} ({row.ward || "N/A"})
-                </option>
-              ))}
-          </select>
-
-          <select
-            value={stockItem}
-            onChange={(e) => setStockItem(e.target.value as StockItem)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
-          >
-            {STOCK_ITEMS.map((item) => (
-              <option key={item} value={item}>
-                {item}
+            <option value="">বিভাগ নির্বাচন করুন</option>
+            {stockDivisionOptions.map((division) => (
+              <option key={division} value={division}>
+                {division}
               </option>
             ))}
           </select>
 
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={stockQty}
-            onChange={(e) => setStockQty(e.target.value)}
-            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px]"
-            placeholder="স্টক IN (kg)"
-          />
+          <select
+            value={stockWard}
+            onChange={(e) => setStockWard(e.target.value)}
+            className="border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
+          >
+            <option value="">ওয়ার্ড নির্বাচন করুন</option>
+            {stockWardOptions.map((ward) => (
+              <option key={ward} value={ward}>
+                {ward}
+              </option>
+            ))}
+          </select>
 
           <input
             value={stockRef}
@@ -529,6 +714,53 @@ export default function AdminDistributionPage() {
             placeholder="ব্যাচ/রেফারেন্স"
           />
 
+          <div className="text-[12px] text-[#4b5563] border border-[#d7dde6] rounded px-3 py-2 bg-[#f8fafc]">
+            অ্যাসাইনড ডিস্ট্রিবিউটর: <b>{scopedDistributor?.name || "—"}</b>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          {(
+            [
+              ["🌾", "চাল"],
+              ["🫘", "ডাল"],
+              ["🧅", "পেঁয়াজ"],
+            ] as Array<[string, StockItem]>
+          ).map(([icon, item]) => (
+            <div
+              key={item}
+              className="rounded-xl border border-[#d7dde6] bg-linear-to-br from-white to-[#f8fbff] p-4"
+            >
+              <div className="text-lg font-semibold mb-2">
+                {icon} {item}
+              </div>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={stockAllocations[item]}
+                onChange={(e) =>
+                  setStockAllocations((prev) => ({
+                    ...prev,
+                    [item]: e.target.value,
+                  }))
+                }
+                className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[14px]"
+                placeholder={`${item} স্টক IN (kg)`}
+              />
+              <div className="mt-2 text-[12px] text-[#6b7280]">
+                ১ কেজি ধাপে বরাদ্দ দিন
+              </div>
+              <div className="mt-2 text-[12px] text-[#334155]">
+                অবশিষ্ট:{" "}
+                {latestScopedSession?.itemBreakdown?.[item]?.remainingKg ?? "—"}
+                kg
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => void onAllocateStock()}
             className="px-3 py-2 rounded bg-[#16679c] text-white text-[13px] hover:bg-[#0f557f]"
@@ -548,13 +780,21 @@ export default function AdminDistributionPage() {
 
         <div className="mt-2 text-[12px] text-[#4b5563] space-y-1">
           <div>
-            নির্বাচিত আইটেম ({stockItem}) ব্যালেন্স:{" "}
-            <span className="font-semibold">{stockBalanceItem ?? "—"} kg</span>
-          </div>
-          <div>
             মোট (সব আইটেম) ব্যালেন্স:{" "}
             <span className="font-semibold">{stockBalanceTotal ?? "—"} kg</span>
           </div>
+          {latestScopedSession && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[12px]">
+              <span>সেশন স্ট্যাটাস: {latestScopedSession.sessionStatus}</span>
+              <span>
+                শেষ আপডেট: {relativeBanglaTime(latestScopedSession.updatedAt)}
+              </span>
+              <span>
+                স্ক্যান-প্রত্যাশিত: {latestScopedSession.expectedKg}kg
+              </span>
+              <span>প্রকৃত বিতরণ: {latestScopedSession.actualKg}kg</span>
+            </div>
+          )}
         </div>
       </SectionCard>
 
@@ -563,7 +803,8 @@ export default function AdminDistributionPage() {
           <div className="flex flex-wrap gap-2">
             {[
               ["live", "Live"],
-              ["history", "Recent History"],
+              ["recent", "Recent"],
+              ["planned", "Planned"],
               ["mismatch", "Mismatch Only"],
             ].map(([key, label]) => (
               <button
@@ -736,7 +977,7 @@ export default function AdminDistributionPage() {
             })}
           </div>
 
-          {tab === "history" && historyPages > 1 && (
+          {(tab === "recent" || tab === "planned") && historyPages > 1 && (
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
@@ -775,10 +1016,71 @@ export default function AdminDistributionPage() {
                   : "bg-[#fff7ed] border-[#fed7aa]"
               }`}
             >
-              <div className="font-medium">{event.action}</div>
+              <div className="font-medium">
+                {event.meta?.sourceAction
+                  ? `${event.action} (${event.meta.sourceAction})`
+                  : event.action}
+              </div>
               <div className="text-[12px] text-[#6b7280]">
                 {event.severity} • {relativeBanglaTime(event.createdAt)}
               </div>
+              <div className="text-[12px] text-[#334155] mt-1">
+                {event.meta?.division || "—"} • ওয়ার্ড{" "}
+                {event.meta?.ward || "—"}
+                {event.meta?.distributorName
+                  ? ` • ${event.meta.distributorName}`
+                  : ""}
+                {event.meta?.sessionId
+                  ? ` • Session ${event.meta.sessionId}`
+                  : ""}
+              </div>
+              {(event.meta?.actionable ?? true) && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-[11px] rounded border border-[#cbd5e1] bg-white"
+                    onClick={() => void onAlertAction(event._id, "acknowledge")}
+                  >
+                    Acknowledge
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-[11px] rounded border border-[#cbd5e1] bg-white"
+                    onClick={() =>
+                      void onAlertAction(event._id, "under_review")
+                    }
+                  >
+                    Under review
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-[11px] rounded border border-[#f59e0b] bg-[#fff7ed]"
+                    onClick={() =>
+                      void onAlertAction(event._id, "pause_session")
+                    }
+                  >
+                    Pause session
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-[11px] rounded border border-[#dc2626] bg-[#fef2f2]"
+                    onClick={() =>
+                      void onAlertAction(event._id, "stop_session")
+                    }
+                  >
+                    Stop session
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-[11px] rounded border border-[#7c3aed] bg-[#f5f3ff]"
+                    onClick={() =>
+                      void onAlertAction(event._id, "request_audit")
+                    }
+                  >
+                    Request audit
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {criticalEvents.length === 0 && (
