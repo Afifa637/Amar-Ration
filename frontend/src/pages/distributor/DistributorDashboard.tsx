@@ -4,6 +4,20 @@ import {
   type DistributorDashboardSummary,
 } from "../../services/api";
 import { useAuth } from "../../context/useAuth";
+const statusLabel = (s: string) =>
+  (
+    ({
+      Active: "সক্রিয়",
+      Inactive: "নিষ্ক্রিয়",
+      Suspended: "স্থগিত",
+      Pending: "অপেক্ষমাণ",
+      Revoked: "বাতিল",
+      Open: "চলমান",
+      Closed: "বন্ধ",
+      Planned: "পরিকল্পিত",
+      Paused: "স্থগিত",
+    }) as Record<string, string>
+  )[s] ?? s;
 
 export default function DistributorDashboard() {
   const { user } = useAuth();
@@ -151,7 +165,9 @@ export default function DistributorDashboard() {
           <div className="text-[12px] text-[#6b7280]">
             বর্তমান সেশন:{" "}
             <span className="font-semibold text-[#111827]">
-              {dashboard?.session?.status || "No Session"}
+              {dashboard?.session?.status
+                ? statusLabel(dashboard.session.status)
+                : "কোনো সেশন নেই"}
             </span>
           </div>
         </div>
@@ -324,7 +340,7 @@ export default function DistributorDashboard() {
                     {row.dateKey}
                   </td>
                   <td className="border border-[#cfd6e0] p-2 text-center">
-                    {row.status}
+                    {statusLabel(row.status)}
                   </td>
                   <td className="border border-[#cfd6e0] p-2 text-center">
                     {row.rationItem || "চাল"}

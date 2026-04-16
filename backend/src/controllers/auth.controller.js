@@ -21,10 +21,50 @@ const REFRESH_COOKIE_NAME = "refreshToken";
 
 // ── Feature Flags (toggle from one section) ─────────────────────────────
 const AUTH_FEATURE_FLAGS = {
-  enable2FA:
-    String(process.env.AUTH_ENABLE_2FA || "false")
+  enable2FASetup:
+    String(
+      process.env.AUTH_ENABLE_2FA_SETUP ||
+        process.env.AUTH_ENABLE_2FA ||
+        "true",
+    )
       .trim()
       .toLowerCase() === "true",
+  enforce2FALogin:
+    String(process.env.AUTH_ENFORCE_2FA_ON_LOGIN || "true")
+      .trim()
+      .toLowerCase() === "true",
+};
+
+const AUTH_LOCK_POLICY = {
+  password: {
+    maxAttempts: Math.max(
+      1,
+      Number(process.env.AUTH_MAX_FAILED_PASSWORD_ATTEMPTS) || 5,
+    ),
+    windowMs:
+      Math.max(
+        1,
+        Number(process.env.AUTH_PASSWORD_ATTEMPT_WINDOW_MINUTES) || 15,
+      ) *
+      60 *
+      1000,
+    lockMs:
+      Math.max(1, Number(process.env.AUTH_PASSWORD_LOCK_MINUTES) || 15) *
+      60 *
+      1000,
+  },
+  twoFactor: {
+    maxAttempts: Math.max(
+      1,
+      Number(process.env.AUTH_MAX_FAILED_2FA_ATTEMPTS) || 5,
+    ),
+    windowMs:
+      Math.max(1, Number(process.env.AUTH_2FA_ATTEMPT_WINDOW_MINUTES) || 10) *
+      60 *
+      1000,
+    lockMs:
+      Math.max(1, Number(process.env.AUTH_2FA_LOCK_MINUTES) || 10) * 60 * 1000,
+  },
 };
 
 function readCookie(req, cookieName) {
@@ -226,6 +266,92 @@ async function logFailedLoginAttempt({
   }
 }
 
+function remainingLockSeconds(dateLike) {
+  if (!dateLike) return 0;
+  const ms = new Date(dateLike).getTime() - Date.now();
+  return ms > 0 ? Math.ceil(ms / 1000) : 0;
+}
+
+async function registerPasswordFailure(user) {
+  const now = Date.now();
+  const withinWindow =
+    user.lastFailedLoginAt &&
+    now - new Date(user.lastFailedLoginAt).getTime() <=
+      AUTH_LOCK_POLICY.password.windowMs;
+  const nextAttempts = withinWindow ? (user.failedLoginAttempts || 0) + 1 : 1;
+
+  user.failedLoginAttempts = nextAttempts;
+  user.lastFailedLoginAt = new Date(now);
+
+  if (nextAttempts >= AUTH_LOCK_POLICY.password.maxAttempts) {
+    user.failedLoginAttempts = 0;
+    user.loginLockUntil = new Date(now + AUTH_LOCK_POLICY.password.lockMs);
+    await user.save();
+    return {
+      lockedNow: true,
+      lockSeconds: remainingLockSeconds(user.loginLockUntil),
+    };
+  }
+
+  await user.save();
+  return { lockedNow: false, lockSeconds: 0 };
+}
+
+async function clearPasswordFailures(user) {
+  if (
+    !user.failedLoginAttempts &&
+    !user.lastFailedLoginAt &&
+    !user.loginLockUntil
+  ) {
+    return;
+  }
+  user.failedLoginAttempts = 0;
+  user.lastFailedLoginAt = null;
+  user.loginLockUntil = null;
+  await user.save();
+}
+
+async function registerTwoFactorFailure(user) {
+  const now = Date.now();
+  const withinWindow =
+    user.twoFactorLastFailedAt &&
+    now - new Date(user.twoFactorLastFailedAt).getTime() <=
+      AUTH_LOCK_POLICY.twoFactor.windowMs;
+  const nextAttempts = withinWindow
+    ? (user.twoFactorFailedAttempts || 0) + 1
+    : 1;
+
+  user.twoFactorFailedAttempts = nextAttempts;
+  user.twoFactorLastFailedAt = new Date(now);
+
+  if (nextAttempts >= AUTH_LOCK_POLICY.twoFactor.maxAttempts) {
+    user.twoFactorFailedAttempts = 0;
+    user.twoFactorLockUntil = new Date(now + AUTH_LOCK_POLICY.twoFactor.lockMs);
+    await user.save();
+    return {
+      lockedNow: true,
+      lockSeconds: remainingLockSeconds(user.twoFactorLockUntil),
+    };
+  }
+
+  await user.save();
+  return { lockedNow: false, lockSeconds: 0 };
+}
+
+async function clearTwoFactorFailures(user) {
+  if (
+    !user.twoFactorFailedAttempts &&
+    !user.twoFactorLastFailedAt &&
+    !user.twoFactorLockUntil
+  ) {
+    return;
+  }
+  user.twoFactorFailedAttempts = 0;
+  user.twoFactorLastFailedAt = null;
+  user.twoFactorLockUntil = null;
+  await user.save();
+}
+
 // @route   GET /api/auth/password-change/ack?action=yes|not-me&token=...
 // @desc    Acknowledge distributor password change from email link
 // @access  Public
@@ -398,7 +524,7 @@ exports.get2FAStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
-    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+    if (!AUTH_FEATURE_FLAGS.enable2FASetup) {
       return res.json({
         success: true,
         data: {
@@ -412,7 +538,7 @@ exports.get2FAStatus = async (req, res) => {
     }
 
     const admin = await User.findById(req.user.userId).select(
-      "twoFactorEnabled +twoFactorTempSecret +twoFactorTempSecretCreatedAt",
+      "twoFactorEnabled twoFactorMismatch twoFactorMismatchDetectedAt +twoFactorTempSecret +twoFactorTempSecretCreatedAt",
     );
 
     if (!admin) {
@@ -431,6 +557,8 @@ exports.get2FAStatus = async (req, res) => {
         setupPending,
         pendingSince: admin.twoFactorTempSecretCreatedAt || null,
         secret: setupPending ? pendingSecret : null,
+        mismatch: !!admin.twoFactorMismatch,
+        mismatchDetectedAt: admin.twoFactorMismatchDetectedAt || null,
       },
     });
   } catch (error) {
@@ -445,7 +573,7 @@ exports.setup2FA = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
-    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+    if (!AUTH_FEATURE_FLAGS.enable2FASetup) {
       return res.status(503).json({
         success: false,
         message: "2FA is currently disabled by system configuration.",
@@ -453,7 +581,7 @@ exports.setup2FA = async (req, res) => {
     }
 
     const admin = await User.findById(req.user.userId).select(
-      "+twoFactorSecret +twoFactorTempSecret twoFactorEnabled",
+      "+twoFactorSecret +twoFactorTempSecret twoFactorEnabled twoFactorMismatch passwordHash",
     );
     if (!admin) {
       return res
@@ -467,6 +595,30 @@ exports.setup2FA = async (req, res) => {
         message:
           "2FA already enabled. Disable first if you need to reconfigure.",
       });
+    }
+
+    const isRecoveryPath = !!admin.twoFactorMismatch;
+    if (!isRecoveryPath) {
+      const { password } = req.body || {};
+      if (!password) {
+        return res.status(400).json({
+          success: false,
+          message: "2FA সেটআপের আগে বর্তমান পাসওয়ার্ড দিন",
+          code: "PASSWORD_REQUIRED",
+        });
+      }
+
+      const passwordOk = await bcrypt.compare(
+        String(password),
+        admin.passwordHash,
+      );
+      if (!passwordOk) {
+        return res.status(401).json({
+          success: false,
+          message: "পাসওয়ার্ড সঠিক নয়",
+          code: "INVALID_PASSWORD",
+        });
+      }
     }
 
     let tempSecret = decryptTwoFASecret(admin.twoFactorTempSecret);
@@ -521,7 +673,7 @@ exports.verify2FA = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
-    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+    if (!AUTH_FEATURE_FLAGS.enable2FASetup) {
       return res.status(503).json({
         success: false,
         message: "2FA is currently disabled by system configuration.",
@@ -569,6 +721,10 @@ exports.verify2FA = async (req, res) => {
     const hashedCodes = await Promise.all(
       backupCodes.map((code) => bcrypt.hash(code, 10)),
     );
+    const fingerprint = crypto
+      .createHash("sha256")
+      .update(secretForVerification)
+      .digest("hex");
 
     await User.findByIdAndUpdate(req.user.userId, {
       $set: {
@@ -577,6 +733,9 @@ exports.verify2FA = async (req, res) => {
         twoFactorTempSecret: null,
         twoFactorTempSecretCreatedAt: null,
         twoFactorBackupCodes: hashedCodes,
+        twoFactorSecretFingerprint: fingerprint,
+        twoFactorMismatch: false,
+        twoFactorMismatchDetectedAt: null,
       },
     });
 
@@ -613,7 +772,7 @@ exports.reset2FASetup = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
-    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+    if (!AUTH_FEATURE_FLAGS.enable2FASetup) {
       return res.status(503).json({
         success: false,
         message: "2FA is currently disabled by system configuration.",
@@ -677,7 +836,7 @@ exports.disable2FA = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
-    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+    if (!AUTH_FEATURE_FLAGS.enable2FASetup) {
       return res.status(503).json({
         success: false,
         message: "2FA is currently disabled by system configuration.",
@@ -686,7 +845,7 @@ exports.disable2FA = async (req, res) => {
 
     const { password, totpToken } = req.body || {};
     const user = await User.findById(req.user.userId).select(
-      "+twoFactorSecret +twoFactorBackupCodes",
+      "+twoFactorSecret +twoFactorBackupCodes twoFactorMismatch",
     );
     if (!user) {
       return res
@@ -705,6 +864,43 @@ exports.disable2FA = async (req, res) => {
     }
 
     const disableSecret = decryptTwoFASecret(user.twoFactorSecret);
+
+    const { emergencyConfirm } = req.body || {};
+    if (emergencyConfirm === "DISABLE_2FA_EMERGENCY") {
+      const hasValidSecret = !!disableSecret;
+      const isMismatch = !!user.twoFactorMismatch;
+      if (!hasValidSecret || isMismatch) {
+        await User.findByIdAndUpdate(req.user.userId, {
+          $set: {
+            twoFactorEnabled: false,
+            twoFactorSecret: null,
+            twoFactorTempSecret: null,
+            twoFactorTempSecretCreatedAt: null,
+            twoFactorBackupCodes: [],
+            twoFactorSecretFingerprint: null,
+            twoFactorMismatch: false,
+            twoFactorMismatchDetectedAt: null,
+          },
+        });
+        await writeAudit({
+          actorUserId: req.user.userId,
+          actorType: "Central Admin",
+          action: "2FA_EMERGENCY_DISABLED",
+          entityType: "User",
+          entityId: String(req.user.userId),
+          severity: "Critical",
+        });
+        return res.json({
+          success: true,
+          message: "2FA জরুরি ভিত্তিতে বন্ধ করা হয়েছে।",
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: "জরুরি disable শুধুমাত্র secret mismatch অবস্থায় সম্ভব",
+        code: "EMERGENCY_DISABLE_NOT_ALLOWED",
+      });
+    }
 
     if (user.twoFactorEnabled && disableSecret) {
       const totpOk = speakeasy.totp.verify({
@@ -727,6 +923,9 @@ exports.disable2FA = async (req, res) => {
         twoFactorTempSecret: null,
         twoFactorTempSecretCreatedAt: null,
         twoFactorBackupCodes: [],
+        twoFactorSecretFingerprint: null,
+        twoFactorMismatch: false,
+        twoFactorMismatchDetectedAt: null,
       },
     });
 
@@ -1004,6 +1203,15 @@ exports.login = async (req, res) => {
       });
     }
 
+    const passwordLockSeconds = remainingLockSeconds(user.loginLockUntil);
+    if (passwordLockSeconds > 0) {
+      return res.status(429).json({
+        success: false,
+        message: `Account temporarily locked. Try again in ${passwordLockSeconds} seconds.`,
+        code: "ACCOUNT_TEMP_LOCKED",
+      });
+    }
+
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
 
@@ -1016,17 +1224,54 @@ exports.login = async (req, res) => {
         req,
         userType,
       });
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
+
+      const lockState = await registerPasswordFailure(user);
+      if (lockState.lockedNow) {
+        await writeAudit({
+          actorUserId: String(user._id),
+          actorType: "System",
+          action: "AUTH_ACCOUNT_TEMP_LOCKED",
+          entityType: "User",
+          entityId: String(user._id),
+          severity: "Critical",
+          meta: {
+            reason: "Too many invalid password attempts",
+            lockSeconds: lockState.lockSeconds,
+          },
+        });
+
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed attempts. Account locked for ${lockState.lockSeconds} seconds.`,
+          code: "ACCOUNT_TEMP_LOCKED",
+        });
+      }
+
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
+    await clearPasswordFailures(user);
+
+    let twoFactorMismatchAutoDetected = false;
+
     if (
-      AUTH_FEATURE_FLAGS.enable2FA &&
+      AUTH_FEATURE_FLAGS.enable2FASetup &&
       user.userType === "Admin" &&
       user.twoFactorEnabled
     ) {
+      const twoFactorLockSeconds = remainingLockSeconds(
+        user.twoFactorLockUntil,
+      );
+      if (twoFactorLockSeconds > 0) {
+        return res.status(429).json({
+          success: false,
+          message: `2FA temporarily locked. Try again in ${twoFactorLockSeconds} seconds.`,
+          code: "TWO_FACTOR_TEMP_LOCKED",
+        });
+      }
+
       if (!totpToken) {
         return res.status(200).json({
           success: true,
@@ -1037,7 +1282,9 @@ exports.login = async (req, res) => {
       }
 
       const user2FA = await User.findById(user._id)
-        .select("+twoFactorSecret +twoFactorBackupCodes")
+        .select(
+          "+twoFactorSecret +twoFactorBackupCodes +twoFactorSecretFingerprint",
+        )
         .lean();
 
       const activeSecret = decryptTwoFASecret(user2FA?.twoFactorSecret);
@@ -1078,19 +1325,84 @@ exports.login = async (req, res) => {
         }
 
         if (!backupUsed) {
-          await logFailedLoginAttempt({
-            identifier: normalizedIdentifier,
-            userId: String(user._id),
-            reason: "INVALID_2FA_TOKEN",
-            severity: "Critical",
-            req,
-            userType,
-          });
-          return res
-            .status(401)
-            .json({ success: false, message: "Invalid 2FA code" });
+          const currentSecret = decryptTwoFASecret(user2FA?.twoFactorSecret);
+          let secretChanged = false;
+          if (currentSecret && user2FA?.twoFactorSecretFingerprint) {
+            const currentFingerprint = crypto
+              .createHash("sha256")
+              .update(currentSecret)
+              .digest("hex");
+            secretChanged =
+              currentFingerprint !== user2FA.twoFactorSecretFingerprint;
+          } else if (!user2FA?.twoFactorSecretFingerprint) {
+            secretChanged = true;
+          }
+
+          if (secretChanged) {
+            await User.findByIdAndUpdate(user._id, {
+              $set: {
+                twoFactorEnabled: false,
+                twoFactorSecret: null,
+                twoFactorTempSecret: null,
+                twoFactorTempSecretCreatedAt: null,
+                twoFactorBackupCodes: [],
+                twoFactorSecretFingerprint: null,
+                twoFactorMismatch: true,
+                twoFactorMismatchDetectedAt: new Date(),
+              },
+            });
+            await writeAudit({
+              actorUserId: String(user._id),
+              actorType: "Central Admin",
+              action: "2FA_SECRET_MISMATCH_AUTO_DISABLED",
+              entityType: "User",
+              entityId: String(user._id),
+              severity: "Critical",
+              meta: { reason: "Secret fingerprint mismatch detected on login" },
+            });
+            twoFactorMismatchAutoDetected = true;
+            user.twoFactorEnabled = false;
+            user.twoFactorMismatch = true;
+          } else {
+            await logFailedLoginAttempt({
+              identifier: normalizedIdentifier,
+              userId: String(user._id),
+              reason: "INVALID_2FA_TOKEN",
+              severity: "Critical",
+              req,
+              userType,
+            });
+
+            const lockState = await registerTwoFactorFailure(user);
+            if (lockState.lockedNow) {
+              await writeAudit({
+                actorUserId: String(user._id),
+                actorType: "System",
+                action: "AUTH_2FA_TEMP_LOCKED",
+                entityType: "User",
+                entityId: String(user._id),
+                severity: "Critical",
+                meta: {
+                  reason: "Too many invalid 2FA attempts",
+                  lockSeconds: lockState.lockSeconds,
+                },
+              });
+
+              return res.status(429).json({
+                success: false,
+                message: `Too many invalid 2FA attempts. Locked for ${lockState.lockSeconds} seconds.`,
+                code: "TWO_FACTOR_TEMP_LOCKED",
+              });
+            }
+
+            return res
+              .status(401)
+              .json({ success: false, message: "Invalid 2FA code" });
+          }
         }
       }
+
+      await clearTwoFactorFailures(user);
     }
 
     // Distributor/FieldUser must be approved by admin
@@ -1139,6 +1451,13 @@ exports.login = async (req, res) => {
       user.tokenVersion || 0,
       req.headers["user-agent"],
     );
+
+    const latestUserAfter2FA = twoFactorMismatchAutoDetected
+      ? await User.findById(user._id).select("twoFactorMismatch").lean()
+      : null;
+    const mismatchFlag = twoFactorMismatchAutoDetected
+      ? !!latestUserAfter2FA?.twoFactorMismatch
+      : !!user.twoFactorMismatch;
 
     // Prepare response
     const userResponse = {
@@ -1189,6 +1508,10 @@ exports.login = async (req, res) => {
         token,
         refreshToken,
         mustChangePassword: user.mustChangePassword || false,
+        twoFactorMismatch: mismatchFlag,
+        twoFactorMismatchWarning: mismatchFlag
+          ? "আপনার 2FA সিক্রেট পরিবর্তিত হয়েছে। সেটিংস থেকে পুনরায় সক্রিয় করুন।"
+          : undefined,
       },
     });
   } catch (error) {

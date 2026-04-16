@@ -41,6 +41,15 @@ const emptyForm: FormState = {
   status: "Inactive",
 };
 
+const categoryLabel = (c: string) =>
+  (
+    ({
+      A: "শ্রেণী-ক",
+      B: "শ্রেণী-খ",
+      C: "শ্রেণী-গ",
+    }) as Record<string, string>
+  )[c] ?? c;
+
 export default function BeneficiariesPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<"long" | "flags">("long");
@@ -753,9 +762,9 @@ export default function BeneficiariesPage() {
               }
               className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[13px] bg-white"
             >
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
+              <option value="A">{categoryLabel("A")}</option>
+              <option value="B">{categoryLabel("B")}</option>
+              <option value="C">{categoryLabel("C")}</option>
             </select>
           </div>
           <div>

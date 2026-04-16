@@ -83,6 +83,8 @@ async function ensureDistributorProfile(reqUser) {
     upazila: user.upazila,
     unionName: user.unionName,
     ward: normalizeWardNo(user.ward || user.wardNo),
+    loginEmail: user.email,
+    contactEmail: user.contactEmail,
     authorityStatus: user.authorityStatus || "Active",
     authorityFrom: user.authorityFrom || new Date(),
     authorityTo: user.authorityTo,
