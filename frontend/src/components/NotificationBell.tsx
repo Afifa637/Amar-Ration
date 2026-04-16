@@ -46,7 +46,7 @@ export default function NotificationBell() {
     void refreshUnread();
     const timer = window.setInterval(() => {
       void refreshUnread();
-    }, 60000);
+    }, 10000);
 
     return () => {
       window.clearInterval(timer);

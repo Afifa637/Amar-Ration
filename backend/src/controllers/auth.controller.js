@@ -11,8 +11,8 @@ const {
   sendDistributorPasswordChangeAlertEmail,
 } = require("../services/email.service");
 const { nextConsumerCode } = require("../services/consumer-code.service");
-const { normalizeDivision } = require("../utils/division.utils");
-const { normalizeWardNo } = require("../utils/ward.utils");
+const { normalizeDivision, buildDivisionMatchQuery } = require("../utils/division.utils");
+const { normalizeWardNo, buildWardMatchQuery } = require("../utils/ward.utils");
 const { escapeRegex } = require("../utils/regex.utils");
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -858,19 +858,17 @@ exports.signup = async (req, res) => {
         wardNo: fieldUserData.wardNo,
       });
 
-      // Notify the distributor of the same district + ward about this new application
+      // Notify the distributor of the same division + ward about this new application
       try {
-        const matchingDistributor = await User.findOne({
-          userType: "Distributor",
-          status: "Active",
-          authorityStatus: "Active",
-          division: fieldUserData.division,
-          wardNo: fieldUserData.wardNo,
-          ...(fieldUserData.district ? { district: fieldUserData.district } : {}),
-        }).select("_id").lean();
+        const divQuery = buildDivisionMatchQuery(fieldUserData.division);
+        const wardQuery = buildWardMatchQuery(fieldUserData.wardNo, ["wardNo"]);
+        const distQuery = { authorityStatus: "Active" };
+        if (divQuery) distQuery.division = divQuery;
+        if (wardQuery) Object.assign(distQuery, wardQuery);
+        const matchingDistributorDoc = await Distributor.findOne(distQuery).select("userId").lean();
 
-        if (matchingDistributor) {
-          await notifyUser(matchingDistributor._id, {
+        if (matchingDistributorDoc) {
+          await notifyUser(matchingDistributorDoc.userId, {
             title: "নতুন ফিল্ড ডিস্ট্রিবিউটর আবেদন",
             message: `${name} আপনার ওয়ার্ডের (${fieldUserData.wardNo}) জন্য ফিল্ড ডিস্ট্রিবিউটর হিসেবে নিবন্ধনের আবেদন করেছেন। অনুমোদন বা প্রত্যাখ্যান করতে ড্যাশবোর্ড দেখুন।`,
             meta: {
@@ -881,9 +879,9 @@ exports.signup = async (req, res) => {
             },
             channels: { app: true, sms: false },
           });
-          console.log("🔔 Notified distributor:", String(matchingDistributor._id), "about FieldUser signup:", String(fieldUser._id));
+          console.log("🔔 Notified distributor userId:", String(matchingDistributorDoc.userId), "about FieldUser signup:", String(fieldUser._id));
         } else {
-          console.warn("⚠️ No active distributor found for division:", fieldUserData.division, "wardNo:", fieldUserData.wardNo, "district:", fieldUserData.district);
+          console.warn("⚠️ No active distributor found in Distributor collection for division:", fieldUserData.division, "wardNo:", fieldUserData.wardNo);
         }
       } catch (notifyErr) {
         console.warn("⚠️ Failed to notify distributor for FieldUser signup:", notifyErr.message);
