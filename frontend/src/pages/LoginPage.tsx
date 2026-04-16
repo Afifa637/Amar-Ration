@@ -7,6 +7,11 @@ const roleNames: Record<UserRole, string> = {
   distributor: "ডিস্ট্রিবিউটর",
 };
 
+// ── Auth UI Feature Flags (toggle from one section) ─────────────────────
+const AUTH_UI_FLAGS = {
+  enable2FAScreen: false,
+};
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const { role } = useParams<{ role?: string }>();
@@ -53,11 +58,18 @@ export default function LoginPage() {
       });
 
       if (result.requires2FA) {
-        setRequires2FA(true);
-        setTwoStepNotice(
-          "পাসওয়ার্ড যাচাই হয়েছে। এখন Authenticator App-এর OTP দিন।",
-        );
-        setTotpToken("");
+        if (AUTH_UI_FLAGS.enable2FAScreen) {
+          setRequires2FA(true);
+          setTwoStepNotice(
+            "পাসওয়ার্ড যাচাই হয়েছে। এখন Authenticator App-এর OTP দিন।",
+          );
+          setTotpToken("");
+        } else {
+          setRequires2FA(false);
+          setTotpToken("");
+          setTwoStepNotice("");
+          setError("২FA স্ক্রিন আপাতত বন্ধ আছে। পরে আবার চেষ্টা করুন।");
+        }
         return;
       }
 
@@ -114,7 +126,7 @@ export default function LoginPage() {
           {roleNames[normalizedRole] || "লগইন"}
         </h1>
         <p className="text-sm text-white/80 text-center mb-4">
-          {requires2FA
+          {AUTH_UI_FLAGS.enable2FAScreen && requires2FA
             ? "Step 2 of 2: OTP ভেরিফাই করুন"
             : "Step 1 of 2: ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন"}
         </p>
@@ -132,7 +144,7 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-3">
-          {!requires2FA && (
+          {(!AUTH_UI_FLAGS.enable2FAScreen || !requires2FA) && (
             <>
               <div>
                 <label className="text-sm font-medium text-white block mb-1">
@@ -162,7 +174,7 @@ export default function LoginPage() {
             </>
           )}
 
-          {requires2FA && (
+          {AUTH_UI_FLAGS.enable2FAScreen && requires2FA && (
             <div>
               <label className="text-sm font-medium text-white block mb-1">
                 ২FA কোড (TOTP)
@@ -192,7 +204,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          {!requires2FA && (
+          {(!AUTH_UI_FLAGS.enable2FAScreen || !requires2FA) && (
             <div className="flex items-center justify-between text-sm">
               <label className="flex items-center">
                 <input type="checkbox" className="mr-2" />
@@ -211,7 +223,7 @@ export default function LoginPage() {
           >
             {isLoading
               ? "লগইন হচ্ছে..."
-              : requires2FA
+              : AUTH_UI_FLAGS.enable2FAScreen && requires2FA
                 ? "২FA ভেরিফাই করুন"
                 : "সাইন ইন"}
           </button>
