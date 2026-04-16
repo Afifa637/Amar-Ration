@@ -2,9 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  // For Android emulator: 10.0.2.2
-  // For real Android devices/iOS: use computer's IP address
-  static const String _baseUrl = 'http://10.30.11.122:5000/api';
+  // Using ADB reverse: phone's localhost:5000 → computer's localhost:5000
+  static const String _baseUrl = 'http://127.0.0.1:5000/api';
 
   static Future<Map<String, dynamic>> login({
     required String identifier,
@@ -74,18 +73,27 @@ class ApiService {
       'ward': ward,
     });
 
+    print('🔍 Signup Request:');
+    print('URL: $uri');
+    print('Body: $body');
+
     final response = await http.post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: body,
     );
 
+    print('📡 Signup Response Status: ${response.statusCode}');
+    print('📡 Signup Response Body: ${response.body}');
+
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
     if (response.statusCode == 201 && json['success'] == true) {
+      print('✅ Signup successful');
       return json;
     }
 
+    print('❌ Signup failed: ${json['message']}');
     throw ApiException(
       statusCode: response.statusCode,
       message: json['message'] ?? 'Signup failed',
