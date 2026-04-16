@@ -6,7 +6,7 @@ const User = require("../models/User");
 const Distributor = require("../models/Distributor");
 const RefreshToken = require("../models/RefreshToken");
 const { writeAudit } = require("../services/audit.service");
-const { notifyAdmins } = require("../services/notification.service");
+const { notifyAdmins, notifyUser } = require("../services/notification.service");
 const {
   sendDistributorPasswordChangeAlertEmail,
 } = require("../services/email.service");
@@ -808,6 +808,37 @@ exports.signup = async (req, res) => {
         division: fieldUserData.division,
         wardNo: fieldUserData.wardNo,
       });
+
+      // Notify the distributor of the same district + ward about this new application
+      try {
+        const matchingDistributor = await User.findOne({
+          userType: "Distributor",
+          status: "Active",
+          authorityStatus: "Active",
+          division: fieldUserData.division,
+          wardNo: fieldUserData.wardNo,
+          ...(fieldUserData.district ? { district: fieldUserData.district } : {}),
+        }).select("_id").lean();
+
+        if (matchingDistributor) {
+          await notifyUser(matchingDistributor._id, {
+            title: "নতুন ফিল্ড ডিস্ট্রিবিউটর আবেদন",
+            message: `${name} আপনার ওয়ার্ডের (${fieldUserData.wardNo}) জন্য ফিল্ড ডিস্ট্রিবিউটর হিসেবে নিবন্ধনের আবেদন করেছেন। অনুমোদন বা প্রত্যাখ্যান করতে ড্যাশবোর্ড দেখুন।`,
+            meta: {
+              type: "FieldUserRegistration",
+              fieldUserId: String(fieldUser._id),
+              wardNo: fieldUserData.wardNo,
+              district: fieldUserData.district,
+            },
+            channels: { app: true, sms: false },
+          });
+          console.log("🔔 Notified distributor:", String(matchingDistributor._id), "about FieldUser signup:", String(fieldUser._id));
+        } else {
+          console.warn("⚠️ No active distributor found for division:", fieldUserData.division, "wardNo:", fieldUserData.wardNo, "district:", fieldUserData.district);
+        }
+      } catch (notifyErr) {
+        console.warn("⚠️ Failed to notify distributor for FieldUser signup:", notifyErr.message);
+      }
 
       return res.status(201).json({
         success: true,
