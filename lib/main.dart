@@ -1,5 +1,6 @@
 import 'package:amar_ration_app/login_screen.dart';
 import 'package:amar_ration_app/splash_screen.dart';
+import 'package:amar_ration_app/qr_scanner_screen.dart';
 import 'package:flutter/material.dart';
 
 void main() {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'consumer_details_screen.dart';
 
 class QRScannerScreen extends StatefulWidget {
@@ -9,56 +10,83 @@ class QRScannerScreen extends StatefulWidget {
 }
 
 class _QRScannerScreenState extends State<QRScannerScreen> {
-  bool _torchOn = false;
-  bool _isScanning = false;
+  late MobileScannerController _cameraController;
+  bool _hasScanned = false;
 
-  void _simulateQRScan() {
-    setState(() {
-      _isScanning = true;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _cameraController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      torchEnabled: false,
+    );
+  }
 
-    // Simulate QR scan delay
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
+  @override
+  void dispose() {
+    _cameraController.dispose();
+    super.dispose();
+  }
 
-      // Simulate different outcomes (randomly)
-      final outcomes = [
-        {
-          'status': 'eligible',
-          'consumerName': 'রহিম আহমেদ',
-          'consumerPhone': '01712345678',
-        },
-        {
-          'status': 'not_registered',
-          'consumerName': 'অজানা গ্রাহক',
-          'consumerPhone': 'N/A',
-        },
-        {
-          'status': 'not_eligible',
-          'consumerName': 'ফাতিমা বেগম',
-          'consumerPhone': '01987654321',
-          'lastCollection': '২৮ মার্চ ২০২৬',
-        },
-      ];
+  void _onDetect(BarcodeCapture capture) {
+    if (_hasScanned) return;
 
-      final random = outcomes[DateTime.now().millisecond % outcomes.length];
+    final barcode = capture.barcodes.firstOrNull;
+    if (barcode == null || barcode.rawValue == null) return;
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ConsumerDetailsScreen(
-            status: random['status'] as String,
-            consumerName: random['consumerName'] as String,
-            consumerPhone: random['consumerPhone'] as String,
-            lastCollection: random['lastCollection'] as String?,
-          ),
+    final rawPayload = barcode.rawValue!.trim();
+    if (rawPayload.isEmpty) return;
+
+    setState(() => _hasScanned = true);
+
+    final parsed = _parseArQrPayload(rawPayload);
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConsumerDetailsScreen(
+          rawPayload: rawPayload,
+          parsedData: parsed,
         ),
-      );
+      ),
+    );
+  }
 
-      setState(() {
-        _isScanning = false;
-      });
-    });
+  /// Parse QR payload: ARC:consumerCode:ward:category:expiryYYYYMMDD:hmac
+  Map<String, String>? _parseArQrPayload(String raw) {
+    final parts = raw.split(':');
+    if (parts.length != 6) return null;
+    if (parts[0] != 'ARC') return null;
+
+    final consumerCode = parts[1].trim();
+    final ward = parts[2].trim();
+    final category = parts[3].trim().toUpperCase();
+    final expiryYMD = parts[4].trim();
+    final hmac = parts[5].trim().toLowerCase();
+
+    if (consumerCode.isEmpty) return null;
+    if (!RegExp(r'^\d{2}$').hasMatch(ward)) return null;
+    if (!RegExp(r'^[ABC]$').hasMatch(category)) return null;
+    if (!RegExp(r'^\d{8}$').hasMatch(expiryYMD)) return null;
+    if (!RegExp(r'^[a-f0-9]{8}$').hasMatch(hmac)) return null;
+
+    final year = int.tryParse(expiryYMD.substring(0, 4)) ?? 0;
+    final month = int.tryParse(expiryYMD.substring(4, 6)) ?? 0;
+    final day = int.tryParse(expiryYMD.substring(6, 8)) ?? 0;
+    final expiryDate = DateTime(year, month, day, 23, 59, 59);
+    final expired = DateTime.now().isAfter(expiryDate);
+
+    return {
+      'consumerCode': consumerCode,
+      'ward': ward,
+      'category': category,
+      'expiryDate': '$day/$month/$year',
+      'expiryRaw': expiryYMD,
+      'hmac': hmac,
+      'expired': expired.toString(),
+      'rawPayload': raw,
+    };
   }
 
   @override
@@ -78,183 +106,215 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
-            Navigator.pop(context);
-          },
+          onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: ValueListenableBuilder(
+              valueListenable: _cameraController.torchState,
+              builder: (context, state, child) {
+                return Icon(
+                  state == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                  color: state == TorchState.on
+                      ? const Color(0xFFFFC107)
+                      : Colors.white,
+                );
+              },
+            ),
+            onPressed: () => _cameraController.toggleTorch(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.cameraswitch, color: Colors.white),
+            onPressed: () => _cameraController.switchCamera(),
+          ),
+        ],
       ),
       body: Stack(
         children: [
-          // Camera Preview (Mock)
-          Container(
-            color: Colors.black,
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 300,
-                    height: 300,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Colors.grey[700]!,
-                        width: 2,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(
-                          Icons.camera_alt,
-                          size: 60,
-                          color: Colors.grey,
-                        ),
-                        SizedBox(height: 16),
-                        Text(
-                          'ক্যামেরা',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontFamily: 'Anek Bangla',
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+          // Live camera preview
+          MobileScanner(
+            controller: _cameraController,
+            onDetect: _onDetect,
+          ),
+
+          // Scan overlay with cutout
+          _buildScanOverlay(),
+
+          // Top instruction
+          Positioned(
+            top: 20,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'গ্রাহকের রেশন কার্ডের QR কোড স্কেন করুন',
+                style: TextStyle(
+                  fontFamily: 'Anek Bangla',
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                textAlign: TextAlign.center,
               ),
             ),
           ),
 
-          // Scanning Frame Overlay
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 280,
-                  height: 280,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: const Color(0xFFdc3545),
-                      width: 3,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+          // Bottom hint
+          Positioned(
+            bottom: 40,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'QR কোড ফ্রেমের ভিতরে রাখুন',
+                style: TextStyle(
+                  fontFamily: 'Anek Bangla',
+                  fontSize: 13,
+                  color: Colors.white70,
                 ),
-              ],
+                textAlign: TextAlign.center,
+              ),
             ),
-          ),
-
-          // Instructions and Controls
-          Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Top Instructions
-              Padding(
-                padding: const EdgeInsets.only(top: 20),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
-                  child: const Text(
-                    'গ্রাহক কার্ড স্কেন করুন',
-                    style: TextStyle(
-                      fontFamily: 'Anek Bangla',
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-
-              // Bottom Controls
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    // Torch Button
-                    Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _torchOn
-                            ? const Color(0xFFFFC107)
-                            : Colors.grey[700],
-                      ),
-                      child: IconButton(
-                        icon: Icon(
-                          _torchOn ? Icons.flash_on : Icons.flash_off,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _torchOn = !_torchOn;
-                          });
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Scan Button or Loading
-                    if (_isScanning)
-                      SizedBox(
-                        width: 60,
-                        height: 60,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 4,
-                          valueColor: AlwaysStoppedAnimation(Colors.white),
-                        ),
-                      )
-                    else
-                      GestureDetector(
-                        onTap: _simulateQRScan,
-                        child: Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(0xFF28a745),
-                          ),
-                          child: const Icon(
-                            Icons.camera,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-
-                    // Cancel Button
-                    Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.grey[700],
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.close,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ),
         ],
       ),
     );
   }
+
+  Widget _buildScanOverlay() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scanSize = constraints.maxWidth * 0.7;
+        final left = (constraints.maxWidth - scanSize) / 2;
+        final top = (constraints.maxHeight - scanSize) / 2.5;
+
+        return Stack(
+          children: [
+            // Dark mask with transparent cutout
+            ColorFiltered(
+              colorFilter: ColorFilter.mode(
+                Colors.black.withOpacity(0.5),
+                BlendMode.srcOut,
+              ),
+              child: Stack(
+                children: [
+                  Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.black,
+                      backgroundBlendMode: BlendMode.dstOut,
+                    ),
+                  ),
+                  Positioned(
+                    left: left,
+                    top: top,
+                    child: Container(
+                      width: scanSize,
+                      height: scanSize,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Corner brackets
+            Positioned(
+              left: left,
+              top: top,
+              child: _buildCornerBrackets(scanSize),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCornerBrackets(double size) {
+    const len = 30.0;
+    const w = 4.0;
+    const c = Color(0xFF28a745);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        children: [
+          // Top-left
+          Positioned(left: 0, top: 0, child: _corner(c, len, w, tl: true)),
+          // Top-right
+          Positioned(right: 0, top: 0, child: _corner(c, len, w, tr: true)),
+          // Bottom-left
+          Positioned(left: 0, bottom: 0, child: _corner(c, len, w, bl: true)),
+          // Bottom-right
+          Positioned(right: 0, bottom: 0, child: _corner(c, len, w, br: true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _corner(Color color, double len, double w,
+      {bool tl = false, bool tr = false, bool bl = false, bool br = false}) {
+    return SizedBox(
+      width: len,
+      height: len,
+      child: CustomPaint(
+        painter: _CornerPainter(color: color, strokeWidth: w, tl: tl, tr: tr, bl: bl, br: br),
+      ),
+    );
+  }
+}
+
+class _CornerPainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+  final bool tl, tr, bl, br;
+
+  _CornerPainter({
+    required this.color,
+    required this.strokeWidth,
+    this.tl = false,
+    this.tr = false,
+    this.bl = false,
+    this.br = false,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    if (tl) {
+      canvas.drawLine(const Offset(0, 0), Offset(size.width, 0), paint);
+      canvas.drawLine(const Offset(0, 0), Offset(0, size.height), paint);
+    }
+    if (tr) {
+      canvas.drawLine(Offset(0, 0), Offset(size.width, 0), paint);
+      canvas.drawLine(Offset(size.width, 0), Offset(size.width, size.height), paint);
+    }
+    if (bl) {
+      canvas.drawLine(Offset(0, size.height), Offset(size.width, size.height), paint);
+      canvas.drawLine(const Offset(0, 0), Offset(0, size.height), paint);
+    }
+    if (br) {
+      canvas.drawLine(Offset(0, size.height), Offset(size.width, size.height), paint);
+      canvas.drawLine(Offset(size.width, 0), Offset(size.width, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
