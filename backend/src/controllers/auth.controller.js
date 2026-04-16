@@ -19,6 +19,14 @@ const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const TWO_FA_SECRET_PREFIX = "2fa:v1:";
 const REFRESH_COOKIE_NAME = "refreshToken";
 
+// ── Feature Flags (toggle from one section) ─────────────────────────────
+const AUTH_FEATURE_FLAGS = {
+  enable2FA:
+    String(process.env.AUTH_ENABLE_2FA || "false")
+      .trim()
+      .toLowerCase() === "true",
+};
+
 function readCookie(req, cookieName) {
   const raw = String(req?.headers?.cookie || "");
   if (!raw) return "";
@@ -390,6 +398,19 @@ exports.get2FAStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
+    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+      return res.json({
+        success: true,
+        data: {
+          enabled: false,
+          setupPending: false,
+          pendingSince: null,
+          secret: null,
+          globallyDisabled: true,
+        },
+      });
+    }
+
     const admin = await User.findById(req.user.userId).select(
       "twoFactorEnabled +twoFactorTempSecret +twoFactorTempSecretCreatedAt",
     );
@@ -422,6 +443,13 @@ exports.setup2FA = async (req, res) => {
   try {
     if (req.user.userType !== "Admin") {
       return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+      return res.status(503).json({
+        success: false,
+        message: "2FA is currently disabled by system configuration.",
+      });
     }
 
     const admin = await User.findById(req.user.userId).select(
@@ -491,6 +519,13 @@ exports.verify2FA = async (req, res) => {
   try {
     if (req.user.userType !== "Admin") {
       return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+      return res.status(503).json({
+        success: false,
+        message: "2FA is currently disabled by system configuration.",
+      });
     }
 
     const token = String(req.body?.token || "").trim();
@@ -578,6 +613,13 @@ exports.reset2FASetup = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin only" });
     }
 
+    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+      return res.status(503).json({
+        success: false,
+        message: "2FA is currently disabled by system configuration.",
+      });
+    }
+
     const user = await User.findById(req.user.userId)
       .select("twoFactorEnabled")
       .lean();
@@ -633,6 +675,13 @@ exports.disable2FA = async (req, res) => {
   try {
     if (req.user.userType !== "Admin") {
       return res.status(403).json({ success: false, message: "Admin only" });
+    }
+
+    if (!AUTH_FEATURE_FLAGS.enable2FA) {
+      return res.status(503).json({
+        success: false,
+        message: "2FA is currently disabled by system configuration.",
+      });
     }
 
     const { password, totpToken } = req.body || {};
@@ -973,7 +1022,11 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (user.userType === "Admin" && user.twoFactorEnabled) {
+    if (
+      AUTH_FEATURE_FLAGS.enable2FA &&
+      user.userType === "Admin" &&
+      user.twoFactorEnabled
+    ) {
       if (!totpToken) {
         return res.status(200).json({
           success: true,
