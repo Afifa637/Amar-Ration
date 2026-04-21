@@ -1,12 +1,12 @@
 const DIVISION_CANONICAL = {
-  dhaka: "Dhaka",
-  chattogram: "Chattogram",
-  rajshahi: "Rajshahi",
-  khulna: "Khulna",
-  barishal: "Barishal",
-  sylhet: "Sylhet",
-  rangpur: "Rangpur",
-  mymensingh: "Mymensingh",
+  dhaka: "ঢাকা",
+  chattogram: "চট্টগ্রাম",
+  rajshahi: "রাজশাহী",
+  khulna: "খুলনা",
+  barishal: "বরিশাল",
+  sylhet: "সিলেট",
+  rangpur: "রংপুর",
+  mymensingh: "ময়মনসিংহ",
 };
 
 const DIVISION_KEY_MAP = {
@@ -48,20 +48,14 @@ const DIVISION_KEY_MAP = {
 };
 
 const DIVISION_ALIASES = {
-  Dhaka: ["Dhaka", "ঢাকা", "dhaka"],
-  Chattogram: [
-    "Chattogram",
-    "Chittagong",
-    "চট্টগ্রাম",
-    "chattogram",
-    "chittagong",
-  ],
-  Rajshahi: ["Rajshahi", "রাজশাহী", "rajshahi"],
-  Khulna: ["Khulna", "খুলনা", "khulna"],
-  Barishal: ["Barishal", "বরিশাল", "barishal"],
-  Sylhet: ["Sylhet", "সিলেট", "sylhet"],
-  Rangpur: ["Rangpur", "রংপুর", "rangpur"],
-  Mymensingh: ["Mymensingh", "ময়মনসিংহ", "ময়মনসিংহ", "mymensingh"],
+  ঢাকা: ["ঢাকা", "Dhaka", "dhaka"],
+  চট্টগ্রাম: ["চট্টগ্রাম", "Chattogram", "Chittagong", "chattogram"],
+  রাজশাহী: ["রাজশাহী", "Rajshahi", "rajshahi"],
+  খুলনা: ["খুলনা", "Khulna", "khulna"],
+  বরিশাল: ["বরিশাল", "Barishal", "barishal"],
+  সিলেট: ["সিলেট", "Sylhet", "sylhet"],
+  রংপুর: ["রংপুর", "Rangpur", "rangpur"],
+  ময়মনসিংহ: ["ময়মনসিংহ", "Mymensingh", "mymensingh"],
 };
 
 function cleanDivision(value) {

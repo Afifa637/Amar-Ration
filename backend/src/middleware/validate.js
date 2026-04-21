@@ -8,10 +8,14 @@ function validate(schema) {
         field: e.path.join("."),
         message: e.message,
       }));
+      const first = errors[0];
+      const message = first
+        ? `Validation failed: ${first.field || "field"} - ${first.message}`
+        : "Validation failed";
 
       return res.status(400).json({
         success: false,
-        message: "Validation failed",
+        message,
         errors,
       });
     }

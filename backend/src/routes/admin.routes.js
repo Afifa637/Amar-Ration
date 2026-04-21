@@ -9,6 +9,7 @@ const {
   deleteDistributor,
   createDistributor,
   adminResetDistributorPassword,
+  resendDistributorCredentials,
   getAdminCardsSummary,
   getAdminDistributionMonitoring,
   getAdminConsumerReview,
@@ -38,6 +39,10 @@ router.post(
 router.patch(
   "/distributors/:userId/reset-password",
   adminResetDistributorPassword,
+);
+router.post(
+  "/distributors/:userId/resend-credentials",
+  resendDistributorCredentials,
 );
 router.get("/cards/summary", getAdminCardsSummary);
 router.get("/distribution/monitoring", getAdminDistributionMonitoring);

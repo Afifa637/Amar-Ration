@@ -8,6 +8,16 @@ const bdPhone = z
 const wardNo = z
   .string()
   .regex(/^[0-9]{2}$/, "wardNo must be 2-digit number like '01'");
+const optionalTrimmedString = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+  const v = String(value).trim();
+  return v === "" ? undefined : v;
+}, z.string().optional());
+const optionalEmail = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+  const v = String(value).trim();
+  return v === "" ? undefined : v;
+}, z.string().email().optional());
 const nidLength = z
   .string()
   .regex(/^\d+$/, "NID must be digits only")
@@ -76,14 +86,18 @@ const completeDistributionSchema = z
 const createDistributorSchema = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email(),
-  contactEmail: z.string().email().optional(),
-  phone: bdPhone.optional(),
+  contactEmail: optionalEmail,
+  phone: z.preprocess((value) => {
+    if (value === undefined || value === null) return undefined;
+    const v = String(value).trim();
+    return v === "" ? undefined : v;
+  }, bdPhone.optional()),
   wardNo: wardNo,
   division: z.string().min(1),
-  district: z.string().min(1).optional(),
-  upazila: z.string().min(1).optional(),
-  unionName: z.string().min(1).optional(),
-  officeAddress: z.string().optional(),
+  district: optionalTrimmedString,
+  upazila: optionalTrimmedString,
+  unionName: optionalTrimmedString,
+  officeAddress: optionalTrimmedString,
   authorityMonths: z.number({ coerce: true }).int().min(1).max(60).optional(),
 });
 

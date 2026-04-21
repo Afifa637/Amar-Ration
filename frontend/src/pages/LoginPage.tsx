@@ -9,7 +9,7 @@ const roleNames: Record<UserRole, string> = {
 
 // ── Auth UI Feature Flags (toggle from one section) ─────────────────────
 const AUTH_UI_FLAGS = {
-  enable2FAScreen: false,
+  enable2FAScreen: true,
 };
 
 export default function LoginPage() {

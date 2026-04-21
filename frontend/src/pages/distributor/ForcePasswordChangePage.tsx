@@ -63,6 +63,16 @@ export default function ForcePasswordChangePage() {
           নিরাপত্তার জন্য নতুন পাসওয়ার্ড সেট করুন।
         </p>
 
+        <div className="mb-3 rounded border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[12px] text-[#1e3a8a]">
+          <div>
+            আপনার লগইন ইমেইল: <b>{user?.email || "—"}</b>
+          </div>
+          <div className="mt-1">
+            এই পাসওয়ার্ড পরিবর্তন করলে আপনার যোগাযোগের ইমেইলে একটি নিশ্চিতকরণ
+            পাঠানো হবে।
+          </div>
+        </div>
+
         {error && (
           <div className="mb-3 text-[12px] bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] px-3 py-2 rounded">
             {error}

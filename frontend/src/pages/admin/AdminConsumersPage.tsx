@@ -15,6 +15,36 @@ import {
   type AdminConsumerReviewRow,
 } from "../../services/api";
 
+const statusLabel = (s: string) =>
+  (
+    ({
+      Active: "সক্রিয়",
+      Inactive: "নিষ্ক্রিয়",
+      Suspended: "স্থগিত",
+      Pending: "অপেক্ষমাণ",
+      Revoked: "বাতিল",
+    }) as Record<string, string>
+  )[s] ?? s;
+
+const cardStatusLabel = (s: string) =>
+  (
+    ({
+      Active: "সক্রিয়",
+      Inactive: "নিষ্ক্রিয়",
+      Revoked: "বাতিল",
+    }) as Record<string, string>
+  )[s] ?? s;
+
+const qrStatusLabel = (s: string) =>
+  (
+    ({
+      Valid: "বৈধ",
+      Invalid: "অবৈধ",
+      Revoked: "বাতিল",
+      Expired: "মেয়াদোত্তীর্ণ",
+    }) as Record<string, string>
+  )[s] ?? s;
+
 export default function AdminConsumersPage() {
   const [rows, setRows] = useState<AdminConsumerReviewRow[]>([]);
   const [stats, setStats] = useState({
@@ -481,13 +511,16 @@ export default function AdminConsumersPage() {
                     {blacklistBadge(row)}
                   </td>
                   <td className="p-2 border border-[#d7dde6] text-[12px]">
-                    কার্ড: {row.cardStatus || "Inactive"} <br />
-                    QR: {row.qrStatus || "Invalid"}
+                    কার্ড: {cardStatusLabel(row.cardStatus || "Inactive")}{" "}
+                    <br />
+                    QR: {qrStatusLabel(row.qrStatus || "Invalid")}
                   </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {row.mismatchCount || 0}
                   </td>
-                  <td className="p-2 border border-[#d7dde6]">{row.status}</td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    {statusLabel(row.status)}
+                  </td>
                   <td className="p-2 border border-[#d7dde6]">
                     <div className="flex flex-wrap gap-2">
                       {row.status !== "Active" && (
@@ -570,7 +603,7 @@ export default function AdminConsumersPage() {
                 {detail.row.ward || detail.consumer?.ward || "—"}
               </div>
               <div>
-                <strong>স্ট্যাটাস:</strong> {detail.row.status}
+                <strong>স্ট্যাটাস:</strong> {statusLabel(detail.row.status)}
               </div>
               <div>
                 <strong>ব্ল্যাকলিস্ট:</strong>{" "}
@@ -594,10 +627,15 @@ export default function AdminConsumersPage() {
             <div className="border rounded p-3 bg-[#f8fafc] space-y-1">
               <div>
                 <strong>কার্ড স্ট্যাটাস:</strong>{" "}
-                {detail.card?.cardStatus || "—"}
+                {detail.card?.cardStatus
+                  ? cardStatusLabel(detail.card.cardStatus)
+                  : "—"}
               </div>
               <div>
-                <strong>QR স্ট্যাটাস:</strong> {detail.card?.qrStatus || "—"}
+                <strong>QR স্ট্যাটাস:</strong>{" "}
+                {detail.card?.qrStatus
+                  ? qrStatusLabel(detail.card.qrStatus)
+                  : "—"}
               </div>
               <div>
                 <strong>QR মেয়াদ:</strong>{" "}
