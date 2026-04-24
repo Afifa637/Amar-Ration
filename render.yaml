@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: amar-ration-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: NID_ENCRYPTION_KEY
+        sync: false
+      - key: IOT_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
