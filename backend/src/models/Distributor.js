@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const { normalizeWardNo } = require("../utils/ward.utils");
 const { normalizeDivision } = require("../utils/division.utils");
+const User = require("./User");
 
 const DistributorSchema = new mongoose.Schema(
   {
@@ -16,6 +17,8 @@ const DistributorSchema = new mongoose.Schema(
     unionName: String,
     wardNo: String,
     ward: String,
+    loginEmail: { type: String, sparse: true },
+    contactEmail: { type: String, sparse: true },
     authorityStatus: {
       type: String,
       enum: ["Pending", "Active", "Revoked", "Suspended"],
@@ -30,7 +33,7 @@ const DistributorSchema = new mongoose.Schema(
 // CRITICAL: Normalize division and ward before every save
 // This ensures the unique index on (division, wardNo) works correctly
 // regardless of whether Bangla or English input was used
-DistributorSchema.pre("save", function (next) {
+DistributorSchema.pre("save", async function () {
   if (this.division) {
     this.division = normalizeDivision(this.division) || this.division;
   }
@@ -40,7 +43,23 @@ DistributorSchema.pre("save", function (next) {
   if (this.ward) {
     this.ward = normalizeWardNo(this.ward) || this.ward;
   }
-  next();
+
+  // Keep distributor email fields synced from linked User document
+  if (
+    this.userId &&
+    (!this.loginEmail || !this.contactEmail || this.isModified("userId"))
+  ) {
+    const linkedUser = await User.findById(this.userId)
+      .select("email contactEmail")
+      .lean();
+
+    if (linkedUser?.email && !this.loginEmail) {
+      this.loginEmail = String(linkedUser.email).trim().toLowerCase();
+    }
+    if (linkedUser?.contactEmail && !this.contactEmail) {
+      this.contactEmail = String(linkedUser.contactEmail).trim().toLowerCase();
+    }
+  }
 });
 
 // Also normalize on findOneAndUpdate / updateOne / updateMany

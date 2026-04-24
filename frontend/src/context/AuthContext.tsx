@@ -37,6 +37,8 @@ export type AuthUser = {
   officeAddress?: string;
   authorityStatus?: "Pending" | "Active" | "Suspended" | "Revoked";
   mustChangePassword?: boolean;
+  twoFactorMismatch?: boolean;
+  twoFactorMismatchWarning?: string;
 };
 
 type AuthContextType = {
@@ -158,6 +160,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             refreshToken,
             user: backendUser,
             mustChangePassword,
+            twoFactorMismatch,
+            twoFactorMismatchWarning,
           } = response.data.data;
 
           const frontendUser: AuthUser = {
@@ -177,6 +181,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             officeAddress: backendUser.officeAddress,
             authorityStatus: backendUser.authorityStatus,
             mustChangePassword: Boolean(mustChangePassword),
+            twoFactorMismatch: Boolean(twoFactorMismatch),
+            twoFactorMismatchWarning:
+              typeof twoFactorMismatchWarning === "string"
+                ? twoFactorMismatchWarning
+                : undefined,
           };
 
           localStorage.setItem(

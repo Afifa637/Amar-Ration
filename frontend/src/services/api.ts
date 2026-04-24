@@ -424,6 +424,7 @@ export type AdminDistributorRow = {
   distributorId: string | null;
   name: string;
   phone?: string;
+  loginEmail?: string;
   email?: string;
   contactEmail?: string;
   wardNo?: string;
@@ -1180,6 +1181,8 @@ export type Admin2FAStatus = {
   setupPending: boolean;
   pendingSince?: string | null;
   secret?: string | null;
+  mismatch?: boolean;
+  mismatchDetectedAt?: string | null;
 };
 
 type Pagination = {
@@ -1570,10 +1573,18 @@ export async function createAdminDistributor(payload: {
   officeAddress?: string;
   authorityMonths?: number;
 }) {
-  const response = await api.post<{ data: { user: Record<string, unknown> } }>(
-    "/admin/distributors/create",
-    payload,
-  );
+  const response = await api.post<{
+    data: {
+      user: Record<string, unknown>;
+      credentialEmailSent?: boolean;
+      emailReason?: string | null;
+      emailPreviewUrl?: string | null;
+      loginEmail?: string;
+      credentialSentTo?: string | null;
+      temporaryPassword?: string;
+      mustChangePassword?: boolean;
+    };
+  }>("/admin/distributors/create", payload);
   return response.data.data;
 }
 
@@ -1584,7 +1595,35 @@ export async function adminResetDistributorPassword(
   const response = await api.patch<{
     success: boolean;
     message: string;
+    data?: {
+      credentialEmailSent?: boolean;
+      emailReason?: string | null;
+      emailPreviewUrl?: string | null;
+      securityAlertEmailSent?: boolean;
+      securityEmailReason?: string | null;
+      loginEmail?: string;
+      credentialSentTo?: string | null;
+      temporaryPassword?: string;
+      mustChangePassword?: boolean;
+    };
   }>(`/admin/distributors/${userId}/reset-password`, { newPassword });
+  return response.data;
+}
+
+export async function resendDistributorCredentials(userId: string) {
+  const response = await api.post<{
+    success: boolean;
+    message: string;
+    data?: {
+      credentialEmailSent?: boolean;
+      emailReason?: string | null;
+      emailPreviewUrl?: string | null;
+      loginEmail?: string;
+      credentialSentTo?: string | null;
+      temporaryPassword?: string;
+      mustChangePassword?: boolean;
+    };
+  }>(`/admin/distributors/${userId}/resend-credentials`);
   return response.data;
 }
 
@@ -2112,10 +2151,10 @@ export async function clearReadNotifications() {
   return response.data;
 }
 
-export async function setupAdmin2FA() {
+export async function setupAdmin2FA(payload?: { password?: string }) {
   const response = await api.post<{
     data: { secret: string; message?: string };
-  }>("/auth/2fa/setup");
+  }>("/auth/2fa/setup", payload || {});
   return response.data.data;
 }
 
@@ -2144,7 +2183,8 @@ export async function verifyAdmin2FA(token: string) {
 
 export async function disableAdmin2FA(payload: {
   password: string;
-  totpToken: string;
+  totpToken?: string;
+  emergencyConfirm?: string;
 }) {
   const response = await api.post<{ success: boolean; message?: string }>(
     "/auth/2fa/disable",

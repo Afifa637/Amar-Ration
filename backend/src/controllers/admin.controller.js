@@ -60,6 +60,19 @@ function isValidEmail(value) {
 
 function divisionEmailSlug(input) {
   const canonical = normalizeDivision(input);
+  const slugMap = {
+    ঢাকা: "dhaka",
+    চট্টগ্রাম: "chattogram",
+    রাজশাহী: "rajshahi",
+    খুলনা: "khulna",
+    বরিশাল: "barishal",
+    সিলেট: "sylhet",
+    রংপুর: "rangpur",
+    ময়মনসিংহ: "mymensingh",
+  };
+  if (slugMap[canonical]) {
+    return slugMap[canonical];
+  }
   return (
     String(canonical || "division")
       .toLowerCase()
@@ -353,6 +366,7 @@ async function getAdminDistributors(req, res) {
         distributorId: distributor?._id ? String(distributor._id) : null,
         name: user.name,
         phone: user.phone,
+        loginEmail: user.email,
         email: user.email,
         contactEmail: user.contactEmail,
         wardNo: user.wardNo || "",
@@ -533,6 +547,8 @@ async function createDistributor(req, res) {
       district: cleanDistrict,
       upazila: cleanUpazila,
       unionName: cleanUnionName,
+      loginEmail: user.email,
+      contactEmail: user.contactEmail,
       authorityStatus: "Pending",
       authorityFrom: fromDate,
       authorityTo: toDate,
@@ -581,6 +597,7 @@ async function createDistributor(req, res) {
         credentialSentTo: user.contactEmail,
         emailSent: emailResult.sent,
         emailReason: emailResult.reason || null,
+        emailPreviewUrl: emailResult.previewUrl || null,
       },
     });
 
@@ -595,8 +612,12 @@ async function createDistributor(req, res) {
       data: {
         user: userObject,
         credentialEmailSent: emailResult.sent,
+        emailReason: emailResult.reason || null,
+        emailPreviewUrl: emailResult.previewUrl || null,
         loginEmail: user.email,
         credentialSentTo: user.contactEmail,
+        temporaryPassword: emailResult.sent ? undefined : generatedPassword,
+        mustChangePassword: true,
       },
     });
   } catch (error) {
@@ -649,7 +670,8 @@ async function adminResetDistributorPassword(req, res) {
     user.mustChangePassword = true;
     await user.save();
 
-    const deliveryEmail = user.email || user.contactEmail;
+    const deliveryEmail = user.contactEmail || user.email;
+    const emailFallback = !user.contactEmail && !!user.email;
 
     const ackToken = makePasswordChangeAckToken({
       user,
@@ -694,11 +716,28 @@ async function adminResetDistributorPassword(req, res) {
       meta: {
         loginEmail: user.email,
         credentialSentTo: deliveryEmail || null,
+        emailFallback,
         credentialEmailSent: emailResult.sent,
         securityAlertEmailSent: securityEmailResult.sent,
         emailReason: emailResult.reason || null,
       },
     });
+
+    if (emailFallback) {
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType: "Central Admin",
+        action: "DISTRIBUTOR_EMAIL_FALLBACK_USED",
+        entityType: "User",
+        entityId: String(user._id),
+        severity: "Warning",
+        meta: {
+          loginEmail: user.email,
+          contactEmail: user.contactEmail || null,
+          emailFallback: true,
+        },
+      });
+    }
 
     await notifyUser(user._id, {
       title: "পাসওয়ার্ড পরিবর্তন",
@@ -714,9 +753,14 @@ async function adminResetDistributorPassword(req, res) {
           : "Password reset completed. Login email is missing, so credentials were not emailed",
       data: {
         credentialEmailSent: emailResult.sent,
+        emailReason: emailResult.reason || null,
+        emailPreviewUrl: emailResult.previewUrl || null,
         securityAlertEmailSent: securityEmailResult.sent,
+        securityEmailReason: securityEmailResult.reason || null,
         loginEmail: user.email,
         credentialSentTo: deliveryEmail || null,
+        temporaryPassword: emailResult.sent ? undefined : String(newPassword),
+        mustChangePassword: true,
       },
     });
   } catch (error) {
@@ -785,6 +829,8 @@ async function updateDistributorStatus(req, res) {
         upazila: user.upazila,
         unionName: user.unionName,
         ward: user.ward,
+        loginEmail: user.email,
+        contactEmail: user.contactEmail,
         authorityStatus: status,
         authorityFrom: user.authorityFrom || new Date(),
         authorityTo: user.authorityTo,
@@ -794,7 +840,8 @@ async function updateDistributorStatus(req, res) {
       await distributor.save();
     }
 
-    const deliveryEmail = user.contactEmail;
+    const deliveryEmail = user.contactEmail || user.email;
+    const emailFallback = !user.contactEmail && !!user.email;
 
     const credentialEmailResult =
       rotatedPassword && deliveryEmail
@@ -850,12 +897,30 @@ async function updateDistributorStatus(req, res) {
         rotatedPassword: Boolean(rotatedPassword),
         loginEmail: user.email,
         credentialSentTo: deliveryEmail || null,
+        emailFallback,
         credentialEmailSent: credentialEmailResult.sent,
         credentialEmailReason: credentialEmailResult.reason || null,
         statusEmailSent: statusEmailResult.sent,
         statusEmailReason: statusEmailResult.reason || null,
       },
     });
+
+    if (emailFallback) {
+      await writeAudit({
+        actorUserId: req.user.userId,
+        actorType: "Central Admin",
+        action: "DISTRIBUTOR_EMAIL_FALLBACK_USED",
+        entityType: "User",
+        entityId: String(user._id),
+        severity: "Warning",
+        meta: {
+          status,
+          loginEmail: user.email,
+          contactEmail: user.contactEmail || null,
+          emailFallback: true,
+        },
+      });
+    }
 
     await notifyUser(user._id, {
       title: "Distributor status updated",
@@ -887,9 +952,16 @@ async function updateDistributorStatus(req, res) {
         userId: String(user._id),
         authorityStatus: status,
         credentialEmailSent: credentialEmailResult.sent,
+        credentialEmailReason: credentialEmailResult.reason || null,
         statusEmailSent: statusEmailResult.sent,
+        statusEmailReason: statusEmailResult.reason || null,
         loginEmail: user.email,
         credentialSentTo: deliveryEmail || null,
+        temporaryPassword:
+          rotatedPassword && !credentialEmailResult.sent
+            ? rotatedPassword
+            : undefined,
+        mustChangePassword: Boolean(rotatedPassword),
       },
     });
   } catch (error) {
@@ -975,6 +1047,98 @@ async function deleteDistributor(req, res) {
   } catch (error) {
     console.error("deleteDistributor error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function resendDistributorCredentials(req, res) {
+  try {
+    if (req.user.userType !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "শুধুমাত্র অ্যাডমিন এই কাজ করতে পারবেন",
+        code: "ADMIN_ONLY",
+      });
+    }
+
+    const user = await User.findById(req.params.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "ডিস্ট্রিবিউটর ইউজার পাওয়া যায়নি",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    if (user.userType !== "Distributor") {
+      return res.status(400).json({
+        success: false,
+        message: "শুধুমাত্র ডিস্ট্রিবিউটর ইউজারের জন্য প্রযোজ্য",
+        code: "INVALID_TARGET_USER_TYPE",
+      });
+    }
+
+    const generatedPassword = generateStrongPassword();
+    user.passwordHash = await bcrypt.hash(generatedPassword, 10);
+    user.passwordChangedAt = new Date();
+    user.mustChangePassword = true;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    const deliveryEmail = user.contactEmail || user.email;
+    const emailFallback = !user.contactEmail && !!user.email;
+
+    const emailResult = deliveryEmail
+      ? await sendDistributorCredentialEmail({
+          to: deliveryEmail,
+          name: user.name,
+          loginEmail: user.email,
+          password: generatedPassword,
+          ward: user.ward,
+          wardNo: user.wardNo,
+          authorityStatus: user.authorityStatus,
+        })
+      : { sent: false, reason: "MISSING_EMAIL" };
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Central Admin",
+      action: "DISTRIBUTOR_CREDENTIALS_RESENT",
+      entityType: "User",
+      entityId: String(user._id),
+      severity: emailResult.sent ? "Warning" : "Critical",
+      meta: {
+        loginEmail: user.email,
+        contactEmail: user.contactEmail || null,
+        credentialSentTo: deliveryEmail || null,
+        credentialEmailSent: emailResult.sent,
+        emailReason: emailResult.reason || null,
+        emailPreviewUrl: emailResult.previewUrl || null,
+        emailFallback,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: emailResult.sent
+        ? "নতুন লগইন তথ্য যোগাযোগ ইমেইলে পাঠানো হয়েছে"
+        : "নতুন পাসওয়ার্ড তৈরি হয়েছে, কিন্তু ইমেইল পাঠানো যায়নি",
+      data: {
+        credentialEmailSent: emailResult.sent,
+        emailReason: emailResult.reason || null,
+        emailPreviewUrl: emailResult.previewUrl || null,
+        loginEmail: user.email,
+        credentialSentTo: deliveryEmail || null,
+        temporaryPassword: emailResult.sent ? undefined : generatedPassword,
+        mustChangePassword: true,
+      },
+    });
+  } catch (error) {
+    console.error("resendDistributorCredentials error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "শংসাপত্র পুনরায় পাঠাতে সমস্যা হয়েছে",
+      code: "SERVER_ERROR",
+    });
   }
 }
 
@@ -2260,6 +2424,7 @@ module.exports = {
   deleteDistributor,
   createDistributor,
   adminResetDistributorPassword,
+  resendDistributorCredentials,
   getAdminCardsSummary,
   getAdminDistributionMonitoring,
   getAdminConsumerReview,

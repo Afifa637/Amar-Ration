@@ -1,14 +1,28 @@
 function isEmailConfigured() {
   return Boolean(
-    process.env.SMTP_HOST &&
-    process.env.SMTP_PORT &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASS &&
-    process.env.MAIL_FROM,
+    process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.MAIL_FROM,
   );
 }
 
+function shouldUseSmtpAuth() {
+  const user = String(process.env.SMTP_USER || "").trim();
+  const pass = String(process.env.SMTP_PASS || "").trim();
+  return Boolean(user || pass);
+}
+
 let transporterCache = null;
+let nodemailerCache = null;
+
+function loadNodemailer() {
+  if (nodemailerCache) return nodemailerCache;
+  try {
+    // Lazy require so backend can run even when nodemailer is not installed
+    nodemailerCache = require("nodemailer");
+    return nodemailerCache;
+  } catch {
+    return null;
+  }
+}
 
 function isValidRecipientEmail(value) {
   const email = String(value || "")
@@ -28,11 +42,8 @@ function getTransporter() {
     return null;
   }
 
-  let nodemailer;
-  try {
-    // Lazy require so backend can run even when nodemailer is not installed
-    nodemailer = require("nodemailer");
-  } catch {
+  const nodemailer = loadNodemailer();
+  if (!nodemailer) {
     return null;
   }
 
@@ -40,10 +51,14 @@ function getTransporter() {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT),
     secure: String(process.env.SMTP_SECURE || "false") === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
+    ...(shouldUseSmtpAuth()
+      ? {
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        }
+      : {}),
   });
 
   return transporterCache;
@@ -101,10 +116,49 @@ function buildCredentialHtml({
       </table>
 
       ${loginUrl ? `<p>লগইন করুন: <a href="${loginUrl}">${loginUrl}</a></p>` : "<p>লগইন URL কনফিগার করা নেই। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।</p>"}
-      <p style="color:#b91c1c;"><b>Security:</b> এই লগইন তথ্য অ্যাডমিন-নিয়ন্ত্রিত। পরিবর্তনের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।</p>
+      <p style="color:#b91c1c;"><b>Security:</b> প্রথম লগইনের পর আপনাকে অবিলম্বে পাসওয়ার্ড পরিবর্তন করতে বলা হবে।</p>
       <p style="font-size: 12px; color: #6b7280;">এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে।</p>
     </div>
   `;
+}
+
+async function trySendWithEtherealFallback({ to, subject, html, text }) {
+  if (String(process.env.NODE_ENV || "development") === "production") {
+    return null;
+  }
+
+  const nodemailer = loadNodemailer();
+  if (!nodemailer) return null;
+
+  try {
+    const account = await nodemailer.createTestAccount();
+    const fallbackTransporter = nodemailer.createTransport({
+      host: account.smtp.host,
+      port: account.smtp.port,
+      secure: account.smtp.secure,
+      auth: {
+        user: account.user,
+        pass: account.pass,
+      },
+    });
+
+    const info = await fallbackTransporter.sendMail({
+      from: process.env.MAIL_FROM || "Amar Ration <no-reply@example.local>",
+      to,
+      subject,
+      html,
+      text,
+    });
+
+    return {
+      sent: true,
+      messageId: info.messageId,
+      previewUrl: nodemailer.getTestMessageUrl(info) || null,
+      fallback: "ETHEREAL",
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function sendDistributorCredentialEmail({
@@ -141,18 +195,44 @@ async function sendDistributorCredentialEmail({
     authorityStatus,
   });
 
-  const info = await transporter.sendMail({
-    from: process.env.MAIL_FROM,
-    to,
-    subject,
-    html,
-    text: `Amar Ration distributor credentials\nEmail: ${loginEmail}\nPassword: ${password}\nWard: ${wardNo || ""} ${ward || ""}`,
-  });
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.MAIL_FROM,
+      to,
+      subject,
+      html,
+      text:
+        `Amar Ration distributor credentials\nEmail: ${loginEmail}\nPassword: ${password}\nWard: ${wardNo || ""} ${ward || ""}\n` +
+        "First login requires immediate password reset.",
+    });
 
-  return {
-    sent: true,
-    messageId: info.messageId,
-  };
+    return {
+      sent: true,
+      messageId: info.messageId,
+    };
+  } catch (error) {
+    const fallback = await trySendWithEtherealFallback({
+      to,
+      subject,
+      html,
+      text:
+        `Amar Ration distributor credentials\nEmail: ${loginEmail}\nPassword: ${password}\nWard: ${wardNo || ""} ${ward || ""}\n` +
+        "First login requires immediate password reset.",
+    });
+    if (fallback?.sent) {
+      return {
+        sent: true,
+        messageId: fallback.messageId,
+        previewUrl: fallback.previewUrl || null,
+        reason: "SMTP_PRIMARY_FAILED_USING_ETHEREAL_FALLBACK",
+      };
+    }
+
+    return {
+      sent: false,
+      reason: `SMTP_SEND_FAILED:${error instanceof Error ? error.message : "unknown"}`,
+    };
+  }
 }
 
 function buildStatusHtml({ name, loginEmail, ward, wardNo, status, reason }) {
@@ -243,18 +323,25 @@ async function sendDistributorStatusEmail({
     reason,
   });
 
-  const info = await transporter.sendMail({
-    from: process.env.MAIL_FROM,
-    to,
-    subject,
-    html,
-    text: `Amar Ration distributor status update\nLogin Email: ${loginEmail}\nStatus: ${status}${reason ? `\nNote: ${reason}` : ""}`,
-  });
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.MAIL_FROM,
+      to,
+      subject,
+      html,
+      text: `Amar Ration distributor status update\nLogin Email: ${loginEmail}\nStatus: ${status}${reason ? `\nNote: ${reason}` : ""}`,
+    });
 
-  return {
-    sent: true,
-    messageId: info.messageId,
-  };
+    return {
+      sent: true,
+      messageId: info.messageId,
+    };
+  } catch (error) {
+    return {
+      sent: false,
+      reason: `SMTP_SEND_FAILED:${error instanceof Error ? error.message : "unknown"}`,
+    };
+  }
 }
 
 function buildPasswordChangeAlertHtml({
@@ -331,117 +418,28 @@ async function sendDistributorPasswordChangeAlertEmail({
     notMeUrl,
   });
 
-  const info = await transporter.sendMail({
-    from: process.env.MAIL_FROM,
-    to,
-    subject,
-    html,
-    text:
-      `Password changed for ${loginEmail || "your account"}.\n` +
-      `If this was you, confirm: ${yesUrl}\n` +
-      `If this was NOT you, report immediately: ${notMeUrl}`,
-  });
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.MAIL_FROM,
+      to,
+      subject,
+      html,
+      text:
+        `Password changed for ${loginEmail || "your account"}.\n` +
+        `If this was you, confirm: ${yesUrl}\n` +
+        `If this was NOT you, report immediately: ${notMeUrl}`,
+    });
 
-  return {
-    sent: true,
-    messageId: info.messageId,
-  };
-}
-
-function buildFieldUserApprovalHtml({
-  fieldUserName,
-  loginEmail,
-  password,
-  wardNo,
-  ward,
-  division,
-  distributorName,
-}) {
-  return `
-    <div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto; color: #111827;">
-      <h2 style="margin-bottom: 8px; color: #1f77b4;">আমার রেশন — ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত</h2>
-      <p style="margin-top: 0;">প্রিয় ${fieldUserName || "ফিল্ড ডিস্ট্রিবিউটর"},</p>
-      <p>আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন <b>${distributorName || "ডিস্ট্রিবিউটর"}</b> কর্তৃক অনুমোদিত হয়েছে। আপনি এখন নিচের তথ্য দিয়ে লগইন করতে পারবেন:</p>
-
-      <table style="border-collapse: collapse; width: 100%; margin: 12px 0;">
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; width: 160px; background: #f9fafb;"><b>লগইন ইমেইল</b></td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${loginEmail}</td>
-        </tr>
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>পাসওয়ার্ড</b></td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; font-size: 18px; font-weight: bold; letter-spacing: 2px;">${password}</td>
-        </tr>
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>বিভাগ</b></td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${division || "—"}</td>
-        </tr>
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>ওয়ার্ড</b></td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${wardNo || "—"} ${ward ? `(${ward})` : ""}</td>
-        </tr>
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; background: #f9fafb;"><b>অনুমোদনকারী</b></td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${distributorName || "—"}</td>
-        </tr>
-      </table>
-
-      <p style="color:#b91c1c;"><b>গুরুত্বপূর্ণ:</b> প্রথম লগইনের পর আপনার পাসওয়ার্ড পরিবর্তন করুন।</p>
-      <p style="font-size: 12px; color: #6b7280;">এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে।</p>
-    </div>
-  `;
-}
-
-async function sendFieldUserApprovalEmail({
-  to,
-  fromEmail,
-  fieldUserName,
-  loginEmail,
-  password,
-  wardNo,
-  ward,
-  division,
-  distributorName,
-}) {
-  if (!isValidRecipientEmail(to)) {
+    return {
+      sent: true,
+      messageId: info.messageId,
+    };
+  } catch (error) {
     return {
       sent: false,
-      reason: "INVALID_RECIPIENT_EMAIL",
+      reason: `SMTP_SEND_FAILED:${error instanceof Error ? error.message : "unknown"}`,
     };
   }
-
-  const transporter = getTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_NOT_CONFIGURED",
-    };
-  }
-
-  const subject = "আমার রেশন | ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত";
-  const html = buildFieldUserApprovalHtml({
-    fieldUserName,
-    loginEmail,
-    password,
-    wardNo,
-    ward,
-    division,
-    distributorName,
-  });
-
-  const info = await transporter.sendMail({
-    from: fromEmail || process.env.MAIL_FROM,
-    replyTo: fromEmail || undefined,
-    to,
-    subject,
-    html,
-    text: `আমার রেশন ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত\nইমেইল: ${loginEmail}\nপাসওয়ার্ড: ${password}\nওয়ার্ড: ${wardNo || ""} ${ward || ""}\nঅনুমোদনকারী: ${distributorName || ""}`,
-  });
-
-  return {
-    sent: true,
-    messageId: info.messageId,
-  };
 }
 
 module.exports = {
@@ -449,5 +447,4 @@ module.exports = {
   sendDistributorCredentialEmail,
   sendDistributorStatusEmail,
   sendDistributorPasswordChangeAlertEmail,
-  sendFieldUserApprovalEmail,
 };

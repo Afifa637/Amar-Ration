@@ -12,8 +12,17 @@ import {
   type Admin2FAStatus,
   type DistributorSettings,
 } from "../../services/api";
+import { useAuth } from "../../context/useAuth";
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("bn-BD");
+}
 
 export default function AdminSettingsPage() {
+  const { user } = useAuth();
   const [settings, setSettings] = useState<DistributorSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -27,8 +36,11 @@ export default function AdminSettingsPage() {
   const [twoFASecret, setTwoFASecret] = useState("");
   const [twoFAToken, setTwoFAToken] = useState("");
   const [resetConfirmText, setResetConfirmText] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
   const [disablePassword, setDisablePassword] = useState("");
   const [disableToken, setDisableToken] = useState("");
+  const [emergencyPassword, setEmergencyPassword] = useState("");
+  const [emergencyConfirmText, setEmergencyConfirmText] = useState("");
 
   const load2FAStatus = async () => {
     try {
@@ -83,9 +95,21 @@ export default function AdminSettingsPage() {
       setLoading(true);
       setError("");
       setMessage("");
-      const data = await setupAdmin2FA();
+      const isRecoveryPath = !!twoFAStatus.mismatch;
+      if (!isRecoveryPath && !setupPassword.trim()) {
+        setError("2FA সেটআপের আগে বর্তমান পাসওয়ার্ড দিন");
+        return;
+      }
+      const data = await setupAdmin2FA(
+        isRecoveryPath
+          ? {}
+          : {
+              password: setupPassword,
+            },
+      );
       setTwoFASecret(data.secret || "");
       setTwoFAToken("");
+      setSetupPassword("");
       await load2FAStatus();
       setMessage(
         "২FA setup pending আছে। ম্যানুয়াল secret অ্যাপে যোগ করে কোড যাচাই করুন।",
@@ -106,6 +130,17 @@ export default function AdminSettingsPage() {
       setLoading(true);
       setError("");
       setMessage("");
+      const latestStatus = await getAdmin2FAStatus();
+      setTwoFAStatus(latestStatus);
+      setTwoFASecret(latestStatus.secret || "");
+
+      if (!latestStatus.enabled && !latestStatus.setupPending) {
+        setError(
+          "2FA setup তথ্য সিঙ্ক হয়নি। বর্তমান পাসওয়ার্ড দিয়ে আবার setup শুরু করুন।",
+        );
+        return;
+      }
+
       const result = await verifyAdmin2FA(twoFAToken.trim());
       const backupCodes = result?.data?.backupCodes || [];
       setMessage(
@@ -117,7 +152,15 @@ export default function AdminSettingsPage() {
       setTwoFASecret("");
       await load2FAStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "2FA verify ব্যর্থ");
+      const msg = err instanceof Error ? err.message : "2FA verify ব্যর্থ";
+      if (msg.includes("2FA not set up")) {
+        await load2FAStatus();
+        setError(
+          "2FA secret পাওয়া যায়নি। বর্তমান পাসওয়ার্ড দিয়ে setup পুনরায় চালু করুন, তারপর নতুন OTP দিয়ে verify করুন।",
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -173,6 +216,38 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const onEmergencyDisable2FA = async () => {
+    if (!emergencyPassword.trim()) {
+      setError("জরুরি বন্ধ করতে বর্তমান পাসওয়ার্ড দিন");
+      return;
+    }
+    if (emergencyConfirmText.trim() !== "DISABLE_2FA_EMERGENCY") {
+      setError("নিশ্চিত করতে DISABLE_2FA_EMERGENCY লিখুন");
+      return;
+    }
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
+      await disableAdmin2FA({
+        password: emergencyPassword,
+        emergencyConfirm: "DISABLE_2FA_EMERGENCY",
+      });
+      setEmergencyPassword("");
+      setEmergencyConfirmText("");
+      setDisablePassword("");
+      setDisableToken("");
+      setTwoFASecret("");
+      setTwoFAToken("");
+      await load2FAStatus();
+      setMessage("2FA জরুরি ভিত্তিতে বন্ধ করা হয়েছে");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "জরুরি disable ব্যর্থ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!settings) {
     return <div className="text-[12px] text-[#6b7280]">লোড হচ্ছে...</div>;
   }
@@ -203,8 +278,46 @@ export default function AdminSettingsPage() {
                   : "অবস্থা: 2FA সক্রিয় নয়"}
             </div>
 
+            {(twoFAStatus.mismatch || user?.twoFactorMismatch) && (
+              <div className="mb-4 p-4 bg-red-50 border-2 border-red-400 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <span className="text-red-500 text-xl">⚠️</span>
+                  <div>
+                    <p className="font-bold text-red-800 text-sm">
+                      2FA সিক্রেট পরিবর্তন সনাক্ত হয়েছে
+                    </p>
+                    <p className="text-red-700 text-xs mt-1">
+                      আপনার 2FA সিক্রেট পরিবর্তিত হয়েছে এবং স্বয়ংক্রিয়ভাবে
+                      বন্ধ করা হয়েছে। সুরক্ষার জন্য নিচে থেকে পুনরায় 2FA
+                      সক্রিয় করুন।
+                    </p>
+                    {twoFAStatus.mismatchDetectedAt && (
+                      <p className="text-red-600 text-xs mt-1">
+                        সনাক্তের সময়:{" "}
+                        {formatDate(twoFAStatus.mismatchDetectedAt)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!twoFAStatus.enabled && !twoFAStatus.setupPending && (
               <div className="mb-3">
+                {!twoFAStatus.mismatch && (
+                  <div className="mb-2">
+                    <label className="block text-[12px] mb-1 font-medium text-[#374151]">
+                      বর্তমান পাসওয়ার্ড (নতুন secret তৈরির জন্য)
+                    </label>
+                    <input
+                      type="password"
+                      value={setupPassword}
+                      onChange={(e) => setSetupPassword(e.target.value)}
+                      className="w-full border rounded px-3 py-2"
+                      placeholder="বর্তমান পাসওয়ার্ড"
+                    />
+                  </div>
+                )}
                 <Button onClick={() => void onSetup2FA()} disabled={loading}>
                   2FA Setup শুরু করুন
                 </Button>
@@ -220,6 +333,29 @@ export default function AdminSettingsPage() {
                 <div className="text-[12px] text-gray-700 break-all">
                   Secret: <span className="font-mono">{twoFASecret}</span>
                 </div>
+
+                {!twoFAStatus.mismatch && (
+                  <div className="space-y-2 border rounded p-2 bg-[#f8fafc]">
+                    <label className="block text-[12px] font-medium text-[#374151]">
+                      বর্তমান পাসওয়ার্ড (setup পুনরায় সিঙ্ক করার জন্য)
+                    </label>
+                    <input
+                      type="password"
+                      value={setupPassword}
+                      onChange={(e) => setSetupPassword(e.target.value)}
+                      className="w-full border rounded px-3 py-2"
+                      placeholder="বর্তমান পাসওয়ার্ড"
+                    />
+                    <Button
+                      variant="secondary"
+                      onClick={() => void onSetup2FA()}
+                      disabled={loading}
+                    >
+                      Setup পুনরায় সিঙ্ক করুন
+                    </Button>
+                  </div>
+                )}
+
                 <input
                   type="text"
                   value={twoFAToken}
@@ -280,6 +416,42 @@ export default function AdminSettingsPage() {
                   disabled={loading}
                 >
                   2FA Disable
+                </Button>
+                <div className="md:col-span-3 text-[12px] text-[#6b7280]">
+                  OTP না পেলে উপরের জরুরি পদ্ধতি ব্যবহার করুন।
+                </div>
+              </div>
+            )}
+
+            {twoFAStatus.mismatch && (
+              <div className="mt-4 rounded border border-red-300 bg-red-50 p-3 space-y-2">
+                <div className="font-semibold text-red-800 text-sm">
+                  জরুরি 2FA বন্ধ করুন
+                </div>
+                <p className="text-xs text-red-700">
+                  যদি আপনার Authenticator App কাজ না করে, শুধু পাসওয়ার্ড দিয়ে
+                  2FA বন্ধ করুন।
+                </p>
+                <input
+                  type="password"
+                  value={emergencyPassword}
+                  onChange={(e) => setEmergencyPassword(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="বর্তমান পাসওয়ার্ড"
+                />
+                <input
+                  type="text"
+                  value={emergencyConfirmText}
+                  onChange={(e) => setEmergencyConfirmText(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="নিশ্চিত করতে DISABLE_2FA_EMERGENCY লিখুন"
+                />
+                <Button
+                  variant="danger"
+                  onClick={() => void onEmergencyDisable2FA()}
+                  disabled={loading}
+                >
+                  জরুরি ভিত্তিতে বন্ধ করুন
                 </Button>
               </div>
             )}

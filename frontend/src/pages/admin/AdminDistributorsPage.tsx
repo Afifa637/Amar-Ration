@@ -7,6 +7,7 @@ import {
   createAdminDistributor,
   deleteAdminDistributor,
   getAdminDistributors,
+  resendDistributorCredentials,
   updateAdminDistributorStatus,
   type AdminDistributorRow,
 } from "../../services/api";
@@ -47,14 +48,14 @@ const emptyCreateForm: CreateDistributorForm = {
 };
 
 const BANGLADESH_DIVISIONS = [
-  "Dhaka",
-  "Chattogram",
-  "Rajshahi",
-  "Khulna",
-  "Barishal",
-  "Sylhet",
-  "Rangpur",
-  "Mymensingh",
+  "ঢাকা",
+  "চট্টগ্রাম",
+  "রাজশাহী",
+  "খুলনা",
+  "বরিশাল",
+  "সিলেট",
+  "রংপুর",
+  "ময়মনসিংহ",
 ];
 
 const normalizeWardNo = (value: string) => {
@@ -137,16 +138,57 @@ export default function AdminDistributorsPage() {
     try {
       setLoading(true);
       setError("");
-      await createAdminDistributor({
-        ...createForm,
+      const payload = {
+        name: createForm.name.trim(),
+        email: createForm.email.trim().toLowerCase(),
         wardNo: normalizeWardNo(createForm.wardNo),
+        ward: normalizeWardNo(createForm.wardNo),
+        division: createForm.division.trim(),
         authorityMonths: Math.max(1, Number(createForm.authorityMonths) || 6),
+        ...(createForm.phone.trim() ? { phone: createForm.phone.trim() } : {}),
+        ...(createForm.district.trim()
+          ? { district: createForm.district.trim() }
+          : {}),
+        ...(createForm.upazila.trim()
+          ? { upazila: createForm.upazila.trim() }
+          : {}),
+        ...(createForm.unionName.trim()
+          ? { unionName: createForm.unionName.trim() }
+          : {}),
+        ...(createForm.officeAddress.trim()
+          ? { officeAddress: createForm.officeAddress.trim() }
+          : {}),
+      };
+      const result = await createAdminDistributor({
+        ...payload,
       });
       setOpenCreate(false);
       setCreateForm(emptyCreateForm);
-      setMessage(
-        "ডিস্ট্রিবিউটর তৈরি সফল হয়েছে। প্রদত্ত ইমেইলে লগইন তথ্য পাঠানো হয়েছে।",
-      );
+      if (result.credentialEmailSent) {
+        setMessage(
+          [
+            "ডিস্ট্রিবিউটর তৈরি সফল হয়েছে। প্রদত্ত ইমেইলে লগইন তথ্য পাঠানো হয়েছে।",
+            result.emailPreviewUrl
+              ? `ডেভ-প্রিভিউ: ${result.emailPreviewUrl}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      } else {
+        setMessage(
+          [
+            "ডিস্ট্রিবিউটর তৈরি হয়েছে, কিন্তু ইমেইল পাঠানো যায়নি।",
+            result.temporaryPassword
+              ? `অস্থায়ী পাসওয়ার্ড: ${result.temporaryPassword}`
+              : "",
+            result.loginEmail ? `লগইন ইমেইল: ${result.loginEmail}` : "",
+            result.emailReason ? `কারণ: ${result.emailReason}` : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
       await loadData();
     } catch (err) {
       setError(
@@ -254,16 +296,89 @@ export default function AdminDistributorsPage() {
       setResetLoading(true);
       setError("");
       const targetUserId = openReset.userId || openReset.distributorId || "";
-      await adminResetDistributorPassword(targetUserId, resetPassword);
+      const result = await adminResetDistributorPassword(
+        targetUserId,
+        resetPassword,
+      );
       setOpenReset(null);
       setResetPassword("");
       setConfirmResetPassword("");
       setShowResetPassword(false);
-      setMessage("পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে");
+      setMessage(
+        result.data?.credentialEmailSent
+          ? [
+              "পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে এবং ইমেইল পাঠানো হয়েছে",
+              result.data?.emailPreviewUrl
+                ? `ডেভ-প্রিভিউ: ${result.data.emailPreviewUrl}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : [
+              "পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে, কিন্তু ইমেইল পাঠানো যায়নি।",
+              result.data?.temporaryPassword
+                ? `অস্থায়ী পাসওয়ার্ড: ${result.data.temporaryPassword}`
+                : "",
+              result.data?.loginEmail
+                ? `লগইন ইমেইল: ${result.data.loginEmail}`
+                : "",
+              result.data?.emailReason
+                ? `কারণ: ${result.data.emailReason}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "পাসওয়ার্ড রিসেট ব্যর্থ");
     } finally {
       setResetLoading(false);
+    }
+  };
+
+  const handleResendCredentials = async (row: AdminDistributorRow) => {
+    const delivery = row.contactEmail || row.loginEmail || row.email || "—";
+    const confirmed = window.confirm(
+      `নতুন পাসওয়ার্ড তৈরি করে ${delivery}-এ পাঠানো হবে।`,
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      setError("");
+      const result = await resendDistributorCredentials(row.userId);
+      setMessage(
+        result.data?.credentialEmailSent
+          ? [
+              "শংসাপত্র পুনরায় পাঠানো হয়েছে",
+              result.data?.emailPreviewUrl
+                ? `ডেভ-প্রিভিউ: ${result.data.emailPreviewUrl}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : [
+              "শংসাপত্র পুনরায় তৈরি হয়েছে, কিন্তু ইমেইল পাঠানো যায়নি",
+              result.data?.temporaryPassword
+                ? `অস্থায়ী পাসওয়ার্ড: ${result.data.temporaryPassword}`
+                : "",
+              result.data?.loginEmail
+                ? `লগইন ইমেইল: ${result.data.loginEmail}`
+                : "",
+              result.data?.emailReason
+                ? `কারণ: ${result.data.emailReason}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+      );
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "শংসাপত্র পুনরায় পাঠাতে ব্যর্থ",
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -550,6 +665,7 @@ export default function AdminDistributorsPage() {
                   "ডিস্ট্রিবিউটর আইডি",
                   "বিভাগ / ওয়ার্ড",
                   "নাম",
+                  "ইমেইল তথ্য",
                   "কর্তৃত্বের মেয়াদ",
                   "স্ট্যাটাস",
                   "অডিট ফ্ল্যাগ",
@@ -574,6 +690,43 @@ export default function AdminDistributorsPage() {
                     </div>
                   </td>
                   <td className="p-2 border border-[#d7dde6]">{row.name}</td>
+                  <td className="p-2 border border-[#d7dde6]">
+                    <div className="text-[12px] space-y-1">
+                      <div>
+                        <span className="font-medium">লগইন ইমেইল:</span>{" "}
+                        {row.loginEmail || row.email || "—"}
+                        {(row.loginEmail || row.email) && (
+                          <button
+                            type="button"
+                            className="ml-2 text-[#16679c] underline"
+                            onClick={async () => {
+                              const loginEmail = row.loginEmail || row.email;
+                              if (!loginEmail) return;
+                              try {
+                                await navigator.clipboard.writeText(loginEmail);
+                                setMessage("লগইন ইমেইল কপি হয়েছে");
+                              } catch {
+                                setError("ইমেইল কপি করা যায়নি");
+                              }
+                            }}
+                          >
+                            কপি
+                          </button>
+                        )}
+                      </div>
+                      <div>
+                        <span className="font-medium">যোগাযোগ ইমেইল:</span>{" "}
+                        {row.contactEmail || "—"}
+                      </div>
+                      <div className="text-[#6b7280]">
+                        ডিস্ট্রিবিউটর এই ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করবেন:{" "}
+                        {row.loginEmail || row.email || "—"}
+                      </div>
+                      <div className="text-[#6b7280]">
+                        লগইন তথ্য পাঠানো হয়েছে: {row.contactEmail || "—"}
+                      </div>
+                    </div>
+                  </td>
                   <td className="p-2 border border-[#d7dde6]">
                     {authorityExpiry(row).expired ? (
                       <span className="inline-flex rounded bg-red-100 text-red-700 px-2 py-1 text-[11px] font-semibold">
@@ -624,6 +777,12 @@ export default function AdminDistributorsPage() {
                         পাসওয়ার্ড রিসেট
                       </button>
                       <button
+                        onClick={() => void handleResendCredentials(row)}
+                        className="text-[12px] px-2 py-1 rounded bg-[#0f766e] text-white hover:bg-[#0d5f59]"
+                      >
+                        শংসাপত্র পুনরায় পাঠান
+                      </button>
+                      <button
                         onClick={() => void deleteDistributor(row)}
                         className="text-[12px] px-2 py-1 rounded bg-[#111827] text-white hover:bg-black"
                       >
@@ -668,10 +827,10 @@ export default function AdminDistributorsPage() {
             />
           </div>
           <div>
-            <div className="text-[12px] mb-1 font-medium">ইমেইল *</div>
+            <div className="text-[12px] mb-1 font-medium">যোগাযোগ ইমেইল *</div>
             <input
               className="border rounded px-3 py-2 w-full"
-              placeholder="ইমেইল"
+              placeholder="যোগাযোগ ইমেইল"
               value={createForm.email}
               onChange={(e) =>
                 setCreateForm((p) => ({ ...p, email: e.target.value }))

@@ -40,6 +40,28 @@ function todayDateKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function statusLabel(s: string) {
+  return (
+    (
+      {
+        Active: "সক্রিয়",
+        Inactive: "নিষ্ক্রিয়",
+        Suspended: "স্থগিত",
+        Pending: "অপেক্ষমাণ",
+        Revoked: "বাতিল",
+        Open: "চলমান",
+        Closed: "বন্ধ",
+        Planned: "পরিকল্পিত",
+        Paused: "স্থগিত",
+        Issued: "ইস্যুড",
+        Used: "ব্যবহৃত",
+        Cancelled: "বাতিল",
+        Expired: "মেয়াদোত্তীর্ণ",
+      } as Record<string, string>
+    )[s] ?? s
+  );
+}
+
 export default function StockDistributionPage() {
   const navigate = useNavigate();
   const [records, setRecords] = useState<DistributionRecord[]>([]);
@@ -487,7 +509,10 @@ export default function StockDistributionPage() {
             </Button>
           </div>
           <div className="text-[12px] text-[#4b5563]">
-            বর্তমান অবস্থা: <b>{sessionStatus || "No session"}</b>
+            বর্তমান অবস্থা:{" "}
+            <b>
+              {sessionStatus ? statusLabel(sessionStatus) : "কোনো সেশন নেই"}
+            </b>
             {openSession?.scheduledStartAt
               ? ` | নির্ধারিত শুরু: ${new Date(openSession.scheduledStartAt).toLocaleString("bn-BD")}`
               : ""}
@@ -505,7 +530,8 @@ export default function StockDistributionPage() {
                       key={s._id}
                       className="px-2 py-1 rounded border bg-white text-[11px]"
                     >
-                      {s.dateKey} · {s.status} · {s.sessionCode || s._id}
+                      {s.dateKey} · {statusLabel(s.status)} ·{" "}
+                      {s.sessionCode || s._id}
                     </span>
                   ))}
               </div>
