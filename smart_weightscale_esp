@@ -30,8 +30,8 @@ String backend_base_url = "http://10.30.4.129:5000/api";
 String backend_api_key = "amar_ration_iot_device_key_2026";
 String last_sync_message = "Never synced";
 int last_sync_http_code = -1;
-const char* DEFAULT_WIFI_SSID = "KUET";
-const char* DEFAULT_WIFI_PASSWORD = "kfh5233f";
+const char* DEFAULT_WIFI_SSID = "Quanta's A34";
+const char* DEFAULT_WIFI_PASSWORD = "12345678";
 
 // ডাটা সেভ করার জন্য
 String saved_data_html = ""; 
@@ -113,107 +113,107 @@ const char index_html[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Ration 3.0</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Ration - Setup</title>
     <style>
-        body { margin: 0; font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298, #283e51); height: 100vh; display: flex; justify-content: center; align-items: center; color: white; overflow-y: auto; }
-        .glass { background: rgba(255,255,255,0.1); backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 25px; box-shadow: 0 8px 32px rgba(0,0,0,0.37); width: 90%; max-width: 600px; text-align: center; margin-top: 20px;}
-        input, select { width: 90%; padding: 10px; margin: 8px 0; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; color: white; outline: none; }
-        input::placeholder { color: #ddd; }
-        select option { background: #2a5298; color: white; }
-        .row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
-        .row input[type="number"] { width: 60%; }
-        button { width: 100%; padding: 12px; margin-top: 10px; background: linear-gradient(135deg, #007bff, #0056b3); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        button:hover { background: linear-gradient(135deg, #0056b3, #004494); }
-        .nav a { color: #00d2ff; cursor: pointer; margin: 0 5px; font-weight: bold; text-decoration: none; font-size: 13px; }
-        .page { display: none; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
-        th, td { border: 1px solid rgba(255,255,255,0.3); padding: 8px; text-align: center; }
-        th { background: rgba(0,123,255,0.5); }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298, #283e51); min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; color: white; padding: 20px; }
+        .container { width: 100%; max-width: 500px; }
+        .card { background: rgba(255,255,255,0.1); backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.37); margin-bottom: 20px; }
+        h1 { text-align: center; font-size: 20px; margin: 0 0 4px; }
+        .sub { text-align: center; font-size: 12px; color: #a0c4ff; margin: 0 0 4px; }
+        h2 { font-size: 15px; margin: 0 0 14px; color: #00d2ff; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 8px; }
+        label { font-size: 13px; color: #d0e8ff; display: block; margin-bottom: 4px; }
+        input[type=text], input[type=password], input[type=number], select {
+            width: 100%; padding: 10px 12px; margin-bottom: 12px; background: rgba(255,255,255,0.12);
+            border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; color: white; outline: none; font-size: 14px;
+        }
+        input[type=file] { width: 100%; padding: 8px; margin-bottom: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: white; font-size: 13px; }
+        input::placeholder { color: #bbb; }
+        select option { background: #2a5298; }
+        button { width: 100%; padding: 11px; margin-top: 2px; background: linear-gradient(135deg, #007bff, #0056b3); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
+        button:hover { background: linear-gradient(135deg, #0056b3, #003d80); }
+        .btn-warn { background: linear-gradient(135deg, #ff9800, #e65100); }
+        .btn-warn:hover { background: linear-gradient(135deg, #e65100, #bf360c); }
+        .btn-ok { background: linear-gradient(135deg, #28a745, #1a6b2e); }
+        .btn-ok:hover { background: linear-gradient(135deg, #1a6b2e, #0f3d19); }
+        .row { display: flex; gap: 10px; align-items: flex-end; }
+        .row input { flex: 1; margin-bottom: 0; }
+        .row button { flex: 0 0 90px; width: 90px; margin-top: 0; }
+        #wifi-status { font-size: 13px; color: #ffd700; margin-top: 8px; min-height: 18px; text-align: center; }
     </style>
 </head>
 <body>
+<div class="container">
 
-    <div id="login-page" class="glass page" style="display:block;">
-        <h2>Admin Login</h2>
-        <input type="text" id="user" placeholder="Username">
-        <input type="password" id="pass" placeholder="Password">
-        <button onclick="login()">Login</button>
+    <div class="card">
+        <h1>Smart Ration 3.0</h1>
+        <p class="sub">Device Setup Panel</p>
     </div>
 
-    <div id="dashboard-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
-        <h2>Ration Targets</h2>
-      <p style="font-size:12px; color:#d6e4ff; margin-top:-4px;">Targets are managed from the admin web app and synced to this device.</p>
-        <input type="text" id="cust_name" placeholder="Customer Name">
-        <input type="text" id="cust_id" placeholder="Ration ID">
-      <div class="row"><label>P1 (Rice)</label><input type="number" id="q1" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
-      <div class="row"><label>P2 (Lentil)</label><input type="number" id="q2" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
-      <div class="row"><label>P3 (Onion)</label><input type="number" id="q3" placeholder="g" readonly style="background:rgba(255,255,255,0.08);"></div>
-      <button onclick="saveCustomer()">Save Customer</button>
+    <div class="card">
+        <h2>WiFi / Mobile Hotspot</h2>
+        <label>Hotspot Name (SSID)</label>
+        <input type="text" id="ssid_manual" placeholder="e.g. My Phone Hotspot">
+        <label>Password</label>
+        <input type="password" id="wifi_pass" placeholder="Hotspot password">
+        <button onclick="saveWifi()">Save &amp; Restart</button>
+        <div id="wifi-status"></div>
     </div>
 
-    <div id="table-page" class="glass page">
-      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
-        <h2>Saved Records</h2>
-        <div id="table-content" style="max-height: 300px; overflow-y: auto;">Loading data...</div>
-    </div>
-
-    <div id="settings-page" class="glass page">
-      <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
-        <h2>Calibration & Tolerance</h2>
-        <button onclick="fetch('/zero').then(r=>r.text()).then(alert)" style="background:#ff9800;">1. Zero Scale (Empty)</button>
-        <div class="row" style="margin-top:20px;">
-            <input type="number" id="known_wt" placeholder="Weight (Kg)">
-            <button onclick="cal()" style="width:35%; margin:0;">2. Calibrate</button>
-        </div>
-        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); margin:20px 0;">
-        <div class="row">
-            <input type="number" id="tol_g" placeholder="Tolerance (Grams)">
-            <button onclick="setTol()" style="width:35%; margin:0;">Set</button>
+    <div class="card">
+        <h2>Scale Calibration</h2>
+        <button class="btn-warn" onclick="zeroScale()">1. Zero Scale &nbsp;(must be empty)</button>
+        <label style="margin-top:16px;">2. Place a known weight, enter its value (Kg)</label>
+        <div class="row" style="margin-top:4px;">
+            <input type="number" id="known_wt" placeholder="e.g. 1.000" step="0.001">
+            <button onclick="calibrate()">Calibrate</button>
         </div>
     </div>
 
-    <div id="ota-page" class="glass page">
-        <div class="nav"><a onclick="nav('dashboard')">Dash</a> | <a onclick="nav('table')">Table</a> | <a onclick="nav('settings')">Settings</a> | <a onclick="nav('ota')">OTA</a></div>
-        <h2>Firmware Update</h2>
-        <form method='POST' action='/update' enctype='multipart/form-data'>
-            <input type='file' name='update' accept='.bin' required>
-            <button type='submit' style="background:#28a745;">Upload & Update</button>
-        </form>
+    <div class="card">
+        <h2>Firmware Update (OTA)</h2>
+        <label>Select compiled .bin file</label>
+        <input type="file" id="ota_file" accept=".bin">
+        <button class="btn-ok" onclick="submitOta()">Upload &amp; Flash</button>
     </div>
 
-    <script>
-        function login() {
-            if(document.getElementById('user').value.trim() === "admin" && document.getElementById('pass').value.trim() === "1234") nav('dashboard');
-            else alert("Wrong Login!");
-        }
-        function nav(p) { 
-          document.querySelectorAll('.page').forEach(e => e.style.display = 'none'); 
-          document.getElementById(p+'-page').style.display = 'block'; 
-          if(p === 'dashboard') {
-            loadCurrentTargets();
-          }
-          if(p === 'table') {
-            document.getElementById('table-content').innerHTML = "Loading data...";
-            fetch('/get_table').then(r=>r.text()).then(data => { document.getElementById('table-content').innerHTML = data; });
-          }
-        }
-        function loadCurrentTargets() {
-          fetch('/current_targets').then(r=>r.json()).then(data => {
-            document.getElementById('q1').value = Math.round((data.p1Kg ?? 0) * 1000);
-            document.getElementById('q2').value = Math.round((data.p2Kg ?? 0) * 1000);
-            document.getElementById('q3').value = Math.round((data.p3Kg ?? 0) * 1000);
-          }).catch(() => {});
-        }
-        function saveCustomer() { 
-            let u = document.getElementById('cust_name').value || "Unknown";
-            let i = document.getElementById('cust_id').value || "N/A";
-          fetch(`/set_targets?u=${encodeURIComponent(u)}&i=${encodeURIComponent(i)}`).then(r=>r.text()).then(alert); 
-        }
-        function cal() { fetch(`/calibrate?w=${document.getElementById('known_wt').value}`).then(r=>r.text()).then(alert); }
-        function setTol() { fetch(`/set_tol?g=${document.getElementById('tol_g').value}`).then(r=>r.text()).then(alert); }
-    </script>
+</div>
+<script>
+    function setStatus(msg) { document.getElementById('wifi-status').textContent = msg; }
+
+    function saveWifi() {
+        var s = document.getElementById('ssid_manual').value.trim();
+        var p = document.getElementById('wifi_pass').value;
+        if (!s) { setStatus('Enter or select an SSID first.'); return; }
+        setStatus('Saving...');
+        fetch('/save_wifi?s=' + encodeURIComponent(s) + '&p=' + encodeURIComponent(p))
+            .then(r => r.text()).then(msg => setStatus(msg))
+            .catch(() => setStatus('Save failed.'));
+    }
+
+    function zeroScale() {
+        fetch('/zero').then(r => r.text()).then(msg => alert(msg)).catch(() => alert('Failed.'));
+    }
+
+    function calibrate() {
+        var w = document.getElementById('known_wt').value;
+        if (!w || parseFloat(w) <= 0) { alert('Enter a valid known weight first.'); return; }
+        fetch('/calibrate?w=' + encodeURIComponent(w))
+            .then(r => r.text()).then(msg => alert(msg)).catch(() => alert('Calibration failed.'));
+    }
+
+    function submitOta() {
+        var file = document.getElementById('ota_file').files[0];
+        if (!file) { alert('Select a .bin file first.'); return; }
+        if (!confirm('Flash new firmware? Device will restart.')) return;
+        var fd = new FormData();
+        fd.append('update', file);
+        fetch('/update', { method: 'POST', body: fd })
+            .then(r => r.text()).then(msg => alert(msg)).catch(() => alert('OTA upload failed.'));
+    }
+</script>
 </body>
 </html>
 )=====";
@@ -376,13 +376,9 @@ void setup() {
   
   // রাউটিং
   server.on("/", handleRoot);
-  server.on("/set_targets", handleTargets);
-  server.on("/current_targets", handleCurrentTargets);
-  server.on("/get_table", handleGetTable);
   server.on("/zero", handleZero);
   server.on("/calibrate", handleCalibrate);
-  server.on("/set_tol", handleTolerance);
-  server.on("/sync_targets", handleSyncTargets);
+  server.on("/save_wifi", handleSaveWifi);
 
   // OTA আপডেট হ্যান্ডলার
   server.on("/update", HTTP_POST, []() {
@@ -399,10 +395,8 @@ void setup() {
   server.begin();
   delay(3000); lcd.clear();
 
-  if (WiFi.status() == WL_CONNECTED && backend_base_url.length() > 0 && backend_api_key.length() > 0) {
-    syncTargetsFromBackend();
-  }
 }
+
 
 // ================== MAIN LOOP ==================
 void loop() {
