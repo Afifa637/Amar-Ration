@@ -3,8 +3,8 @@ services:
     name: amar-ration-backend
     runtime: node
     rootDir: backend
-    buildCommand: npm install
-    startCommand: node server.js
+    buildCommand: cd backend && npm install
+    startCommand: node backend/server.js
     plan: free
     envVars:
       - key: NODE_ENV
