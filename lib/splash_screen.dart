@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
 import 'home_screen.dart';
+import 'services/api_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -18,19 +18,29 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _loadAndRedirect() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('amar_ration_auth');
+    final startTime = DateTime.now();
 
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (!mounted) {
-      return;
+    bool isLoggedIn = false;
+    try {
+      await ApiService.getMe();
+      isLoggedIn = true;
+    } catch (_) {
+      await ApiService.clearSession();
+      isLoggedIn = false;
     }
+
+    // Ensure minimum 1.5s splash time
+    final elapsed = DateTime.now().difference(startTime);
+    if (elapsed < const Duration(milliseconds: 1500)) {
+      await Future.delayed(const Duration(milliseconds: 1500) - elapsed);
+    }
+
+    if (!mounted) return;
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => token != null ? const HomeScreen() : const LoginScreen(),
+        builder: (context) => isLoggedIn ? const HomeScreen() : const LoginScreen(),
       ),
     );
   }
@@ -39,29 +49,35 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/bg-2.jpg'),
-            fit: BoxFit.cover,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1f77b4), Color(0xFF0d4f80)],
           ),
         ),
-        child: Center(
+        child: const Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(
-                'assets/images/app_logo.png', // Replace with your app logo path
-                width: 100,
-                height: 100,
-              ),
-              const SizedBox(height: 16),
-              const Text(
+              Icon(Icons.grain, size: 80, color: Colors.white),
+              SizedBox(height: 20),
+              Text(
                 'আমার রেশন',
                 style: TextStyle(
-                  fontFamily: 'BanglaFont',
-                  fontSize: 24,
+                  fontFamily: 'Anek Bangla',
+                  fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1f77b4),
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'ফিল্ড ডিস্ট্রিবিউটর',
+                style: TextStyle(
+                  fontFamily: 'Anek Bangla',
+                  fontSize: 16,
+                  color: Colors.white70,
                 ),
               ),
             ],

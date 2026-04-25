@@ -18,7 +18,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
   late TextEditingController _districtController;
   late TextEditingController _upazilaController;
   late TextEditingController _unionNameController;
-  late TextEditingController _wardController;
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -33,7 +32,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _districtController = TextEditingController();
     _upazilaController = TextEditingController();
     _unionNameController = TextEditingController();
-    _wardController = TextEditingController();
   }
 
   @override
@@ -46,7 +44,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _districtController.dispose();
     _upazilaController.dispose();
     _unionNameController.dispose();
-    _wardController.dispose();
     super.dispose();
   }
 
@@ -85,8 +82,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _divisionController.text.isEmpty ||
         _districtController.text.isEmpty ||
         _upazilaController.text.isEmpty ||
-        _unionNameController.text.isEmpty ||
-        _wardController.text.isEmpty) {
+        _unionNameController.text.isEmpty) {
       setState(() {
         _errorMessage = 'সকল বিভাগীয় তথ্য পূরণ করুন';
       });
@@ -110,17 +106,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
 
     try {
-      final result = await ApiService.signup(
+      final result = await ApiService.applyAsFieldDistributor(
         name: _nameController.text.trim(),
         email: _emailController.text.trim().toLowerCase(),
         phone: _phoneController.text.trim(),
-        userType: 'FieldUser',
         wardNo: _wardNoController.text.trim(),
         division: _divisionController.text.trim(),
         district: _districtController.text.trim(),
         upazila: _upazilaController.text.trim(),
         unionName: _unionNameController.text.trim(),
-        ward: _wardController.text.trim(),
       );
 
       if (mounted) {
@@ -495,31 +489,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
             ),
             const SizedBox(height: 12),
 
-            const Text(
-              'ওয়ার্ড নাম *',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF333333),
-                fontFamily: 'Anek Bangla',
-              ),
-            ),
-            const SizedBox(height: 4),
-            TextField(
-              controller: _wardController,
-              enabled: !_isLoading,
-              decoration: InputDecoration(
-                hintText: 'ওয়ার্ড-০১',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6.0),
-                  borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
-                ),
-              ),
-            ),
             const SizedBox(height: 16),
 
             // Info box about approval process
