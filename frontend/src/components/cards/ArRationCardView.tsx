@@ -1,4 +1,5 @@
 import type { ConsumerCardDetail } from "../../services/api";
+import { resolveBackendUrl } from "../../services/api";
 
 const APP_LOGO = "/assets/image/app_logo.png";
 
@@ -70,7 +71,7 @@ export default function ArRationCardView({
           <div className="rounded-xl border border-[#a5d8f3] bg-white p-2 flex items-center justify-center min-h-32">
             {card.photoUrl ? (
               <img
-                src={card.photoUrl}
+                src={resolveBackendUrl(card.photoUrl) ?? ""}
                 alt="উপকারভোগীর ছবি"
                 className="w-24 h-24 md:w-26 md:h-26 rounded-lg object-cover border border-[#bfdbfe]"
               />

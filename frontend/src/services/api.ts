@@ -13,6 +13,26 @@ const viteEnv = ((import.meta as unknown as { env?: Record<string, unknown> })
 const API_BASE_URL =
   viteEnv.VITE_API_BASE_URL?.replace(/\/$/, "") ||
   (viteEnv.DEV ? "http://localhost:5000/api" : "/api");
+
+/**
+ * Resolves a backend-relative path (e.g. "/api/photos/CODE") to a full
+ * absolute URL using the configured API base. When API_BASE_URL is already
+ * absolute (has a host), we prepend its origin; when it is a relative /api
+ * path the backend and frontend share the same origin and no prefix is needed.
+ */
+export function resolveBackendUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path; // already absolute
+  try {
+    if (/^https?:\/\//i.test(API_BASE_URL)) {
+      return new URL(API_BASE_URL).origin + path;
+    }
+  } catch {
+    // ignore malformed URL
+  }
+  return path; // same-origin fallback
+}
+
 export const AUTH_STORAGE_KEY = "amar_ration_auth";
 export const REFRESH_STORAGE_KEY = "amar_ration_refresh";
 

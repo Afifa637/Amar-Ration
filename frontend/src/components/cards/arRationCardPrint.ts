@@ -1,4 +1,5 @@
 import type { ConsumerCardDetail } from "../../services/api";
+import { resolveBackendUrl } from "../../services/api";
 
 const APP_LOGO = "/assets/image/app_logo.png";
 
@@ -95,7 +96,7 @@ export function buildArRationCardPrintHtml(card: ConsumerCardDetail) {
           </div>
           <div class="body">
             <div class="photo">
-              ${card.photoUrl ? `<img src="${card.photoUrl}" alt="উপকারভোগীর ছবি" />` : "<div>ছবি সংযুক্ত নেই</div>"}
+              ${card.photoUrl ? `<img src="${resolveBackendUrl(card.photoUrl) ?? ""}" alt="উপকারভোগীর ছবি" />` : "<div>ছবি সংযুক্ত নেই</div>"}
             </div>
             <div class="grid">
               ${infoRowsHtml}
