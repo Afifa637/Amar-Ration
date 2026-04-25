@@ -1080,7 +1080,7 @@ exports.listConsumerCards = async (req, res) => {
         validTo: qr?.validTo || null,
         qrPayload: qr?.payload || consumer.qrToken || "",
         photoUrl: consumer.photoPath
-          ? `/api/photos/${consumer.consumerCode}`
+          ? `${process.env.BACKEND_PUBLIC_URL || "http://localhost:5000"}/api/photos/${consumer.consumerCode}`
           : null,
         createdAt: consumer.createdAt,
       };
@@ -1186,7 +1186,7 @@ exports.getConsumerCard = async (req, res) => {
           qrPayload,
           qrImageDataUrl,
           photoUrl: consumer.photoPath
-            ? `/api/photos/${consumer.consumerCode}`
+            ? `${process.env.BACKEND_PUBLIC_URL || "http://localhost:5000"}/api/photos/${consumer.consumerCode}`
             : null,
           issuedAt: card.createdAt,
           updatedAt: card.updatedAt,
