@@ -9,12 +9,24 @@ class SignUpScreen extends StatefulWidget {
   State<SignUpScreen> createState() => _SignUpScreenState();
 }
 
+// Canonical Bangla division names — must match backend DIVISION_KEY_MAP
+const List<String> _kDivisions = [
+  'ঢাকা',
+  'চট্টগ্রাম',
+  'রাজশাহী',
+  'খুলনা',
+  'বরিশাল',
+  'সিলেট',
+  'রংপুর',
+  'ময়মনসিংহ',
+];
+
 class _SignUpScreenState extends State<SignUpScreen> {
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   late TextEditingController _phoneController;
   late TextEditingController _wardNoController;
-  late TextEditingController _divisionController;
+  String? _selectedDivision; // replaces free-text division controller
   late TextEditingController _districtController;
   late TextEditingController _upazilaController;
   late TextEditingController _unionNameController;
@@ -28,7 +40,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _emailController = TextEditingController();
     _phoneController = TextEditingController();
     _wardNoController = TextEditingController();
-    _divisionController = TextEditingController();
+    _selectedDivision = null;
     _districtController = TextEditingController();
     _upazilaController = TextEditingController();
     _unionNameController = TextEditingController();
@@ -40,7 +52,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _wardNoController.dispose();
-    _divisionController.dispose();
     _districtController.dispose();
     _upazilaController.dispose();
     _unionNameController.dispose();
@@ -78,8 +89,20 @@ class _SignUpScreenState extends State<SignUpScreen> {
       return false;
     }
 
-    if (_wardNoController.text.isEmpty ||
-        _divisionController.text.isEmpty ||
+    // Validate ward number is a numeric value
+    final wardText = _wardNoController.text.trim();
+    final wardDigits = wardText.replaceAll(RegExp(r'[০১২৩৪৫৬৭৮৯]'), (m) {
+      const map = {'০':'0','১':'1','২':'2','৩':'3','৪':'4','৫':'5','৬':'6','৭':'7','৮':'8','৯':'9'};
+      return map[m] ?? m;
+    }).replaceAll(RegExp(r'\D'), '');
+    if (wardDigits.isEmpty) {
+      setState(() {
+        _errorMessage = 'বৈধ ওয়ার্ড নম্বর প্রবেশ করুন (যেমন: ০২ বা 02)';
+      });
+      return false;
+    }
+
+    if (_selectedDivision == null ||
         _districtController.text.isEmpty ||
         _upazilaController.text.isEmpty ||
         _unionNameController.text.isEmpty) {
@@ -111,7 +134,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         email: _emailController.text.trim().toLowerCase(),
         phone: _phoneController.text.trim(),
         wardNo: _wardNoController.text.trim(),
-        division: _divisionController.text.trim(),
+        division: _selectedDivision!,
         district: _districtController.text.trim(),
         upazila: _upazilaController.text.trim(),
         unionName: _unionNameController.text.trim(),
@@ -367,8 +390,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
             TextField(
               controller: _wardNoController,
               enabled: !_isLoading,
+              keyboardType: TextInputType.number,
+              maxLength: 2,
               decoration: InputDecoration(
                 hintText: '০১',
+                hintStyle: const TextStyle(
+                  fontFamily: 'Anek Bangla',
+                  color: Color(0xFFAAAAAA),
+                ),
+                helperText: 'শুধু ওয়ার্ড নম্বর লিখুন (যেমন: ০২ বা 02)',
+                helperStyle: const TextStyle(fontFamily: 'Anek Bangla', fontSize: 11),
+                counterText: '',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6.0),
                   borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
@@ -391,11 +423,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            TextField(
-              controller: _divisionController,
-              enabled: !_isLoading,
+            DropdownButtonFormField<String>(
+              value: _selectedDivision,
+              isExpanded: true,
               decoration: InputDecoration(
-                hintText: 'ঢাকা',
+                hintText: 'বিভাগ নির্বাচন করুন',
+                hintStyle: const TextStyle(
+                  fontFamily: 'Anek Bangla',
+                  color: Color(0xFFAAAAAA),
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6.0),
                   borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
@@ -404,7 +440,20 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   borderRadius: BorderRadius.circular(6.0),
                   borderSide: const BorderSide(color: Color(0xFF1f77b4), width: 2.0),
                 ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
+              items: _kDivisions
+                  .map((div) => DropdownMenuItem<String>(
+                        value: div,
+                        child: Text(
+                          div,
+                          style: const TextStyle(fontFamily: 'Anek Bangla', fontSize: 14),
+                        ),
+                      ))
+                  .toList(),
+              onChanged: _isLoading
+                  ? null
+                  : (value) => setState(() => _selectedDivision = value),
             ),
             const SizedBox(height: 12),
 
