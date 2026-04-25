@@ -17,6 +17,10 @@ const {
   getAdminAuditDetail,
   forceCloseSession,
   applyAdminAlertAction,
+  getIotProductTargets,
+  setIotProductTargets,
+  getIotWeightAlerts,
+  acknowledgeIotWeightAlert,
 } = require("../controllers/admin.controller");
 const {
   listAuditReportRequests,
@@ -55,5 +59,13 @@ router.get("/audit/requests", listAuditReportRequests);
 router.post("/audit/requests", requestAuditReport);
 router.patch("/audit/requests/:id/review", reviewAuditReportRequest);
 router.get("/audit/requests/:id/files/:fileId", downloadAuditReportFile);
+
+// IoT product targets & weight alerts (global + per-distributor)
+router.get("/iot/product-targets", getIotProductTargets);
+router.get("/iot/product-targets/:distributorId", getIotProductTargets);
+router.put("/iot/product-targets", setIotProductTargets);
+router.put("/iot/product-targets/:distributorId", setIotProductTargets);
+router.get("/iot/weight-alerts", getIotWeightAlerts);
+router.patch("/iot/weight-alerts/:id/acknowledge", acknowledgeIotWeightAlert);
 
 module.exports = router;

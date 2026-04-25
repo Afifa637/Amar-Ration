@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -24,11 +25,10 @@ HX711 scale;
 // গ্লোবাল ভেরিয়েবল
 float target_p1 = 0.0, target_p2 = 0.0, target_p3 = 0.0; 
 int selected_product = 0; 
-float tolerance_g = 10.0; 
+float tolerance_g = 30.0; 
 float cal_factor = 1; 
-String backend_base_url = "http://10.30.4.129:5000/api";
-String backend_api_key = "amar_ration_iot_device_key_2026";
-String last_sync_message = "Never synced";
+String backend_base_url = "https://amar-ration.onrender.com/api";
+String backend_api_key = "amar_ration_iot_device_key_2026";String distributor_id = "";   // set via web UI — matches admin panel distributorIdString last_sync_message = "Never synced";
 int last_sync_http_code = -1;
 const char* DEFAULT_WIFI_SSID = "Quanta's A34";
 const char* DEFAULT_WIFI_PASSWORD = "12345678";
@@ -66,12 +66,17 @@ bool syncTargetsFromBackend() {
     return false;
   }
 
+  WiFiClientSecure client;
+  client.setInsecure(); // skip cert verification for IoT
   HTTPClient http;
   String url = backend_base_url;
   if (!url.endsWith("/")) url += "/";
   url += "iot/product-targets";
+  if (distributor_id.length() > 0) {
+    url += "?distributorId=" + distributor_id;
+  }
 
-  http.begin(url);
+  http.begin(client, url);
   http.addHeader("x-iot-api-key", backend_api_key);
   int httpCode = http.GET();
   last_sync_http_code = httpCode;
@@ -106,6 +111,28 @@ bool connectToWifi(const char* ssid, const char* password) {
   }
 
   return WiFi.status() == WL_CONNECTED;
+}
+
+void postWeightAlert(const String &product, float expectedKg, float measuredKg) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (backend_base_url.length() == 0) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = backend_base_url;
+  if (!url.endsWith("/")) url += "/";
+  url += "iot/weight-alert";
+
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-iot-api-key", backend_api_key);
+
+  String body = "{\"product\":\"" + product + "\",\"expectedKg\":" + String(expectedKg, 3)
+                + ",\"measuredKg\":" + String(measuredKg, 3) + ",\"deviceId\":\"esp32\"}";
+  int code = http.POST(body);
+  Serial.println("Weight alert POST: " + String(code));
+  http.end();
 }
 
 // ================== গ্লাসমরফিজম ওয়েব UI ==================
@@ -158,6 +185,8 @@ const char index_html[] PROGMEM = R"=====(
         <input type="text" id="ssid_manual" placeholder="e.g. My Phone Hotspot">
         <label>Password</label>
         <input type="password" id="wifi_pass" placeholder="Hotspot password">
+        <label>Distributor ID <span style="font-size:11px;color:#a0c4ff;">(from admin panel → Distribution page)</span></label>
+        <input type="text" id="distributor_id" placeholder="e.g. 6613abc123def456...">
         <button onclick="saveWifi()">Save &amp; Restart</button>
         <div id="wifi-status"></div>
     </div>
@@ -186,9 +215,12 @@ const char index_html[] PROGMEM = R"=====(
     function saveWifi() {
         var s = document.getElementById('ssid_manual').value.trim();
         var p = document.getElementById('wifi_pass').value;
+        var did = document.getElementById('distributor_id').value.trim();
         if (!s) { setStatus('Enter or select an SSID first.'); return; }
         setStatus('Saving...');
-        fetch('/save_wifi?s=' + encodeURIComponent(s) + '&p=' + encodeURIComponent(p))
+        var url = '/save_wifi?s=' + encodeURIComponent(s) + '&p=' + encodeURIComponent(p);
+        if (did) url += '&did=' + encodeURIComponent(did);
+        fetch(url)
             .then(r => r.text()).then(msg => setStatus(msg))
             .catch(() => setStatus('Save failed.'));
     }
@@ -291,6 +323,16 @@ void handleSaveWifi() {
     preferences.putString("ssid", server.arg("s"));
     preferences.putString("pass", server.arg("p"));
     preferences.end();
+    if (server.hasArg("did")) {
+      String did = server.arg("did");
+      did.trim();
+      if (did.length() > 0) {
+        distributor_id = did;
+        preferences.begin("backend_cfg", false);
+        preferences.putString("distributor_id", did);
+        preferences.end();
+      }
+    }
     server.send(200, "text/plain", "WiFi Saved! ESP is Restarting...");
     delay(1000); ESP.restart();
   }
@@ -340,15 +382,20 @@ void setup() {
   preferences.begin("backend_cfg", true);
   String stored_backend_url = preferences.getString("url", backend_base_url);
   String stored_backend_key = preferences.getString("key", backend_api_key);
+  String stored_distributor_id = preferences.getString("distributor_id", "");
   preferences.end();
 
   stored_backend_url.trim();
   stored_backend_key.trim();
+  stored_distributor_id.trim();
   if (stored_backend_url.length() > 0) {
     backend_base_url = stored_backend_url;
   }
   if (stored_backend_key.length() > 0) {
     backend_api_key = stored_backend_key;
+  }
+  if (stored_distributor_id.length() > 0) {
+    distributor_id = stored_distributor_id;
   }
 
   lcd.setCursor(0, 1); lcd.print("Connecting...   ");
@@ -395,6 +442,18 @@ void setup() {
   server.begin();
   delay(3000); lcd.clear();
 
+  // Sync product targets from backend if WiFi connected
+  if (WiFi.status() == WL_CONNECTED) {
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Syncing targets.");
+    if (syncTargetsFromBackend()) {
+      lcd.setCursor(0, 1); lcd.print("Sync OK!        ");
+    } else {
+      lcd.setCursor(0, 1); lcd.print("Sync failed     ");
+    }
+    delay(1500); lcd.clear();
+  }
+
 }
 
 
@@ -438,6 +497,10 @@ void loop() {
             delay(1500); selected_product = 0; 
         } else {
             lcd.clear(); lcd.print("Fix Weight First"); delay(1500);
+            // Send mismatch alert to backend
+            String pStr = (btn_pressed == 1) ? "P1" : (btn_pressed == 2) ? "P2" : "P3";
+            float tKg = (btn_pressed == 1) ? target_p1 : (btn_pressed == 2) ? target_p2 : target_p3;
+            postWeightAlert(pStr, tKg, currentWeightKg);
         }
     } else {
         selected_product = btn_pressed; 

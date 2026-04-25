@@ -4,6 +4,7 @@ const Token = require("../models/Token");
 const DistributionRecord = require("../models/DistributionRecord");
 const DistributionSession = require("../models/DistributionSession");
 const SystemSetting = require("../models/SystemSetting");
+const IotWeightAlert = require("../models/IotWeightAlert");
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const { stockOut } = require("../services/stock.service");
@@ -399,4 +400,64 @@ module.exports = {
   handleWeightReading,
   getWeightThreshold,
   getPendingToken,
+  getProductTargets,
+  receiveWeightAlert,
 };
+
+// GET /api/iot/product-targets?distributorId=xxx
+async function getProductTargets(req, res) {
+  try {
+    const distributorId = String(req.query.distributorId || "").trim();
+    const key = distributorId ? `iot:product-targets:${distributorId}` : "iot:product-targets";
+    let setting = await SystemSetting.findOne({ key }).lean();
+    if (!setting && distributorId) {
+      setting = await SystemSetting.findOne({ key: "iot:product-targets" }).lean();
+    }
+    const targets = setting?.value || { p1Kg: 0, p2Kg: 0, p3Kg: 0, productNames: ["Rice", "Lentil", "Onion"] };
+    return res.json({ success: true, data: targets });
+  } catch (error) {
+    console.error("getProductTargets error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// POST /api/iot/weight-alert
+async function receiveWeightAlert(req, res) {
+  try {
+    const { product, expectedKg, measuredKg, deviceId } = req.body || {};
+    if (!product || expectedKg === undefined || measuredKg === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "product, expectedKg, and measuredKg are required",
+      });
+    }
+
+    const diffG = Math.round((Number(measuredKg) - Number(expectedKg)) * 1000);
+
+    const setting = await SystemSetting.findOne({ key: "iot:product-targets" }).lean();
+    const productNames = setting?.value?.productNames || ["Rice", "Lentil", "Onion"];
+    const idx = product === "P1" ? 0 : product === "P2" ? 1 : 2;
+    const productName = productNames[idx] || product;
+
+    const alert = await IotWeightAlert.create({
+      product,
+      productName,
+      expectedKg: Number(expectedKg),
+      measuredKg: Number(measuredKg),
+      diffG,
+      deviceId: String(deviceId || "esp32").trim(),
+    });
+
+    const { notifyAdmins } = require("../services/notification.service");
+    await notifyAdmins({
+      title: `IoT Weight Mismatch — ${productName} (${product})`,
+      message: `Device measured ${measuredKg}kg, expected ${expectedKg}kg (diff: ${diffG > 0 ? "+" : ""}${diffG}g). Device: ${deviceId || "esp32"}.`,
+      meta: { alertId: String(alert._id), product, productName, expectedKg, measuredKg, diffG },
+    });
+
+    return res.json({ success: true, message: "Alert recorded" });
+  } catch (error) {
+    console.error("receiveWeightAlert error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}

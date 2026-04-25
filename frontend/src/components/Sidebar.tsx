@@ -188,6 +188,16 @@ export default function Sidebar() {
         </NavLink>
 
         <NavLink
+          to="/field-applications"
+          className={({ isActive }) =>
+            `${navItem} ${isActive ? activeItem : ""}`
+          }
+        >
+          <span>👷</span>
+          <span>ফিল্ড আবেদন</span>
+        </NavLink>
+
+        <NavLink
           to="/appeals"
           className={({ isActive }) =>
             `${navItem} ${isActive ? activeItem : ""}`
