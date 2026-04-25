@@ -195,8 +195,32 @@ class ApiService {
     );
   }
 
-  static Future<void> logout() async {
-    try {
+  // ─── Consumer preview (read-only, no token issued) ───────────────────────
+
+  static Future<Map<String, dynamic>> consumerPreview(String qrPayload) async {
+    final encoded = Uri.encodeQueryComponent(qrPayload);
+    final response = await _authorizedRequest(
+      (token) => http.get(
+        Uri.parse('$baseUrl/field/consumer-preview?qrPayload=$encoded'),
+        headers: {..._jsonHeaders, 'Authorization': 'Bearer $token'},
+      ),
+    );
+
+    final json = _decodeJson(response);
+
+    if (response.statusCode == 200 && json['success'] == true) {
+      return json['data'] as Map<String, dynamic>;
+    }
+
+    final code = json['code'] as String? ?? '';
+    throw ApiException(
+      statusCode: response.statusCode,
+      message: json['message'] as String? ?? 'তথ্য লোড ব্যর্থ',
+      code: code,
+    );
+  }
+
+  static Future<void> logout() async {    try {
       final token = await _getAccessToken();
       if (token != null) {
         await http.post(

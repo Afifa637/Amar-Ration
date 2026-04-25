@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'services/scan_history_service.dart';
 
 class ScanHistoryScreen extends StatefulWidget {
   const ScanHistoryScreen({Key? key}) : super(key: key);
@@ -11,71 +12,24 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
   String _selectedFilter = 'Today'; // Today, Week, All
   String _searchQuery = '';
   late TextEditingController _searchController;
-
-  // Mock data for scans
-  final List<Map<String, dynamic>> allScans = [
-    {
-      'consumerName': 'রহিম আহমেদ',
-      'phone': '01712345678',
-      'status': 'সফল',
-      'timestamp': '২৮ মার্চ, ১০:৩০ এএম',
-      'date': DateTime.now(),
-    },
-    {
-      'consumerName': 'ফাতিমা বেগম',
-      'phone': '01987654321',
-      'status': 'সফল',
-      'timestamp': '२८ মার্চ, ১০:১৫ এএম',
-      'date': DateTime.now(),
-    },
-    {
-      'consumerName': 'করিম হাসান',
-      'phone': '01654321098',
-      'status': 'অযোগ্য',
-      'timestamp': '२८ মার্চ, ०९:४५ এএম',
-      'date': DateTime.now(),
-    },
-    {
-      'consumerName': 'সালমা খাতুন',
-      'phone': '01567890123',
-      'status': 'সফল',
-      'timestamp': '२८ মার্চ, ००:३०  এএম',
-      'date': DateTime.now(),
-    },
-    {
-      'consumerName': 'আবুল কাশেম',
-      'phone': '01789012345',
-      'status': 'সফল',
-      'timestamp': '२८ মার্চ, ००:१५ এএম',
-      'date': DateTime.now(),
-    },
-    {
-      'consumerName': 'নাজমা আক্তার',
-      'phone': '01234567890',
-      'status': 'অযোগ্য',
-      'timestamp': '२७ মার্চ, ०४:०० পিএম',
-      'date': DateTime.now().subtract(const Duration(days: 1)),
-    },
-    {
-      'consumerName': 'হাসিনা খাতুন',
-      'phone': '01345678901',
-      'status': 'সফল',
-      'timestamp': '२७ मार्च, १०:३० ए एम',
-      'date': DateTime.now().subtract(const Duration(days: 1)),
-    },
-    {
-      'consumerName': 'রুহুল আমিন',
-      'phone': '01456789012',
-      'status': 'সফল',
-      'timestamp': '२६ मार्च, ०३:००पीएम',
-      'date': DateTime.now().subtract(const Duration(days: 2)),
-    },
-  ];
+  List<Map<String, dynamic>> allScans = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final history = await ScanHistoryService.loadHistory();
+    if (mounted) {
+      setState(() {
+        allScans = history;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -85,30 +39,27 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
   }
 
   List<Map<String, dynamic>> _getFilteredScans() {
-    List<Map<String, dynamic>> filtered = allScans;
-
-    // Apply date filter
-    if (_selectedFilter == 'Today') {
-      final today = DateTime.now();
-      filtered = filtered
-          .where((scan) =>
-              (scan['date'] as DateTime).day == today.day &&
-              (scan['date'] as DateTime).month == today.month &&
-              (scan['date'] as DateTime).year == today.year)
-          .toList();
-    } else if (_selectedFilter == 'Week') {
-      final lastWeek = DateTime.now().subtract(const Duration(days: 7));
-      filtered = filtered
-          .where((scan) => (scan['date'] as DateTime).isAfter(lastWeek))
-          .toList();
-    }
+    List<Map<String, dynamic>> filtered = allScans.where((scan) {
+      final ts = scan['timestamp'] as String? ?? '';
+      final dt = DateTime.tryParse(ts)?.toLocal();
+      if (dt == null) return _selectedFilter == 'All';
+      final now = DateTime.now();
+      if (_selectedFilter == 'Today') {
+        return dt.year == now.year && dt.month == now.month && dt.day == now.day;
+      } else if (_selectedFilter == 'Week') {
+        return dt.isAfter(now.subtract(const Duration(days: 7)));
+      }
+      return true;
+    }).toList();
 
     // Apply search filter
     if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
       filtered = filtered
-          .where((scan) => (scan['consumerName'] as String)
-              .toLowerCase()
-              .contains(_searchQuery.toLowerCase()))
+          .where((scan) =>
+              (scan['consumerCode'] as String? ?? '')
+                  .toLowerCase()
+                  .contains(q))
           .toList();
     }
 
@@ -138,6 +89,42 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
             Navigator.pop(context);
           },
         ),
+        actions: [
+          if (allScans.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep, color: Colors.white),
+              tooltip: 'সব মুছুন',
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('ইতিহাস মুছুন',
+                        style: TextStyle(fontFamily: 'Anek Bangla')),
+                    content: const Text('সব স্কেন ইতিহাস মুছে ফেলা হবে।',
+                        style: TextStyle(fontFamily: 'Anek Bangla')),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('বাতিল',
+                            style: TextStyle(fontFamily: 'Anek Bangla')),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('মুছুন',
+                            style: TextStyle(
+                                fontFamily: 'Anek Bangla',
+                                color: Color(0xFFdc3545))),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await ScanHistoryService.clearHistory();
+                  _loadHistory();
+                }
+              },
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -152,7 +139,7 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                 });
               },
               decoration: InputDecoration(
-                hintText: 'গ্রাহক নাম খুঁজুন',
+                hintText: 'গ্রাহক কোড খুঁজুন',
                 hintStyle: const TextStyle(
                   fontFamily: 'Anek Bangla',
                   color: Color(0xFFAAAAAA),
@@ -201,7 +188,9 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
 
           // Scan History List
           Expanded(
-            child: filteredScans.isEmpty
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : filteredScans.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -224,19 +213,43 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                     itemCount: filteredScans.length,
                     itemBuilder: (context, index) {
                       final scan = filteredScans[index];
-                      final isSuccess = scan['status'] == 'সফল';
+                      final status = scan['status'] as String? ?? 'অচেনা';
+                      final isSuccess = status == 'সফল';
+                      final isExpired = status == 'মেয়াদোত্তীর্ণ';
+                      final statusColor = isSuccess
+                          ? const Color(0xFF28a745)
+                          : isExpired
+                              ? const Color(0xFFFF9800)
+                              : const Color(0xFFdc3545);
+                      final bgColor = isSuccess
+                          ? const Color(0xFFF0F8F0)
+                          : isExpired
+                              ? const Color(0xFFFFF8F0)
+                              : const Color(0xFFFFF0F0);
+                      final borderColor = isSuccess
+                          ? const Color(0xFFE8F5E9)
+                          : isExpired
+                              ? const Color(0xFFFFE0B2)
+                              : const Color(0xFFFFEBEE);
+                      final statusIcon = isSuccess
+                          ? Icons.check_circle
+                          : isExpired
+                              ? Icons.warning_amber_rounded
+                              : Icons.cancel;
+                      final consumerCode =
+                          scan['consumerCode'] as String? ?? '-';
+                      final ward = scan['ward'] as String? ?? '-';
+                      final category = scan['category'] as String? ?? '-';
+                      final ts = scan['timestamp'] as String? ?? '';
+                      final formattedTime =
+                          ScanHistoryService.formatTimestamp(ts);
 
                       return Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          border: Border.all(
-                            color: isSuccess
-                                ? const Color(0xFFE8F5E9)
-                                : const Color(0xFFFFEBEE),
-                            width: 1.5,
-                          ),
+                          border: Border.all(color: borderColor, width: 1.5),
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: [
                             BoxShadow(
@@ -254,16 +267,12 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                               height: 44,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: isSuccess
-                                    ? const Color(0xFFF0F8F0)
-                                    : const Color(0xFFFFF0F0),
+                                color: bgColor,
                               ),
                               child: Center(
                                 child: Icon(
-                                  isSuccess ? Icons.check_circle : Icons.cancel,
-                                  color: isSuccess
-                                      ? const Color(0xFF28a745)
-                                      : const Color(0xFFdc3545),
+                                  statusIcon,
+                                  color: statusColor,
                                   size: 24,
                                 ),
                               ),
@@ -276,7 +285,9 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    scan['consumerName'],
+                                    consumerCode == '-'
+                                        ? 'অচেনা QR'
+                                        : consumerCode,
                                     style: const TextStyle(
                                       fontFamily: 'Anek Bangla',
                                       fontSize: 14,
@@ -284,18 +295,20 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                                       color: Color(0xFF333333),
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    scan['phone'],
-                                    style: const TextStyle(
-                                      fontFamily: 'Anek Bangla',
-                                      fontSize: 12,
-                                      color: Color(0xFF999999),
+                                  if (consumerCode != '-') ...[  
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'ওয়ার্ড: $ward · ক্যাটাগরি: $category',
+                                      style: const TextStyle(
+                                        fontFamily: 'Anek Bangla',
+                                        fontSize: 12,
+                                        color: Color(0xFF999999),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                   const SizedBox(height: 4),
                                   Text(
-                                    scan['timestamp'],
+                                    formattedTime,
                                     style: const TextStyle(
                                       fontFamily: 'Anek Bangla',
                                       fontSize: 11,
@@ -313,20 +326,16 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: isSuccess
-                                    ? const Color(0xFFF0F8F0)
-                                    : const Color(0xFFFFF0F0),
+                                color: bgColor,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                scan['status'],
+                                status,
                                 style: TextStyle(
                                   fontFamily: 'Anek Bangla',
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
-                                  color: isSuccess
-                                      ? const Color(0xFF28a745)
-                                      : const Color(0xFFdc3545),
+                                  color: statusColor,
                                 ),
                               ),
                             ),

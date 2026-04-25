@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
 import 'qr_scanner_screen.dart';
 import 'scan_history_screen.dart';
+import 'services/scan_history_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -29,45 +30,36 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       distributorName = prefs.getString('user_name') ?? 'ব্যবহারকারী';
-      todayScans = prefs.getInt('today_scans') ?? 0;
-      eligibleCount = prefs.getInt('eligible_count') ?? 0;
-      ineligibleCount = prefs.getInt('ineligible_count') ?? 0;
     });
-    // In a real app, fetch recent scans from backend or local storage
     _loadRecentScans();
   }
 
   Future<void> _loadRecentScans() async {
-    // Mock data for recent scans
-    setState(() {
-      recentScans = [
-        {
-          'consumerName': 'রহিম আহমেদ',
-          'status': 'সফল',
-          'timestamp': '১০:৩০ এএম',
-        },
-        {
-          'consumerName': 'ফাতিমা বেগম',
-          'status': 'সফল',
-          'timestamp': '১০:১৫ এএম',
-        },
-        {
-          'consumerName': 'করিম হাসান',
-          'status': 'অযোগ্য',
-          'timestamp': '০৯:৪৫ এএম',
-        },
-        {
-          'consumerName': 'সালমা খাতুন',
-          'status': 'সফল',
-          'timestamp': '০৯:৩০ এএম',
-        },
-        {
-          'consumerName': 'আবুল কাশেম',
-          'status': 'সফল',
-          'timestamp': '০৯:১৫ এএম',
-        },
-      ];
-    });
+    final history = await ScanHistoryService.loadHistory();
+    final now = DateTime.now();
+    final todayRecords = history.where((s) {
+      final dt = DateTime.tryParse(s['timestamp'] as String? ?? '')?.toLocal();
+      return dt != null &&
+          dt.year == now.year &&
+          dt.month == now.month &&
+          dt.day == now.day;
+    }).toList();
+
+    if (mounted) {
+      setState(() {
+        todayScans = todayRecords.length;
+        eligibleCount =
+            todayRecords.where((s) => s['status'] == 'সফল').length;
+        ineligibleCount =
+            todayRecords.where((s) => s['status'] != 'সফল').length;
+        recentScans = history.take(5).map((s) => {
+              'consumerCode': s['consumerCode'] as String? ?? '-',
+              'status': s['status'] as String? ?? 'অচেনা',
+              'timestamp': ScanHistoryService.formatTimestamp(
+                  s['timestamp'] as String? ?? ''),
+            }).toList();
+      });
+    }
   }
 
   @override
@@ -147,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       MaterialPageRoute(
                         builder: (context) => const QRScannerScreen(),
                       ),
-                    );
+                    ).then((_) => _loadRecentScans());
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF28a745),
@@ -314,7 +306,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    scan['consumerName'],
+                                    scan['consumerCode'] as String? ?? '-',
                                     style: const TextStyle(
                                       fontFamily: 'Anek Bangla',
                                       fontSize: 14,
@@ -392,13 +384,13 @@ class _HomeScreenState extends State<HomeScreen> {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const QRScannerScreen()),
-            );
+            ).then((_) => _loadRecentScans());
           } else if (index == 2) {
             // Navigate to Scan History
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const ScanHistoryScreen()),
-            );
+            ).then((_) => _loadRecentScans());
           } else if (index == 3) {
             // Navigate to Profile Screen
             Navigator.push(
