@@ -2166,6 +2166,97 @@ async function closeDistributionSession(req, res) {
   }
 }
 
+/**
+ * GET /api/field/consumer-preview?qrPayload=...
+ * Returns consumer info, card status, QR status, and active session
+ * availability WITHOUT issuing any token. Used by Flutter app to show
+ * a clean preview after scanning.
+ */
+async function consumerPreview(req, res) {
+  try {
+    const qrPayload = String(req.query.qrPayload || "").trim();
+    if (!qrPayload) {
+      return res.status(400).json({ success: false, message: "qrPayload required" });
+    }
+
+    const { consumer, qr, card, reason } = await resolveConsumerFromInput(qrPayload);
+
+    if (!consumer) {
+      const msgMap = {
+        INVALID_AR_QR: "অবৈধ QR ফরম্যাট",
+        QR_EXPIRED_BY_DATE: "QR এর মেয়াদ শেষ",
+        QR_FIELD_MISMATCH: "QR তথ্য মিলছে না",
+        QR_NOT_CURRENT: "QR সর্বশেষ আপডেট নয়",
+      };
+      return res.status(404).json({
+        success: false,
+        message: msgMap[reason] || "গ্রাহক পাওয়া যায়নি",
+        code: reason || "NOT_FOUND",
+      });
+    }
+
+    // Check if there is an active/planned session for this field user's distributor
+    const distributor = await ensureDistributorProfile(req.user);
+    let sessionStatus = "none"; // "none" | "planned" | "open"
+    if (distributor) {
+      const activeSession = await DistributionSession.findOne({
+        distributorId: distributor._id,
+        status: { $in: ["Planned", "Open"] },
+      })
+        .select("status dateKey")
+        .lean();
+      if (activeSession) {
+        sessionStatus = activeSession.status === "Open" ? "open" : "planned";
+      }
+    }
+
+    // Check if token already issued for today
+    let alreadyIssued = false;
+    if (distributor) {
+      const today = todayKey();
+      const existing = await Token.findOne({
+        consumerId: consumer._id,
+        distributorId: distributor._id,
+        sessionDateKey: today,
+      })
+        .select("_id tokenCode")
+        .lean();
+      alreadyIssued = !!existing;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        consumer: {
+          name: consumer.name,
+          consumerCode: consumer.consumerCode,
+          division: consumer.division || "",
+          ward: consumer.ward || "",
+          unionName: consumer.unionName || "",
+          upazila: consumer.upazila || "",
+          status: consumer.status,
+          category: consumer.category,
+          blacklistStatus: consumer.blacklistStatus,
+        },
+        card: {
+          cardStatus: card?.cardStatus || "Inactive",
+        },
+        qr: {
+          qrStatus: qr?.status || "Invalid",
+          validTo: qr?.validTo || null,
+        },
+        session: {
+          status: sessionStatus,
+          alreadyIssued,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("consumerPreview error:", err);
+    return res.status(500).json({ success: false, message: "সার্ভার ত্রুটি" });
+  }
+}
+
 module.exports = {
   createDistributionSession,
   startDistributionSession,
@@ -2178,4 +2269,5 @@ module.exports = {
   getDistributionQuickInfo,
   listDistributionSessions,
   closeDistributionSession,
+  consumerPreview,
 };

@@ -4,6 +4,7 @@ const {
   scanAndIssueToken,
   completeDistribution,
   listDistributionSessions,
+  consumerPreview,
 } = require("../controllers/distribution.controller");
 const {
   listMyNotifications,
@@ -17,6 +18,7 @@ router.get("/session-status", (req, res, next) => {
   return listDistributionSessions(req, res, next);
 });
 
+router.get("/consumer-preview", consumerPreview);
 router.post("/scan", scanAndIssueToken);
 router.post("/confirm", completeDistribution);
 router.get("/notifications", listMyNotifications);
