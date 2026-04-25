@@ -31,6 +31,9 @@ const LiveQueuePage = lazy(() => import("./pages/distributor/LiveQueuePage"));
 const AuditLogPage = lazy(() => import("./pages/distributor/AuditLogPage"));
 const ReportsPage = lazy(() => import("./pages/distributor/ReportsPage"));
 const MonitoringPage = lazy(() => import("./pages/distributor/MonitoringPage"));
+const FieldApplicationsPage = lazy(
+  () => import("./pages/distributor/FieldApplicationsPage"),
+);
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const HelpPage = lazy(() => import("./pages/HelpPage"));
 
@@ -70,6 +73,7 @@ const AdminBulkRegisterPage = lazy(
 const AdminQRRotationPage = lazy(
   () => import("./pages/admin/AdminQRRotationPage"),
 );
+const AdminIoTPage = lazy(() => import("./pages/admin/AdminIoTPage"));
 
 export default function App() {
   return (
@@ -141,6 +145,7 @@ export default function App() {
               path="/admin/stock-suggestion"
               element={<AdminStockSuggestionPage />}
             />
+            <Route path="/admin/iot" element={<AdminIoTPage />} />
           </Route>
 
           <Route
@@ -158,6 +163,7 @@ export default function App() {
             <Route path="/audit" element={<AuditLogPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/monitoring" element={<MonitoringPage />} />
+            <Route path="/field-applications" element={<FieldApplicationsPage />} />
             <Route path="/appeals" element={<AppealSubmitPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/help" element={<HelpPage />} />

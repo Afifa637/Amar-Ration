@@ -958,7 +958,8 @@ exports.signup = async (req, res) => {
     const normalizedPhone = phone ? String(phone).trim() : null;
 
     // Validation
-    if (!userType || !name || !password) {
+    // FieldUser (field distributor applicant) does not provide a password — they receive one via email after approval
+    if (!userType || !name || (!password && userType !== "FieldUser")) {
       return res.status(400).json({
         success: false,
         message: "UserType, name, and password are required",
@@ -981,11 +982,12 @@ exports.signup = async (req, res) => {
       });
     }
 
-    if (userType === "Distributor" || userType === "FieldUser") {
+    // Distributor accounts are created by central admin only
+    if (userType === "Distributor") {
       return res.status(403).json({
         success: false,
         message:
-          "Distributor self-signup is disabled. Use admin-assigned email and password.",
+          "Distributor accounts are created by the central admin. Contact your administrator.",
       });
     }
 
@@ -1021,6 +1023,20 @@ exports.signup = async (req, res) => {
         additionalFields.wardNo || additionalFields.ward,
       );
 
+      // If the caller only sent wardNo (no separate ward label), derive the ward
+      // display value from the normalised numeric ward number, e.g. "03" → "ওয়ার্ড ০৩"
+      function deriveWardLabel(wardNoNormalized) {
+        if (!wardNoNormalized) return "";
+        const num = parseInt(wardNoNormalized, 10);
+        const bnDigits = { 0:"০",1:"১",2:"২",3:"৩",4:"৪",5:"৫",6:"৬",7:"৭",8:"৮",9:"৯" };
+        const bnNum = String(num).split("").map(d => bnDigits[d] || d).join("");
+        return `ওয়ার্ড ${bnNum}`;
+      }
+
+      const wardLabel = additionalFields.ward
+        ? String(additionalFields.ward).trim()
+        : deriveWardLabel(normalizedWard);
+
       const fieldUserData = {
         userType: "FieldUser",
         name,
@@ -1034,7 +1050,7 @@ exports.signup = async (req, res) => {
         district: additionalFields.district,
         upazila: additionalFields.upazila,
         unionName: additionalFields.unionName,
-        ward: normalizedWard || additionalFields.ward,
+        ward: wardLabel || normalizedWard || additionalFields.ward,
       };
 
       const fieldUser = await User.create(fieldUserData);

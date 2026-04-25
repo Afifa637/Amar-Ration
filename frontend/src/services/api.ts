@@ -2701,3 +2701,113 @@ export async function getSessionQueueEntries(sessionId: string, page = 1, limit 
 }
 
 export default api;
+
+// ==================== IoT Admin ====================
+export type IotProductTargets = {
+  p1Kg: number;
+  p2Kg: number;
+  p3Kg: number;
+  productNames: [string, string, string];
+};
+
+export type IotWeightAlert = {
+  _id: string;
+  product: "P1" | "P2" | "P3";
+  productName: string;
+  expectedKg: number;
+  measuredKg: number;
+  diffG: number;
+  deviceId: string;
+  acknowledged: boolean;
+  createdAt: string;
+};
+
+export async function getIotProductTargets(distributorId?: string): Promise<IotProductTargets> {
+  const url = distributorId
+    ? `/admin/iot/product-targets/${encodeURIComponent(distributorId)}`
+    : "/admin/iot/product-targets";
+  const response = await api.get<{ data: IotProductTargets }>(url);
+  return response.data.data;
+}
+
+export async function setIotProductTargets(
+  payload: {
+    p1Kg: number;
+    p2Kg: number;
+    p3Kg: number;
+    productNames: [string, string, string];
+  },
+  distributorId?: string,
+): Promise<IotProductTargets> {
+  const url = distributorId
+    ? `/admin/iot/product-targets/${encodeURIComponent(distributorId)}`
+    : "/admin/iot/product-targets";
+  const response = await api.put<{ data: IotProductTargets }>(url, payload);
+  return response.data.data;
+}
+
+export async function getIotWeightAlerts(params?: {
+  limit?: number;
+  unacknowledged?: boolean;
+}): Promise<IotWeightAlert[]> {
+  const response = await api.get<{ data: IotWeightAlert[] }>("/admin/iot/weight-alerts", { params });
+  return response.data.data;
+}
+
+export async function acknowledgeIotWeightAlert(id: string): Promise<IotWeightAlert> {
+  const response = await api.patch<{ data: IotWeightAlert }>(`/admin/iot/weight-alerts/${id}/acknowledge`);
+  return response.data.data;
+}
+
+// ─── Field Distributor Applications ─────────────────────────────────────────
+
+export type FieldApplication = {
+  _id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  wardNo: string | null;
+  division: string | null;
+  district: string | null;
+  upazila: string | null;
+  unionName: string | null;
+  ward: string | null;
+  authorityStatus: "Pending" | "Active" | "Revoked" | "Suspended";
+  status: "Active" | "Inactive" | "Suspended";
+  createdAt: string;
+  mustChangePassword?: boolean;
+};
+
+export type FieldApplicationsResponse = {
+  applications: FieldApplication[];
+  pagination: { page: number; limit: number; total: number; pages: number };
+};
+
+export async function getFieldApplications(params?: {
+  status?: "Pending" | "Active" | "Revoked";
+  page?: number;
+  limit?: number;
+}): Promise<FieldApplicationsResponse> {
+  const response = await api.get<{ success: boolean; data: FieldApplicationsResponse }>(
+    "/distributor/field-applications",
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function approveFieldApplication(userId: string): Promise<{
+  userId: string;
+  name: string;
+  email: string | null;
+  emailSent: boolean;
+}> {
+  const response = await api.post<{
+    success: boolean;
+    data: { userId: string; name: string; email: string | null; emailSent: boolean };
+  }>(`/distributor/field-applications/${userId}/approve`);
+  return response.data.data;
+}
+
+export async function rejectFieldApplication(userId: string, reason?: string): Promise<void> {
+  await api.post(`/distributor/field-applications/${userId}/reject`, { reason: reason || "" });
+}

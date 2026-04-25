@@ -13,6 +13,7 @@ const OfflineQueue = require("../models/OfflineQueue");
 const AuditLog = require("../models/AuditLog");
 const BlacklistEntry = require("../models/BlacklistEntry");
 const AuditReportRequest = require("../models/AuditReportRequest");
+const SystemSetting = require("../models/SystemSetting");
 const { decryptNid } = require("../services/nid-security.service");
 const { writeAudit } = require("../services/audit.service");
 const {
@@ -2432,4 +2433,78 @@ module.exports = {
   getAdminAuditDetail,
   forceCloseSession,
   applyAdminAlertAction,
+  getIotProductTargets,
+  setIotProductTargets,
+  getIotWeightAlerts,
+  acknowledgeIotWeightAlert,
 };
+
+const IotWeightAlert = require("../models/IotWeightAlert");
+
+async function getIotProductTargets(req, res) {
+  try {
+    const distributorId = String(req.params.distributorId || "").trim();
+    const key = distributorId ? `iot:product-targets:${distributorId}` : "iot:product-targets";
+    let setting = await SystemSetting.findOne({ key }).lean();
+    if (!setting && distributorId) {
+      setting = await SystemSetting.findOne({ key: "iot:product-targets" }).lean();
+    }
+    const data = setting?.value || { p1Kg: 0, p2Kg: 0, p3Kg: 0, productNames: ["চাল", "ডাল", "পেঁয়াজ"] };
+    return res.json({ success: true, data });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function setIotProductTargets(req, res) {
+  try {
+    const distributorId = String(req.params.distributorId || "").trim();
+    const { p1Kg, p2Kg, p3Kg, productNames } = req.body || {};
+    if (p1Kg === undefined || p2Kg === undefined || p3Kg === undefined) {
+      return res.status(400).json({ success: false, message: "p1Kg, p2Kg, p3Kg are required" });
+    }
+    const value = {
+      p1Kg: Math.max(0, Number(p1Kg)),
+      p2Kg: Math.max(0, Number(p2Kg)),
+      p3Kg: Math.max(0, Number(p3Kg)),
+      productNames: Array.isArray(productNames) && productNames.length === 3
+        ? productNames.map(String)
+        : ["চাল", "ডাল", "পেঁয়াজ"],
+    };
+    const key = distributorId ? `iot:product-targets:${distributorId}` : "iot:product-targets";
+    await SystemSetting.findOneAndUpdate(
+      { key },
+      { $set: { value } },
+      { upsert: true, new: true },
+    );
+    return res.json({ success: true, message: "Product targets updated", data: value });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function getIotWeightAlerts(req, res) {
+  try {
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const onlyUnack = req.query.unacknowledged === "true";
+    const filter = onlyUnack ? { acknowledged: false } : {};
+    const alerts = await IotWeightAlert.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    return res.json({ success: true, data: alerts });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function acknowledgeIotWeightAlert(req, res) {
+  try {
+    const alert = await IotWeightAlert.findByIdAndUpdate(
+      req.params.id,
+      { $set: { acknowledged: true } },
+      { new: true },
+    ).lean();
+    if (!alert) return res.status(404).json({ success: false, message: "Alert not found" });
+    return res.json({ success: true, data: alert });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}

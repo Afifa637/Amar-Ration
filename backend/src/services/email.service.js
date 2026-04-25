@@ -442,9 +442,79 @@ async function sendDistributorPasswordChangeAlertEmail({
   }
 }
 
+function buildFieldUserApprovalHtml({ name, loginEmail, password, wardNo, ward, division }) {
+  return `
+    <div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto; color: #111827;">
+      <h2 style="margin-bottom: 8px; color: #1f77b4;">আমার রেশন — ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত</h2>
+      <p style="margin-top: 0;">প্রিয় <strong>${name || "ব্যবহারকারী"}</strong>,</p>
+      <p>আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন অনুমোদিত হয়েছে। নিচের তথ্য দিয়ে আমার রেশন অ্যাপ থেকে লগইন করুন:</p>
+
+      <table style="border-collapse: collapse; width: 100%; margin: 16px 0; border: 1px solid #e5e7eb;">
+        <tr style="background: #f9fafb;">
+          <td style="border: 1px solid #e5e7eb; padding: 10px; width: 170px; font-weight: bold;">ইউজারনেম (Email)</td>
+          <td style="border: 1px solid #e5e7eb; padding: 10px; font-family: monospace; letter-spacing: 0.5px;">${loginEmail}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 10px; font-weight: bold;">পাসওয়ার্ড</td>
+          <td style="border: 1px solid #e5e7eb; padding: 10px; font-family: monospace; font-size: 18px; letter-spacing: 2px; color: #1f77b4;"><strong>${password}</strong></td>
+        </tr>
+        <tr style="background: #f9fafb;">
+          <td style="border: 1px solid #e5e7eb; padding: 10px; font-weight: bold;">বিভাগ</td>
+          <td style="border: 1px solid #e5e7eb; padding: 10px;">${division || "—"}</td>
+        </tr>
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 10px; font-weight: bold;">ওয়ার্ড</td>
+          <td style="border: 1px solid #e5e7eb; padding: 10px;">${wardNo || "—"}${ward ? ` (${ward})` : ""}</td>
+        </tr>
+      </table>
+
+      <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin: 16px 0;">
+        <strong>⚠️ গুরুত্বপূর্ণ:</strong> প্রথমবার লগইনের পর আপনাকে অবিলম্বে পাসওয়ার্ড পরিবর্তন করতে হবে।
+        এই পাসওয়ার্ড কারও সাথে শেয়ার করবেন না।
+      </div>
+
+      <p style="color: #6b7280; font-size: 12px; margin-top: 20px;">
+        এই ইমেইলটি সিস্টেম থেকে স্বয়ংক্রিয়ভাবে পাঠানো হয়েছে। উত্তর দেওয়ার প্রয়োজন নেই।
+      </p>
+    </div>
+  `;
+}
+
+async function sendFieldUserApprovalEmail({ to, name, loginEmail, password, wardNo, ward, division }) {
+  if (!isValidRecipientEmail(to)) {
+    return { sent: false, reason: "INVALID_RECIPIENT_EMAIL" };
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    const fallback = await trySendWithEtherealFallback({
+      to,
+      subject: "আমার রেশন | ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত",
+      html: buildFieldUserApprovalHtml({ name, loginEmail, password, wardNo, ward, division }),
+      text: `আমার রেশন - ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত\nইউজারনেম: ${loginEmail}\nপাসওয়ার্ড: ${password}\nবিভাগ: ${division || ""}\nওয়ার্ড: ${wardNo || ""}\nপ্রথম লগইনে পাসওয়ার্ড পরিবর্তন করুন।`,
+    });
+    if (fallback?.sent) return { sent: true, messageId: fallback.messageId, previewUrl: fallback.previewUrl || null, reason: "ETHEREAL_FALLBACK" };
+    return { sent: false, reason: "SMTP_NOT_CONFIGURED" };
+  }
+
+  const subject = "আমার রেশন | ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত";
+  const html = buildFieldUserApprovalHtml({ name, loginEmail, password, wardNo, ward, division });
+  const text = `আমার রেশন - ফিল্ড ডিস্ট্রিবিউটর অ্যাকাউন্ট অনুমোদিত\nইউজারনেম: ${loginEmail}\nপাসওয়ার্ড: ${password}\nবিভাগ: ${division || ""}\nওয়ার্ড: ${wardNo || ""}\nপ্রথম লগইনে পাসওয়ার্ড পরিবর্তন করুন।`;
+
+  try {
+    const info = await transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, html, text });
+    return { sent: true, messageId: info.messageId };
+  } catch (error) {
+    const fallback = await trySendWithEtherealFallback({ to, subject, html, text });
+    if (fallback?.sent) return { sent: true, messageId: fallback.messageId, previewUrl: fallback.previewUrl || null, reason: "SMTP_PRIMARY_FAILED_USING_ETHEREAL_FALLBACK" };
+    return { sent: false, reason: `SMTP_SEND_FAILED:${error instanceof Error ? error.message : "unknown"}` };
+  }
+}
+
 module.exports = {
   isEmailConfigured,
   sendDistributorCredentialEmail,
   sendDistributorStatusEmail,
   sendDistributorPasswordChangeAlertEmail,
+  sendFieldUserApprovalEmail,
 };

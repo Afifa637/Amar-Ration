@@ -1,3 +1,4 @@
+const bcrypt = require("bcryptjs");
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const Family = require("../models/Family");
@@ -17,6 +18,9 @@ const {
   normalizeDivision,
   buildDivisionMatchQuery,
 } = require("../utils/division.utils");
+const { notifyUser } = require("../services/notification.service");
+const { sendFieldUserApprovalEmail } = require("../services/email.service");
+const { writeAudit } = require("../services/audit.service");
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -661,6 +665,244 @@ async function getDistributorSettings(req, res) {
   }
 }
 
+// ─── Field Distributor Application Management ────────────────────────────────
+
+/**
+ * GET /api/distributor/field-applications
+ * Lists pending FieldUser applications matching the Distributor's division + ward.
+ * Supports ?status=Pending|Revoked|Active&page=1&limit=20
+ */
+async function listFieldApplications(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(403).json({ success: false, message: "ডিস্ট্রিবিউটর প্রোফাইল পাওয়া যায়নি" });
+    }
+
+    const filterStatus = String(req.query.status || "Pending");
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+
+    // Build division + ward match query
+    const query = { userType: "FieldUser" };
+
+    const divisionQuery = buildDivisionMatchQuery(distributor.division);
+    if (divisionQuery) query.division = divisionQuery;
+
+    const wardInput = distributor.wardNo || distributor.ward;
+    const wardQuery = buildWardMatchQuery(wardInput, ["wardNo"]);
+    if (wardQuery) Object.assign(query, wardQuery);
+
+    if (filterStatus === "Pending") {
+      query.authorityStatus = "Pending";
+      query.status = "Inactive";
+    } else if (filterStatus === "Revoked") {
+      query.authorityStatus = "Revoked";
+    } else if (filterStatus === "Active") {
+      query.authorityStatus = "Active";
+      query.status = "Active";
+    }
+
+    const total = await User.countDocuments(query);
+    const applications = await User.find(query)
+      .select("_id name email phone wardNo division district upazila unionName ward authorityStatus status createdAt mustChangePassword")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    return res.json({
+      success: true,
+      data: {
+        applications,
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      },
+    });
+  } catch (err) {
+    console.error("listFieldApplications error:", err);
+    return res.status(500).json({ success: false, message: "সার্ভার ত্রুটি" });
+  }
+}
+
+/**
+ * POST /api/distributor/field-applications/:userId/approve
+ * Approves a pending FieldUser: activates account, generates 6-digit password, sends approval email.
+ */
+async function approveFieldApplication(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(403).json({ success: false, message: "ডিস্ট্রিবিউটর প্রোফাইল পাওয়া যায়নি" });
+    }
+
+    const fieldUser = await User.findById(req.params.userId);
+    if (!fieldUser || fieldUser.userType !== "FieldUser") {
+      return res.status(404).json({ success: false, message: "আবেদনকারী পাওয়া যায়নি" });
+    }
+
+    // Ensure the applicant is in this distributor's division + ward
+    const divisionQuery = buildDivisionMatchQuery(distributor.division);
+    const wardQuery = buildWardMatchQuery(distributor.wardNo || distributor.ward, ["wardNo"]);
+
+    const divisionMatch = divisionQuery
+      ? divisionQuery.$in.some((r) => r.test(fieldUser.division))
+      : true;
+    const wardMatch = wardQuery
+      ? (wardQuery.$or || []).some((cond) => {
+          for (const [field, regex] of Object.entries(cond)) {
+            if (regex instanceof RegExp && regex.test(String(fieldUser[field] || ""))) return true;
+          }
+          return false;
+        })
+      : true;
+
+    if (!divisionMatch || !wardMatch) {
+      return res.status(403).json({ success: false, message: "এই আবেদনকারী আপনার ওয়ার্ডের নন" });
+    }
+
+    if (fieldUser.authorityStatus === "Active") {
+      return res.status(409).json({ success: false, message: "এই অ্যাকাউন্ট ইতিমধ্যে অনুমোদিত" });
+    }
+
+    // Generate a random 6-digit password
+    const rawPassword = String(Math.floor(100000 + Math.random() * 900000));
+    const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+    // Activate the FieldUser
+    fieldUser.passwordHash = passwordHash;
+    fieldUser.status = "Active";
+    fieldUser.authorityStatus = "Active";
+    fieldUser.authorityFrom = new Date();
+    fieldUser.mustChangePassword = true; // force password change on first login
+    await fieldUser.save();
+
+    // Send approval email with credentials
+    const emailResult = await sendFieldUserApprovalEmail({
+      to: fieldUser.email,
+      name: fieldUser.name,
+      loginEmail: fieldUser.email,
+      password: rawPassword,
+      wardNo: fieldUser.wardNo,
+      ward: fieldUser.ward,
+      division: fieldUser.division,
+    });
+
+    // Send in-app notification to the approved FieldUser
+    // If email failed (SMTP not configured), include credentials in the notification
+    // so the user can still retrieve them from the app's notification panel.
+    const notificationMessage = emailResult.sent
+      ? "আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন অনুমোদিত হয়েছে। আপনার ইমেইলে লগইন তথ্য পাঠানো হয়েছে।"
+      : `আপনার আবেদন অনুমোদিত হয়েছে। ইমেইল পাঠানো সম্ভব হয়নি। আপনার লগইন তথ্য — ইউজারনেম: ${fieldUser.email} | পাসওয়ার্ড: ${rawPassword}`;
+
+    await notifyUser(fieldUser._id, {
+      title: "আবেদন অনুমোদিত",
+      message: notificationMessage,
+      meta: {
+        type: "FieldUserApproved",
+        loginEmail: fieldUser.email,
+        // Only include password in meta if email failed (so app can surface it)
+        ...(emailResult.sent ? {} : { tempPassword: rawPassword }),
+      },
+      channels: { app: true, sms: false },
+    });
+
+    // Audit log
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Distributor",
+      action: "FIELD_USER_APPROVED",
+      entityType: "User",
+      entityId: String(fieldUser._id),
+      severity: "Info",
+      meta: {
+        fieldUserName: fieldUser.name,
+        fieldUserEmail: fieldUser.email,
+        wardNo: fieldUser.wardNo,
+        division: fieldUser.division,
+        emailSent: emailResult.sent,
+      },
+    });
+
+    console.log(`✅ FieldUser approved: ${fieldUser.email}, emailSent: ${emailResult.sent}`);
+
+    return res.json({
+      success: true,
+      message: "আবেদন অনুমোদিত হয়েছে। ইমেইলে লগইন তথ্য পাঠানো হয়েছে।",
+      data: {
+        userId: fieldUser._id,
+        name: fieldUser.name,
+        email: fieldUser.email,
+        emailSent: emailResult.sent,
+        emailPreviewUrl: emailResult.previewUrl || null,
+      },
+    });
+  } catch (err) {
+    console.error("approveFieldApplication error:", err);
+    return res.status(500).json({ success: false, message: "সার্ভার ত্রুটি" });
+  }
+}
+
+/**
+ * POST /api/distributor/field-applications/:userId/reject
+ * Rejects a pending FieldUser application.
+ * Optionally accepts { reason } in request body.
+ */
+async function rejectFieldApplication(req, res) {
+  try {
+    const distributor = await ensureDistributorProfile(req.user);
+    if (!distributor) {
+      return res.status(403).json({ success: false, message: "ডিস্ট্রিবিউটর প্রোফাইল পাওয়া যায়নি" });
+    }
+
+    const fieldUser = await User.findById(req.params.userId);
+    if (!fieldUser || fieldUser.userType !== "FieldUser") {
+      return res.status(404).json({ success: false, message: "আবেদনকারী পাওয়া যায়নি" });
+    }
+
+    if (fieldUser.authorityStatus !== "Pending") {
+      return res.status(409).json({ success: false, message: "শুধুমাত্র অপেক্ষমাণ আবেদন প্রত্যাখ্যান করা যাবে" });
+    }
+
+    const reason = String(req.body?.reason || "").trim();
+
+    fieldUser.authorityStatus = "Revoked";
+    fieldUser.status = "Inactive";
+    await fieldUser.save();
+
+    // In-app notification to the rejected applicant
+    await notifyUser(fieldUser._id, {
+      title: "আবেদন প্রত্যাখ্যাত",
+      message: reason
+        ? `আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন প্রত্যাখ্যাত হয়েছে। কারণ: ${reason}`
+        : "আপনার ফিল্ড ডিস্ট্রিবিউটর আবেদন প্রত্যাখ্যাত হয়েছে।",
+      meta: { type: "FieldUserRejected", reason },
+      channels: { app: true, sms: false },
+    });
+
+    await writeAudit({
+      actorUserId: req.user.userId,
+      actorType: "Distributor",
+      action: "FIELD_USER_REJECTED",
+      entityType: "User",
+      entityId: String(fieldUser._id),
+      severity: "Info",
+      meta: {
+        fieldUserName: fieldUser.name,
+        fieldUserEmail: fieldUser.email,
+        reason,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: "আবেদন প্রত্যাখ্যাত হয়েছে।",
+    });
+  } catch (err) {
+    console.error("rejectFieldApplication error:", err);
+    return res.status(500).json({ success: false, message: "সার্ভার ত্রুটি" });
+  }
+}
+
 module.exports = {
   getDistributorDashboard,
   getBeneficiaries,
@@ -669,4 +911,7 @@ module.exports = {
   getDistributorReports,
   getDistributorMonitoring,
   getDistributorSettings,
+  listFieldApplications,
+  approveFieldApplication,
+  rejectFieldApplication,
 };

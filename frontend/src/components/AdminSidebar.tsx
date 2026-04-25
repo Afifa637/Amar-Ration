@@ -31,6 +31,7 @@ const adminLinks = [
   { to: "/admin/stock-suggestion", icon: "📦", label: "স্টক সাজেশন" },
   { to: "/admin/audit", icon: "🛡️", label: "অডিট/ফ্রড/ব্ল্যাকলিস্ট/রিপোর্ট" },
   { to: "/admin/settings", icon: "⚙️", label: "সিস্টেম সেটিংস" },
+  { to: "/admin/iot", icon: "⚖️", label: "IoT ওজন স্কেল" },
 ];
 
 export default function AdminSidebar() {

@@ -11,6 +11,9 @@ const {
   getDistributorReports,
   getDistributorMonitoring,
   getDistributorSettings,
+  listFieldApplications,
+  approveFieldApplication,
+  rejectFieldApplication,
 } = require("../controllers/distributor.controller");
 const {
   listMyAuditReportRequests,
@@ -55,5 +58,10 @@ router.post(
   submitAuditReport,
 );
 router.get("/audit-requests/:id/files/:fileId", downloadAuditReportFile);
+
+// Field distributor application management (Distributor reviews applications from their ward)
+router.get("/field-applications", listFieldApplications);
+router.post("/field-applications/:userId/approve", approveFieldApplication);
+router.post("/field-applications/:userId/reject", rejectFieldApplication);
 
 module.exports = router;

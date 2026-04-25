@@ -7,12 +7,15 @@ import {
   getAdminDistributionMonitoring,
   getAdminSummary,
   getDistributionSessions,
+  getIotProductTargets,
   getStockSummary,
   recordStockIn,
+  setIotProductTargets,
   type AdminDistributorRow,
   type AdminMonitoringDistributorGroup,
   type AdminMonitoringSessionGroup,
   type AdminSummary,
+  type IotProductTargets,
   type StockItem,
 } from "../../services/api";
 
@@ -70,6 +73,12 @@ export default function AdminDistributionPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // IoT product targets for the scoped distributor
+  const [iotTargets, setIotTargets] = useState<IotProductTargets>({ p1Kg: 0, p2Kg: 0, p3Kg: 0, productNames: ["চাল", "ডাল", "পেঁয়াজ"] });
+  const [iotSaving, setIotSaving] = useState(false);
+  const [iotMessage, setIotMessage] = useState("");
+  const [iotError, setIotError] = useState("");
 
   const filterParams = useMemo(
     () => ({
@@ -199,6 +208,22 @@ export default function AdminDistributionPage() {
     };
     void loadStock();
   }, [selectedDistributorId]);
+
+  useEffect(() => {
+    if (!scopedDistributor?.distributorId) return;
+    const loadIotTargets = async () => {
+      try {
+        const t = await getIotProductTargets(scopedDistributor.distributorId!);
+        setIotTargets(t);
+        setIotMessage("");
+        setIotError("");
+      } catch {
+        // leave defaults
+      }
+    };
+    void loadIotTargets();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedDistributor?.distributorId]);
 
   const pausedPoints = useMemo(
     () => groups.reduce((sum, g) => sum + (g.totals.mismatchCount || 0), 0),
@@ -418,6 +443,25 @@ export default function AdminDistributionPage() {
       setError(err instanceof Error ? err.message : "এলার্ট অ্যাকশন ব্যর্থ");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onSaveIotTargets = async () => {
+    if (!scopedDistributor?.distributorId) return;
+    setIotSaving(true);
+    setIotMessage("");
+    setIotError("");
+    try {
+      const updated = await setIotProductTargets(
+        { ...iotTargets, productNames: ["চাল", "ডাল", "পেঁয়াজ"] },
+        scopedDistributor.distributorId,
+      );
+      setIotTargets(updated);
+      setIotMessage(`✅ ${scopedDistributor.name || "ডিস্ট্রিবিউটর"}-এর IoT টার্গেট সেভ হয়েছে। ডিভাইস পরবর্তী বুটে নতুন মান নেবে।`);
+    } catch {
+      setIotError("IoT টার্গেট সেভ করতে সমস্যা হয়েছে।");
+    } finally {
+      setIotSaving(false);
     }
   };
 
@@ -797,6 +841,68 @@ export default function AdminDistributionPage() {
           )}
         </div>
       </SectionCard>
+
+      {scopedDistributor && (
+        <SectionCard
+          title={`IoT ওজন স্কেল — ${scopedDistributor.name || "ডিস্ট্রিবিউটর"} (${scopedDistributor.division || stockDivision} ওয়ার্ড ${scopedDistributor.ward || scopedDistributor.wardNo || stockWard})`}
+        >
+          <p className="text-[12px] text-[#6b7280] mb-3">
+            নিচের মান সেভ করলে এই ডিস্ট্রিবিউশন পয়েন্টের IoT ডিভাইস পরবর্তী বুটে নতুন টার্গেট নেবে।
+            ±৩০ গ্রামের বেশি পার্থক্য হলে অ্যালার্ট পাঠাবে।
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {(
+              [
+                ["P1", "🌾", "চাল", "p1Kg"],
+                ["P2", "🫘", "ডাল", "p2Kg"],
+                ["P3", "🧅", "পেঁয়াজ", "p3Kg"],
+              ] as Array<[string, string, string, keyof IotProductTargets]>
+            ).map(([slot, icon, item, field]) => (
+              <div
+                key={slot}
+                className="rounded-xl border border-[#d7dde6] bg-[#f8fbff] p-4"
+              >
+                <div className="text-[13px] font-semibold mb-2 text-[#334155]">
+                  {slot} — {icon} {item}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={iotTargets[field] as number}
+                  onChange={(e) =>
+                    setIotTargets((prev) => ({
+                      ...prev,
+                      [field]: Math.max(0, Number(e.target.value)),
+                    }))
+                  }
+                  className="w-full border border-[#cfd6e0] rounded px-3 py-2 text-[14px]"
+                  placeholder={`টার্গেট ওজন (kg)`}
+                />
+                <div className="mt-1 text-[11px] text-[#9ca3af]">
+                  ০.১ কেজি ধাপে মান দিন
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void onSaveIotTargets()}
+              disabled={iotSaving}
+              className="px-4 py-2 rounded bg-[#0f766e] text-white text-[13px] hover:bg-[#0d6460] disabled:opacity-50"
+            >
+              {iotSaving ? "সেভ হচ্ছে..." : "IoT টার্গেট সেভ"}
+            </button>
+            {iotMessage && (
+              <span className="text-[12px] text-green-700">{iotMessage}</span>
+            )}
+            {iotError && (
+              <span className="text-[12px] text-red-600">{iotError}</span>
+            )}
+          </div>
+        </SectionCard>
+      )}
 
       <SectionCard title="আইওটি ওজন + স্টক মনিটরিং (ডিস্ট্রিবিউটর-গ্রুপড)">
         <div className="space-y-3">
