@@ -14,7 +14,8 @@ class ApiService {
 
   static Future<String?> _getAccessToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('access_token');
+    // 'access_token' is set by _saveTokens; fall back to legacy 'amar_ration_auth'
+    return prefs.getString('access_token') ?? prefs.getString('amar_ration_auth');
   }
 
   static Future<String?> _getRefreshToken() async {
@@ -113,10 +114,10 @@ class ApiService {
 
     if (response.statusCode == 200 && json['success'] == true) {
       final data = json['data'] as Map<String, dynamic>? ?? {};
-      final accessToken = data['accessToken'] as String?;
+      final accessToken = data['token'] as String?;   // backend returns 'token', not 'accessToken'
       final refreshToken = data['refreshToken'] as String?;
-      if (accessToken != null && refreshToken != null) {
-        await _saveTokens(accessToken, refreshToken);
+      if (accessToken != null) {
+        await _saveTokens(accessToken, refreshToken ?? '');
         final prefs = await SharedPreferences.getInstance();
         final user = data['user'] as Map<String, dynamic>? ?? {};
         if (user['_id'] != null) await prefs.setString('user_id', user['_id']);
