@@ -209,22 +209,6 @@ export default function AdminDistributionPage() {
     void loadStock();
   }, [selectedDistributorId]);
 
-  useEffect(() => {
-    if (!scopedDistributor?.distributorId) return;
-    const loadIotTargets = async () => {
-      try {
-        const t = await getIotProductTargets(scopedDistributor.distributorId!);
-        setIotTargets(t);
-        setIotMessage("");
-        setIotError("");
-      } catch {
-        // leave defaults
-      }
-    };
-    void loadIotTargets();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedDistributor?.distributorId]);
-
   const pausedPoints = useMemo(
     () => groups.reduce((sum, g) => sum + (g.totals.mismatchCount || 0), 0),
     [groups],
@@ -274,6 +258,22 @@ export default function AdminDistributionPage() {
       ) || null,
     [distributors, stockDivision, stockWard],
   );
+
+  useEffect(() => {
+    if (!scopedDistributor?.distributorId) return;
+    const loadIotTargets = async () => {
+      try {
+        const t = await getIotProductTargets(scopedDistributor.distributorId!);
+        setIotTargets(t);
+        setIotMessage("");
+        setIotError("");
+      } catch {
+        // leave defaults
+      }
+    };
+    void loadIotTargets();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedDistributor?.distributorId]);
 
   const scopedGroup = useMemo(
     () =>

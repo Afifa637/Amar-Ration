@@ -119,6 +119,19 @@ async function ensureDistributorProfile(reqUser) {
     return null;
   }
 
+  // FieldUsers are not distributors themselves — find the real distributor
+  // for their ward+division so their session lookup works correctly.
+  if (user.userType === "FieldUser") {
+    const ward = normalizeWardNo(user.wardNo || user.ward);
+    const division = normalizeDivision(user.division);
+    if (ward && division) {
+      distributor = await Distributor.findOne({ division, wardNo: ward });
+      if (distributor) return distributor;
+    }
+    return null;
+  }
+
+  // Distributor users: auto-create profile if missing
   distributor = await Distributor.create({
     userId: user._id,
     wardNo: normalizeWardNo(user.wardNo || user.ward),
@@ -2195,34 +2208,123 @@ async function consumerPreview(req, res) {
       });
     }
 
-    // Check if there is an active/planned session for this field user's distributor
-    const distributor = await ensureDistributorProfile(req.user);
+    // Resolve session status: find any Open/Planned session whose distributor
+    // covers the consumer's ward+division. Uses multiple fallback strategies.
     let sessionStatus = "none"; // "none" | "planned" | "open"
-    if (distributor) {
+    let distributorForSession = null;
+    let strategyUsed = "none";
+
+    const cWard = normalizeWardNo(consumer.ward || "");
+    const cDivision = normalizeDivision(consumer.division || "");
+
+    console.log(`[consumerPreview] consumer=${consumer.consumerCode} ward_raw="${consumer.ward}" div_raw="${consumer.division}" cWard="${cWard}" cDivision="${cDivision}"`);
+
+    // Strategy 1: direct normalized string match (most reliable — data is
+    // normalized at save time by pre-save hooks)
+    if (cWard && cDivision) {
+      distributorForSession = await Distributor.findOne({
+        $or: [
+          { division: cDivision, wardNo: cWard },
+          { division: cDivision, ward: cWard },
+        ],
+      })
+        .select("_id wardNo ward division")
+        .lean();
+      if (distributorForSession) strategyUsed = "1-exact";
+    }
+
+    // Strategy 2: regex alias match (handles Bangla/English stored variants)
+    if (!distributorForSession && cWard && cDivision) {
+      const wardQuery = buildWardMatchQuery(cWard, ["wardNo", "ward"]);
+      const divisionQuery = buildDivisionMatchQuery(cDivision);
+      if (wardQuery && divisionQuery) {
+        distributorForSession = await Distributor.findOne({
+          division: { $in: divisionQuery.$in },
+          $or: wardQuery.$or,
+        })
+          .select("_id wardNo ward division")
+          .lean();
+        if (distributorForSession) strategyUsed = "2-regex";
+      }
+    }
+
+    // Strategy 3: fall back to the FieldUser's own linked distributor profile
+    if (!distributorForSession) {
+      distributorForSession = await ensureDistributorProfile(req.user);
+      if (distributorForSession) strategyUsed = "3-fielduser";
+    }
+
+    // Strategy 4: scan all Open/Planned sessions and match by ward+division
+    // through the linked distributor document
+    if (!distributorForSession && cWard && cDivision) {
+      const openSessions = await DistributionSession.find({
+        status: { $in: ["Open", "Planned"] },
+      })
+        .select("distributorId status")
+        .lean();
+
+      for (const sess of openSessions) {
+        const dist = await Distributor.findById(sess.distributorId)
+          .select("_id wardNo ward division")
+          .lean();
+        if (!dist) continue;
+        const dWard = normalizeWardNo(dist.wardNo || dist.ward || "");
+        const dDiv = normalizeDivision(dist.division || "");
+        if (dWard === cWard && dDiv === cDivision) {
+          distributorForSession = dist;
+          sessionStatus = sess.status === "Open" ? "open" : "planned";
+          strategyUsed = "4-session-scan";
+          break;
+        }
+      }
+    }
+
+    // Strategy 5: last resort — any single open session (single-distributor setups)
+    if (!distributorForSession) {
+      const anyOpenSession = await DistributionSession.findOne({
+        status: { $in: ["Open", "Planned"] },
+      })
+        .select("distributorId status")
+        .lean();
+      if (anyOpenSession) {
+        distributorForSession = { _id: anyOpenSession.distributorId };
+        sessionStatus = anyOpenSession.status === "Open" ? "open" : "planned";
+        strategyUsed = "5-any-open";
+      }
+    }
+
+    console.log(`[consumerPreview] strategy="${strategyUsed}" distId="${distributorForSession?._id}" sessionStatus="${sessionStatus}"`);
+
+    if (distributorForSession && sessionStatus === "none") {
       const activeSession = await DistributionSession.findOne({
-        distributorId: distributor._id,
-        status: { $in: ["Planned", "Open"] },
+        distributorId: distributorForSession._id,
+        status: { $in: ["Open", "Planned"] },
       })
         .select("status dateKey")
         .lean();
       if (activeSession) {
         sessionStatus = activeSession.status === "Open" ? "open" : "planned";
+        console.log(`[consumerPreview] found session dateKey="${activeSession.dateKey}" status="${activeSession.status}"`);
+      } else {
+        console.log(`[consumerPreview] no active session for distId="${distributorForSession._id}"`);
       }
     }
 
     // Check if token already issued for today
     let alreadyIssued = false;
-    if (distributor) {
+    if (distributorForSession) {
       const today = todayKey();
       const existing = await Token.findOne({
         consumerId: consumer._id,
-        distributorId: distributor._id,
+        distributorId: distributorForSession._id,
         sessionDateKey: today,
       })
         .select("_id tokenCode")
         .lean();
       alreadyIssued = !!existing;
     }
+
+    console.log(`[consumerPreview] result sessionStatus="${sessionStatus}" alreadyIssued=${alreadyIssued}`);
 
     return res.json({
       success: true,
