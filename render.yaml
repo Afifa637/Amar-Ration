@@ -3,8 +3,8 @@ services:
     name: amar-ration-backend
     runtime: node
     rootDir: backend
-    buildCommand: cd backend && npm install
-    startCommand: node backend/server.js
+    buildCommand: npm install
+    startCommand: node server.js
     plan: free
     envVars:
       - key: NODE_ENV
@@ -18,6 +18,8 @@ services:
       - key: JWT_EXPIRES_IN
         value: 15m
       - key: NID_ENCRYPTION_KEY
+        sync: false
+      - key: QR_HMAC_SECRET
         sync: false
       - key: IOT_API_KEY
         sync: false
