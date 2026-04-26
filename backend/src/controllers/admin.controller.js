@@ -2437,9 +2437,11 @@ module.exports = {
   setIotProductTargets,
   getIotWeightAlerts,
   acknowledgeIotWeightAlert,
+  getIotCollectedData,
 };
 
 const IotWeightAlert = require("../models/IotWeightAlert");
+const IotCollectedData = require("../models/IotCollectedData");
 
 async function getIotProductTargets(req, res) {
   try {
@@ -2505,6 +2507,42 @@ async function acknowledgeIotWeightAlert(req, res) {
     if (!alert) return res.status(404).json({ success: false, message: "Alert not found" });
     return res.json({ success: true, data: alert });
   } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// GET /api/admin/iot/collected-data
+async function getIotCollectedData(req, res) {
+  try {
+    const limit        = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const distributorId = String(req.query.distributorId || "").trim();
+    const product      = String(req.query.product || "").trim();
+    const status       = String(req.query.status || "").trim();
+    const deviceId     = String(req.query.deviceId || "").trim();
+
+    const filter = {};
+    if (distributorId) filter.distributorId = distributorId;
+    if (product && ["P1", "P2", "P3"].includes(product)) filter.product = product;
+    if (status && ["ok", "mismatch"].includes(status)) filter.status = status;
+    if (deviceId) filter.deviceId = deviceId;
+
+    const records = await IotCollectedData.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    // Aggregate summary counts
+    const total    = records.length;
+    const okCount  = records.filter((r) => r.status === "ok").length;
+    const mismatch = total - okCount;
+
+    return res.json({
+      success: true,
+      data: records,
+      meta: { total, ok: okCount, mismatch },
+    });
+  } catch (err) {
+    console.error("getIotCollectedData error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }

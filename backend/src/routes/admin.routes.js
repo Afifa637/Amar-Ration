@@ -21,6 +21,7 @@ const {
   setIotProductTargets,
   getIotWeightAlerts,
   acknowledgeIotWeightAlert,
+  getIotCollectedData,
 } = require("../controllers/admin.controller");
 const {
   listAuditReportRequests,
@@ -67,5 +68,6 @@ router.put("/iot/product-targets", setIotProductTargets);
 router.put("/iot/product-targets/:distributorId", setIotProductTargets);
 router.get("/iot/weight-alerts", getIotWeightAlerts);
 router.patch("/iot/weight-alerts/:id/acknowledge", acknowledgeIotWeightAlert);
+router.get("/iot/collected-data", getIotCollectedData);
 
 module.exports = router;

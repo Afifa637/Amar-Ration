@@ -74,6 +74,9 @@ const AdminQRRotationPage = lazy(
   () => import("./pages/admin/AdminQRRotationPage"),
 );
 const AdminIoTPage = lazy(() => import("./pages/admin/AdminIoTPage"));
+const AdminIoTControlPage = lazy(
+  () => import("./pages/admin/AdminIoTControlPage"),
+);
 
 export default function App() {
   return (
@@ -146,6 +149,7 @@ export default function App() {
               element={<AdminStockSuggestionPage />}
             />
             <Route path="/admin/iot" element={<AdminIoTPage />} />
+            <Route path="/admin/iot-control" element={<AdminIoTControlPage />} />
           </Route>
 
           <Route

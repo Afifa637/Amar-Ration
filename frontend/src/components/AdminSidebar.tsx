@@ -32,6 +32,7 @@ const adminLinks = [
   { to: "/admin/audit", icon: "🛡️", label: "অডিট/ফ্রড/ব্ল্যাকলিস্ট/রিপোর্ট" },
   { to: "/admin/settings", icon: "⚙️", label: "সিস্টেম সেটিংস" },
   { to: "/admin/iot", icon: "⚖️", label: "IoT ওজন স্কেল" },
+  { to: "/admin/iot-control", icon: "🔌", label: "IoT ডিভাইস কন্ট্রোল" },
 ];
 
 export default function AdminSidebar() {

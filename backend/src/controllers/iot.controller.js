@@ -5,6 +5,7 @@ const DistributionRecord = require("../models/DistributionRecord");
 const DistributionSession = require("../models/DistributionSession");
 const SystemSetting = require("../models/SystemSetting");
 const IotWeightAlert = require("../models/IotWeightAlert");
+const IotCollectedData = require("../models/IotCollectedData");
 const Distributor = require("../models/Distributor");
 const Consumer = require("../models/Consumer");
 const { stockOut } = require("../services/stock.service");
@@ -396,12 +397,112 @@ async function getPendingToken(req, res) {
   }
 }
 
+// POST /api/iot/collected-data
+// Called by ESP32 after a successful product dispensing event
+async function receiveCollectedData(req, res) {
+  try {
+    const {
+      distributorId,
+      deviceId,
+      consumerCode,
+      product,
+      actualKg,
+      collectedAt,
+    } = req.body || {};
+
+    // Validate product field
+    if (!product || !["P1", "P2", "P3"].includes(product)) {
+      return res.status(400).json({
+        success: false,
+        message: "product must be one of: P1, P2, P3",
+      });
+    }
+
+    // Validate actualKg field
+    if (actualKg === undefined || actualKg === null) {
+      return res.status(400).json({
+        success: false,
+        message: "actualKg is required",
+      });
+    }
+
+    const distId = String(distributorId || "").trim();
+
+    // Fetch current targets to compute diff and resolve product name
+    const key = distId
+      ? `iot:product-targets:${distId}`
+      : "iot:product-targets";
+    let setting = await SystemSetting.findOne({ key }).lean();
+    // Fall back to global key if distributor-specific not found
+    if (!setting && distId) {
+      setting = await SystemSetting.findOne({
+        key: "iot:product-targets",
+      }).lean();
+    }
+
+    const targets = setting?.value || {
+      p1Kg: 0,
+      p2Kg: 0,
+      p3Kg: 0,
+      productNames: ["চাল", "ডাল", "পেঁয়াজ"],
+    };
+    const productNames = Array.isArray(targets.productNames)
+      ? targets.productNames
+      : ["চাল", "ডাল", "পেঁয়াজ"];
+
+    const idx    = product === "P1" ? 0 : product === "P2" ? 1 : 2;
+    const productName = productNames[idx] || product;
+    const targetKg =
+      product === "P1"
+        ? Number(targets.p1Kg)
+        : product === "P2"
+        ? Number(targets.p2Kg)
+        : Number(targets.p3Kg);
+
+    const actual = Number(actualKg);
+    const diffG  = Math.round((actual - targetKg) * 1000);
+    // 50 g tolerance — consistent with the ESP32 firmware tolerance_g default
+    const status = Math.abs(diffG) <= 50 ? "ok" : "mismatch";
+
+    const record = await IotCollectedData.create({
+      distributorId: distId || undefined,
+      deviceId:      String(deviceId || "esp32").trim(),
+      consumerCode:  String(consumerCode || "").trim() || undefined,
+      product,
+      productName,
+      targetKg,
+      actualKg: actual,
+      diffG,
+      status,
+      collectedAt: collectedAt ? new Date(collectedAt) : new Date(),
+    });
+
+    return res.json({
+      success: true,
+      message: "Collected data recorded",
+      data: {
+        id:          String(record._id),
+        product,
+        productName,
+        targetKg,
+        actualKg:    actual,
+        diffG,
+        status,
+      },
+    });
+  } catch (err) {
+    console.error("receiveCollectedData error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   handleWeightReading,
   getWeightThreshold,
   getPendingToken,
   getProductTargets,
   receiveWeightAlert,
+  receiveCollectedData,
 };
 
 // GET /api/iot/product-targets?distributorId=xxx

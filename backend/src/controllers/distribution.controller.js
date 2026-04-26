@@ -836,27 +836,29 @@ async function scanAndIssueToken(req, res) {
   try {
     session.startTransaction();
 
-    const plannedSession = await DistributionSession.findOne({
-      distributorId: distributor._id,
-      status: "Planned",
-    })
-      .sort({ dateKey: 1, createdAt: 1 })
-      .session(session);
+    // Accept an Open session (active today) or a Planned session (upcoming).
+    // Open sessions are created/started by admin from the web dashboard;
+    // Planned sessions are pre-scheduled. Prefer Open over Planned.
+    const activeSession =
+      (await DistributionSession.findOne({
+        distributorId: distributor._id,
+        status: "Open",
+        dateKey: todayKey(),
+      }).session(session)) ||
+      (await DistributionSession.findOne({
+        distributorId: distributor._id,
+        status: "Planned",
+        dateKey: { $gte: todayKey() },
+      })
+        .sort({ dateKey: 1, createdAt: 1 })
+        .session(session));
 
-    if (!plannedSession) {
+    if (!activeSession) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "No planned session available. Create planned session first",
-      });
-    }
-
-    if (plannedSession.dateKey < todayKey()) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message:
-          "Planned session date is in the past. Create a new planned session",
+        message: "কোনো সক্রিয় বিতরণ সেশন নেই। আগে সেশন শুরু করুন।",
+        code: "NO_ACTIVE_SESSION",
       });
     }
 
@@ -864,7 +866,7 @@ async function scanAndIssueToken(req, res) {
 
     let tokenDoc = null;
 
-    const plannedRationItem = normalizeStockItem(plannedSession.rationItem);
+    const plannedRationItem = normalizeStockItem(activeSession.rationItem);
     if (!plannedRationItem) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -880,7 +882,7 @@ async function scanAndIssueToken(req, res) {
         const tokenQrPayload = makeTokenQrPayload({
           tokenCode,
           consumerCode: consumer.consumerCode,
-          dateKey: plannedSession.dateKey,
+          dateKey: activeSession.dateKey,
           omsQrPayload: qr.payload,
         });
         const created = await Token.create(
@@ -889,11 +891,11 @@ async function scanAndIssueToken(req, res) {
               tokenCode,
               qrPayload: tokenQrPayload,
               qrPayloadHash: sha256(tokenQrPayload),
-              sessionDateKey: plannedSession.dateKey,
+              sessionDateKey: activeSession.dateKey,
               omsQrPayload: qr.payload,
               consumerId: consumer._id,
               distributorId: distributor._id,
-              sessionId: plannedSession._id,
+              sessionId: activeSession._id,
               rationItem: plannedRationItem,
               rationQtyKg,
               entitlementByItem: mapSingleItemQty(
@@ -913,15 +915,16 @@ async function scanAndIssueToken(req, res) {
 
         const existing = await Token.findOne({
           consumerId: consumer._id,
-          sessionId: plannedSession._id,
+          sessionId: activeSession._id,
         }).session(session);
 
         if (existing) {
           await session.abortTransaction();
 
-          return res.status(400).json({
+          return res.status(409).json({
             success: false,
-            message: "Token already issued for today",
+            message: "এই গ্রাহককে আজ ইতিমধ্যে রেশন দেওয়া হয়েছে।",
+            code: "ALREADY_ISSUED",
             data: { token: existing },
           });
         }
@@ -961,7 +964,7 @@ async function scanAndIssueToken(req, res) {
       data: {
         token: tokenDoc,
         tokenQrPayload: tokenDoc.qrPayload,
-        sessionDateKey: plannedSession.dateKey,
+        sessionDateKey: activeSession.dateKey,
         omsQrPayload: qr.payload,
         consumer: {
           _id: consumer._id,

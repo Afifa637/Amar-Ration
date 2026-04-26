@@ -2779,6 +2779,27 @@ export async function acknowledgeIotWeightAlert(id: string): Promise<IotWeightAl
   return response.data.data;
 }
 
+export async function pushTargetsToEsp32(
+  esp32Url: string,
+  apiKey: string,
+  targets: { p1Kg: number; p2Kg: number; p3Kg: number },
+): Promise<{ status: string; p1Kg: number; p2Kg: number; p3Kg: number }> {
+  const url = `${esp32Url.replace(/\/$/, "")}/set-targets`;
+  const response = await axios.post<{
+    status: string;
+    p1Kg: number;
+    p2Kg: number;
+    p3Kg: number;
+  }>(url, targets, {
+    headers: {
+      "Content-Type": "application/json",
+      "x-iot-api-key": apiKey,
+    },
+    timeout: 8000,
+  });
+  return response.data;
+}
+
 // ─── Field Distributor Applications ─────────────────────────────────────────
 
 export type FieldApplication = {
