@@ -2219,48 +2219,81 @@ async function consumerPreview(req, res) {
 
     console.log(`[consumerPreview] consumer=${consumer.consumerCode} ward_raw="${consumer.ward}" div_raw="${consumer.division}" cWard="${cWard}" cDivision="${cDivision}"`);
 
-    // Strategy 1: direct normalized string match (most reliable — data is
-    // normalized at save time by pre-save hooks)
+    // Collect ALL distributor IDs that match the consumer's ward+division.
+    // We need ALL because some Distributor docs may have English division names
+    // (e.g. "Khulna") instead of normalized Bangla ("খুলনা") if they were
+    // created outside of Mongoose save hooks (seed scripts, admin inserts).
+    const candidateDistributorIds = new Set();
+
     if (cWard && cDivision) {
-      distributorForSession = await Distributor.findOne({
+      // Pass 1: exact normalized string match
+      const exactMatches = await Distributor.find({
         $or: [
           { division: cDivision, wardNo: cWard },
           { division: cDivision, ward: cWard },
         ],
       })
-        .select("_id wardNo ward division")
+        .select("_id")
         .lean();
-      if (distributorForSession) strategyUsed = "1-exact";
-    }
+      exactMatches.forEach((d) => candidateDistributorIds.add(String(d._id)));
 
-    // Strategy 2: regex alias match (handles Bangla/English stored variants)
-    if (!distributorForSession && cWard && cDivision) {
+      // Pass 2: regex alias match — catches English variants like "Khulna"
       const wardQuery = buildWardMatchQuery(cWard, ["wardNo", "ward"]);
       const divisionQuery = buildDivisionMatchQuery(cDivision);
       if (wardQuery && divisionQuery) {
-        distributorForSession = await Distributor.findOne({
+        const aliasMatches = await Distributor.find({
           division: { $in: divisionQuery.$in },
           $or: wardQuery.$or,
         })
-          .select("_id wardNo ward division")
+          .select("_id")
           .lean();
-        if (distributorForSession) strategyUsed = "2-regex";
+        aliasMatches.forEach((d) => candidateDistributorIds.add(String(d._id)));
       }
     }
 
-    // Strategy 3: fall back to the FieldUser's own linked distributor profile
-    if (!distributorForSession) {
-      distributorForSession = await ensureDistributorProfile(req.user);
-      if (distributorForSession) strategyUsed = "3-fielduser";
+    console.log(`[consumerPreview] candidate distributorIds: [${[...candidateDistributorIds].join(", ")}]`);
+
+    // Find an active session for ANY of the candidate distributors
+    if (candidateDistributorIds.size > 0) {
+      const activeSession = await DistributionSession.findOne({
+        distributorId: { $in: [...candidateDistributorIds].map((id) => new mongoose.Types.ObjectId(id)) },
+        status: { $in: ["Open", "Planned"] },
+      })
+        .select("status dateKey distributorId")
+        .lean();
+      if (activeSession) {
+        distributorForSession = { _id: activeSession.distributorId };
+        sessionStatus = activeSession.status === "Open" ? "open" : "planned";
+        strategyUsed = "1-candidate-scan";
+        console.log(`[consumerPreview] found session dateKey="${activeSession.dateKey}" status="${activeSession.status}" via strategy 1`);
+      }
     }
 
-    // Strategy 4: scan all Open/Planned sessions and match by ward+division
-    // through the linked distributor document
+    // Strategy 2: fall back to the FieldUser's own linked distributor profile
+    if (!distributorForSession) {
+      const fuDist = await ensureDistributorProfile(req.user);
+      if (fuDist) {
+        const fuSession = await DistributionSession.findOne({
+          distributorId: fuDist._id,
+          status: { $in: ["Open", "Planned"] },
+        })
+          .select("status dateKey")
+          .lean();
+        if (fuSession) {
+          distributorForSession = fuDist;
+          sessionStatus = fuSession.status === "Open" ? "open" : "planned";
+          strategyUsed = "2-fielduser";
+          console.log(`[consumerPreview] found session via fielduser distributor dateKey="${fuSession.dateKey}"`);
+        }
+      }
+    }
+
+    // Strategy 3: scan all open sessions and match their distributor by normalized ward+div
     if (!distributorForSession && cWard && cDivision) {
       const openSessions = await DistributionSession.find({
         status: { $in: ["Open", "Planned"] },
       })
-        .select("distributorId status")
+        .select("distributorId status dateKey")
         .lean();
 
       for (const sess of openSessions) {
@@ -2273,13 +2306,14 @@ async function consumerPreview(req, res) {
         if (dWard === cWard && dDiv === cDivision) {
           distributorForSession = dist;
           sessionStatus = sess.status === "Open" ? "open" : "planned";
-          strategyUsed = "4-session-scan";
+          strategyUsed = "3-session-scan";
+          console.log(`[consumerPreview] found session via full scan dateKey="${sess.dateKey}" distId="${dist._id}"`);
           break;
         }
       }
     }
 
-    // Strategy 5: last resort — any single open session (single-distributor setups)
+    // Strategy 4: last resort — any single open session (single-distributor setups)
     if (!distributorForSession) {
       const anyOpenSession = await DistributionSession.findOne({
         status: { $in: ["Open", "Planned"] },
@@ -2289,26 +2323,11 @@ async function consumerPreview(req, res) {
       if (anyOpenSession) {
         distributorForSession = { _id: anyOpenSession.distributorId };
         sessionStatus = anyOpenSession.status === "Open" ? "open" : "planned";
-        strategyUsed = "5-any-open";
+        strategyUsed = "4-any-open";
       }
     }
 
     console.log(`[consumerPreview] strategy="${strategyUsed}" distId="${distributorForSession?._id}" sessionStatus="${sessionStatus}"`);
-
-    if (distributorForSession && sessionStatus === "none") {
-      const activeSession = await DistributionSession.findOne({
-        distributorId: distributorForSession._id,
-        status: { $in: ["Open", "Planned"] },
-      })
-        .select("status dateKey")
-        .lean();
-      if (activeSession) {
-        sessionStatus = activeSession.status === "Open" ? "open" : "planned";
-        console.log(`[consumerPreview] found session dateKey="${activeSession.dateKey}" status="${activeSession.status}"`);
-      } else {
-        console.log(`[consumerPreview] no active session for distId="${distributorForSession._id}"`);
-      }
-    }
 
     // Check if token already issued for today
     let alreadyIssued = false;
